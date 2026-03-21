@@ -100,3 +100,4 @@ wrapt==2.1.2
 xarray==2025.6.1
 xxhash==3.6.0
 yarl==1.23.0
+websocket-client

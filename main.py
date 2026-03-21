@@ -10,6 +10,7 @@ from monitoring.logger import log
 from monitoring.telegram_alert import alert_start, alert_stop, alert_error
 from monitoring.pnl_tracker import print_open_positions, print_pnl_summary
 from scanners.market_scanner import scan_weather_markets
+from scanners.ws_price_feed import start_ws_feed, subscribe_tokens, get_price
 from signals.edge_detector import find_best_trades, print_signals
 from execution.order_manager import place_order
 from execution.position_manager import position_monitor_cycle
@@ -21,6 +22,8 @@ def run() -> None:
     log.info(f"  Bot démarré — Mode : {mode}")
     log.info("=" * 52)
     alert_start()
+    start_ws_feed()
+    time.sleep(2)  # Laisse le WS se connecter
 
     print_open_positions()
     print_pnl_summary()
@@ -40,6 +43,17 @@ def run() -> None:
                 log.warning("Aucun marché météo actif — pause 5 min")
                 time.sleep(300)
                 continue
+
+            # Abonne le WS aux tokens des marchés actifs
+            all_token_ids = [t.token_id for m in markets for t in m.tokens if t.token_id]
+            subscribe_tokens(all_token_ids)
+
+            # Met à jour les prix depuis le cache WS si disponible
+            for market in markets:
+                for token in market.tokens:
+                    ws_price = get_price(token.token_id)
+                    if ws_price is not None:
+                        token.price = ws_price
 
             # 3. Trouver les edges
             from monitoring.pnl_tracker import get_current_bankroll
