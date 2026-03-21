@@ -22,4 +22,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: yannbellec/polymarket-weather-bot:latest
+          tags: ybellec/polymarket-weather-bot:latest
