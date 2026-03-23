@@ -3,6 +3,7 @@ Scanner marchés météo via Gamma API Polymarket.
 - 1 seule requête HTTP (pas de pagination infinie)
 - Filtre météo par regex word-boundary
 - Retourne des WeatherMarket typés
+- v2 : parse ContractSpec sur chaque nouveau marché (1 fois, mis en cache)
 """
 from __future__ import annotations
 import re, sys, os, json, urllib.request
@@ -34,17 +35,16 @@ def _fetch_gamma(limit: int = GAMMA_LIMIT) -> List[dict]:
         return json.loads(r.read())
 
 def _build_market(raw: dict) -> Optional[WeatherMarket]:
-    if not raw.get("enableOrderBook"): return None
-    if not raw.get("acceptingOrders"): return None
+    if not raw.get("enableOrderBook"):  return None
+    if not raw.get("acceptingOrders"):  return None
     end_date = _parse_dt(raw.get("endDate") or raw.get("endDateIso"))
     now = datetime.now(timezone.utc)
     if end_date and (end_date - now).total_seconds() < 86400: return None
     question = raw.get("question") or ""
-    keyword = _match_keyword(question)
+    keyword  = _match_keyword(question)
     if keyword is None: return None
     volume = float(raw.get("volume") or 0)
 
-    # Parser les champs qui peuvent être des strings JSON
     def _parse_list(v):
         if isinstance(v, list): return v
         if isinstance(v, str):
@@ -54,10 +54,10 @@ def _build_market(raw: dict) -> Optional[WeatherMarket]:
 
     token_ids = _parse_list(raw.get("clobTokenIds"))
     outcomes  = _parse_list(raw.get("outcomes")) or ["Yes", "No"]
-    try: prices = [float(p) for p in _parse_list(raw.get("outcomePrices"))]
+    try:    prices = [float(p) for p in _parse_list(raw.get("outcomePrices"))]
     except: prices = [0.5] * len(outcomes)
 
-    while len(prices) < len(outcomes): prices.append(0.5)
+    while len(prices)    < len(outcomes): prices.append(0.5)
     while len(token_ids) < len(outcomes): token_ids.append("")
 
     tokens = [
@@ -65,20 +65,70 @@ def _build_market(raw: dict) -> Optional[WeatherMarket]:
         for i in range(len(outcomes))
     ]
     return WeatherMarket(
-        condition_id=raw.get("conditionId") or "",
-        question=question, tokens=tokens, end_date=end_date,
-        volume=volume, active=True, accepting_orders=True,
-        enable_order_book=True, matched_keyword=keyword,
+        condition_id      = raw.get("conditionId") or "",
+        question          = question,
+        tokens            = tokens,
+        end_date          = end_date,
+        volume            = volume,
+        active            = True,
+        accepting_orders  = True,
+        enable_order_book = True,
+        matched_keyword   = keyword,
     )
 
-def scan_weather_markets(limit: int = GAMMA_LIMIT) -> List[WeatherMarket]:
+
+def scan_weather_markets(
+    limit:      int                         = GAMMA_LIMIT,
+    spec_cache: "Optional[ContractSpecCache]" = None,   # type: ignore[name-defined]
+) -> List[WeatherMarket]:
+    """
+    Scanne les marchés météo actifs.
+
+    Si spec_cache est fourni, parse le ContractSpec de chaque nouveau marché
+    (un seul appel LLM/regex par marché, résultat mis en cache).
+    Les marchés dont le score d'alignement est trop faible sont éliminés
+    UNIQUEMENT si spec_cache est actif — rétrocompatibilité garantie sinon.
+    """
     print(f"🔍 Gamma API scan | limit={limit}")
     raw_markets = _fetch_gamma(limit)
     print(f"   Reçus : {len(raw_markets)} marchés")
-    results = [m for raw in raw_markets if (m := _build_market(raw))]
+
+    results: List[WeatherMarket] = []
+
+    for raw in raw_markets:
+        market = _build_market(raw)
+        if market is None:
+            continue
+
+        # ── Parsing contractuel (v2, optionnel) ──────────────────────────────
+        if spec_cache is not None:
+            from core.contract_parser import parse_contract
+            from config.settings import MIN_ORACLE_ALIGNMENT
+
+            # Récupère ou crée le ContractSpec (0 réseau si déjà en cache)
+            end_iso = raw.get("endDate") or raw.get("endDateIso") or ""
+            spec = parse_contract(
+                market_id    = market.condition_id,   # condition_id comme clé
+                condition_id = market.condition_id,
+                question     = market.question,
+                end_date_iso = str(end_iso),
+                cache        = spec_cache,
+            )
+
+            # Marché écarté : parsing insuffisant ou oracle inconnu
+            if spec is None:
+                continue
+
+            # Marché non tradeable (déjà fermé / résolu côté cache)
+            if not spec.is_tradeable:
+                continue
+
+        results.append(market)
+
     results.sort(key=lambda m: m.volume, reverse=True)
     print(f"   ✅ Météo actifs : {len(results)}")
     return results
+
 
 def print_markets(markets: List[WeatherMarket]) -> None:
     if not markets:
@@ -96,25 +146,22 @@ def print_markets(markets: List[WeatherMarket]) -> None:
             print(f"       [{t.outcome:3s}] price={t.price:.4f}   token_id={t.token_id[:28]}...")
     print(f"\n{'═'*72}\nTotal : {len(markets)} marchés météo actifs\n")
 
+
 def debug_lost(limit: int = GAMMA_LIMIT) -> None:
-    """Affiche les marchés rejetés par match_keyword pour identifier les perdus."""
-    from config.keywords import WEATHER_KEYWORDS
-    import re
-    
     raw_markets = _fetch_gamma(limit)
     for raw in raw_markets:
         if not raw.get("enableOrderBook"): continue
         if not raw.get("acceptingOrders"): continue
         q = raw.get("question") or ""
-        # A un keyword brut mais rejeté par match_keyword
         s = q.lower()
         has_raw_kw = any(re.search(r"\b" + re.escape(kw) + r"\b", s) for kw in WEATHER_KEYWORDS)
-        has_match = _match_keyword(q) is not None
+        has_match  = _match_keyword(q) is not None
         if has_raw_kw and not has_match:
             vol = float(raw.get("volume") or 0)
             print(f"  REJETÉ | vol=${vol:,.0f} | {q}")
 
+
 if __name__ == "__main__":
-    debug_lost()      # ← temporaire
+    debug_lost()
     markets = scan_weather_markets()
     print_markets(markets)

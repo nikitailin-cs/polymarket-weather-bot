@@ -16,7 +16,7 @@ import re, math, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict
-from signals.sources.aggregator import get_max_temp_consensus
+from signals.sources.aggregator import get_max_temp_consensus, get_precip_consensus
 from signals.sources.climate_history import (
     get_climate_stats,
     climate_prob_above,
@@ -106,11 +106,12 @@ def parse_temp_question(question: str) -> Optional[Dict]:
         mod = "exact"
 
     # Date
-    date_m = re.search(r"on (\w+ \d+)", question, re.IGNORECASE)
+    _MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december"
+    date_m = re.search(rf"on\s+({_MONTHS})\s+(\d+)", question, re.IGNORECASE)
     if not date_m:
         return None
     try:
-        dt       = datetime.strptime(f"{date_m.group(1)} 2026", "%B %d %Y")
+        dt       = datetime.strptime(f"{date_m.group(1)} {date_m.group(2)} 2026", "%B %d %Y")
         date_str = dt.strftime("%Y-%m-%d")
         month    = dt.month
     except ValueError:
@@ -125,6 +126,58 @@ def parse_temp_question(question: str) -> Optional[Dict]:
     }
 
 
+def parse_precip_question(question: str) -> Optional[Dict]:
+    """
+    Parse une question de marché précipitations.
+    Retourne un dict avec city, target_mm, date_str, modifier, month.
+    """
+    m = re.search(
+        r"(?:precipitation|rain(?:fall)?|snow(?:fall)?) in ([A-Za-z\s]+?) be "
+        r"(\d+(?:\.\d+)?)\s*(mm|cm|inches|inch|in)\b"
+        r"(\s+or\s+(?:below|above|higher|lower))?",
+        question, re.IGNORECASE
+    )
+    if not m:
+        return None
+
+    city     = m.group(1).strip()
+    amount   = float(m.group(2))
+    unit     = m.group(3).lower()
+    modifier = (m.group(4) or "").strip().lower()
+
+    # Conversion vers mm
+    if unit == "cm":
+        amount *= 10.0
+    elif unit in ("in", "inch", "inches"):
+        amount *= 25.4
+
+    if "below" in modifier or "lower" in modifier:
+        mod = "below"
+    elif "above" in modifier or "higher" in modifier:
+        mod = "above"
+    else:
+        mod = "exact"
+
+    _MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december"
+    date_m = re.search(rf"on\s+({_MONTHS})\s+(\d+)", question, re.IGNORECASE)
+    if not date_m:
+        return None
+    try:
+        dt       = datetime.strptime(f"{date_m.group(1)} {date_m.group(2)} 2026", "%B %d %Y")
+        date_str = dt.strftime("%Y-%m-%d")
+        month    = dt.month
+    except ValueError:
+        return None
+
+    return {
+        "city":      city,
+        "target_mm": round(amount, 2),
+        "date_str":  date_str,
+        "modifier":  mod,
+        "month":     month,
+    }
+
+
 # ── Calcul de probabilité par couche ─────────────────────────────────────────
 
 def _prob_from_forecast(target_c: float, modifier: str,
@@ -136,6 +189,18 @@ def _prob_from_forecast(target_c: float, modifier: str,
         return 1.0 - _normal_cdf(target_c, forecast_c, sigma)
     else:
         return _prob_exact(target_c, forecast_c, sigma)
+
+
+def _prob_from_forecast_precip(target_mm: float, modifier: str,
+                               forecast_mm: float, sigma_mm: float) -> float:
+    """Probabilité depuis les prévisions de précipitations."""
+    if modifier == "below":
+        return _normal_cdf(target_mm, forecast_mm, sigma_mm)
+    elif modifier == "above":
+        return 1.0 - _normal_cdf(target_mm, forecast_mm, sigma_mm)
+    else:
+        # Précipitations souvent discrètes: tolérance un peu plus large.
+        return _prob_exact(target_mm, forecast_mm, sigma_mm, tolerance=1.0)
 
 
 def _prob_from_climate(city: str, month: int, target_c: float,
@@ -262,6 +327,46 @@ def compute_yes_prob(question: str,
             "days_to_expiry": days,
         }
 
+        return p_final, round(confidence, 3), detail
+
+    if any(k in q for k in ("precipitation", "rain", "rainfall", "snow", "snowfall")):
+        parsed = parse_precip_question(question)
+        if not parsed:
+            return None
+
+        city       = parsed["city"]
+        target_mm  = parsed["target_mm"]
+        date_str   = parsed["date_str"]
+        modifier   = parsed["modifier"]
+        month      = parsed["month"]
+
+        forecast_mm, forecast_conf, sources = get_precip_consensus(city, date_str)
+        if forecast_mm is None or forecast_conf < MIN_CONFIDENCE:
+            return None
+
+        # Incertitude pluie/neige plus élevée que température (en mm).
+        days = _days_until(date_str)
+        sigma_mm = 2.0 + min(days, 5) * 0.8
+        sigma_mm *= (1.0 + (1.0 - forecast_conf) * 0.5)
+
+        p_forecast = _prob_from_forecast_precip(target_mm, modifier, forecast_mm, sigma_mm)
+
+        # Fallback climatologie (pas encore implémentée pour precip):
+        # on garde la fusion simple basée sur la prévision.
+        p_final = round(max(0.02, min(0.98, p_forecast)), 4)
+
+        confidence = min(1.0, forecast_conf + 0.02)
+        detail = {
+            "forecast_mm":     round(forecast_mm, 2),
+            "sigma_mm":        round(sigma_mm, 2),
+            "p_forecast":      round(p_forecast, 4),
+            "p_final":         p_final,
+            "layers_used":     1,
+            "sources":         list(sources.keys()),
+            "days_to_expiry":  days,
+            "domain":          "precipitation",
+            "month":           month,
+        }
         return p_final, round(confidence, 3), detail
 
     return None

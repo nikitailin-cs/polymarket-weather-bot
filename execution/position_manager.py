@@ -1,27 +1,37 @@
 """
 Gestionnaire de positions ouvertes.
-- Surveille les marchés en attente de résolution
-- Ferme les positions automatiquement quand un marché se résout
-- Tourne en parallèle de la boucle principale
+
+v2 : machine d'états explicite à 5 états.
+     ACTIVE → CLOSED_PENDING → RESOLVED_YES / RESOLVED_NO / CANCELLED
+     Poll oracle toutes les 30 min uniquement pendant CLOSED_PENDING.
+     PnL correct pour les 3 cas de résolution (YES, NO, remboursement partiel).
+     Alerte Telegram sur CANCELLED ou timeout oracle.
 """
 from __future__ import annotations
-import json, sys, os, urllib.request
+import json, sys, os, urllib.request, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 from monitoring.pnl_tracker import _load, _save, close_position, print_open_positions
 from monitoring.logger import log
+from core.models import MarketStatus
 
-POSITIONS_FILE = Path(__file__).parent.parent / "data" / "logs" / "positions.json"
-GAMMA_URL      = "https://gamma-api.polymarket.com/markets"
+GAMMA_URL = "https://gamma-api.polymarket.com/markets"
+
+# Timestamps en mémoire du dernier poll oracle par condition_id
+_last_poll: dict[str, float] = {}
+
 
 def get_open_positions() -> list:
     from monitoring.pnl_tracker import get_open_positions as _get
     return _get()
 
-def _fetch_market_status(condition_id: str) -> Dict:
-    """Récupère le statut actuel d'un marché via Gamma API."""
+
+# ── Appel Gamma API ───────────────────────────────────────────────────────────
+
+def _fetch_market(condition_id: str) -> Dict:
+    """1 requête HTTP — retourne {} silencieusement en cas d'erreur réseau."""
     try:
         url = f"{GAMMA_URL}?conditionId={condition_id}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -31,22 +41,119 @@ def _fetch_market_status(condition_id: str) -> Dict:
             return data[0]
         return {}
     except Exception as e:
-        log.warning(f"Impossible de vérifier marché {condition_id[:16]}... : {e}")
+        log.warning(f"Gamma API inaccessible pour {condition_id[:16]}: {e}")
         return {}
 
 
-def check_and_close_positions() -> int:
-    """
-    Vérifie toutes les positions ouvertes.
-    Ferme celles dont le marché est résolu.
-    Retourne le nombre de positions fermées.
-    """
-    positions = _load(POSITIONS_FILE)
-    if not positions:
-        return 0
+# ── Interprétation de la réponse Gamma ───────────────────────────────────────
 
-    closed_count = 0
-    now = datetime.now(timezone.utc)
+def _read_status(data: dict) -> Optional[MarketStatus]:
+    """
+    Traduit la réponse Gamma en MarketStatus.
+
+    Règles :
+      active=True                          → None (toujours actif, pas de changement)
+      active=False + prices[0] >= 0.99    → RESOLVED_YES
+      active=False + prices[0] <= 0.01    → RESOLVED_NO
+      active=False + closed + prix ~0.50  → CANCELLED  (litige UMA)
+      active=False + prix intermédiaire   → CLOSED_PENDING
+    """
+    if data.get("active", True):
+        return None
+
+    closed = data.get("closed", False)
+    raw    = data.get("outcomePrices") or []
+
+    try:
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        prices = [float(p) for p in raw]
+    except Exception:
+        prices = []
+
+    if not prices:
+        return MarketStatus.CLOSED_PENDING
+
+    p_yes = prices[0]
+
+    if p_yes >= 0.99:
+        return MarketStatus.RESOLVED_YES
+    if p_yes <= 0.01:
+        return MarketStatus.RESOLVED_NO
+    if closed and 0.45 <= p_yes <= 0.55:
+        return MarketStatus.CANCELLED    # prix ~0.5 sur marché fermé = litige
+
+    return MarketStatus.CLOSED_PENDING
+
+
+def _resolution_price(status: MarketStatus, side: str, data: dict) -> float:
+    """
+    Prix de résolution pour le calcul du PnL.
+    - YES résolu, position YES  → 1.0  (gain)
+    - NO résolu,  position YES  → 0.0  (perte totale)
+    - CANCELLED                 → prix de remboursement (outcomePrices[0])
+    """
+    if status == MarketStatus.CANCELLED:
+        try:
+            raw = data.get("outcomePrices") or ["0.5"]
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            return float(raw[0])
+        except Exception:
+            return 0.5
+
+    if status == MarketStatus.RESOLVED_YES:
+        return 1.0 if side == "YES" else 0.0
+    if status == MarketStatus.RESOLVED_NO:
+        return 0.0 if side == "YES" else 1.0
+
+    return 0.5  # ne devrait pas arriver
+
+
+# ── Alerte Telegram légère ────────────────────────────────────────────────────
+
+def _telegram(msg: str) -> None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat  = os.getenv("TELEGRAM_CHAT_ID",   "")
+    if not token or not chat:
+        return
+    try:
+        import urllib.parse
+        payload = json.dumps({"chat_id": chat, "text": msg, "parse_mode": "Markdown"}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+
+# ── Cycle principal ───────────────────────────────────────────────────────────
+
+def position_monitor_cycle(spec_cache=None) -> None:
+    """
+    À appeler à chaque cycle depuis main.py.
+
+    Logique par position :
+      1. Si end_date pas encore dépassée → rien à faire
+      2. Si dépassée ET dernier poll < 30 min → rien à faire (économie réseau)
+      3. Poll Gamma → interprète le statut
+      4. Si terminal (YES/NO/CANCELLED) → ferme la position + calcule PnL
+      5. Si CLOSED_PENDING → met à jour le timestamp, reprogramme le prochain poll
+      6. Si CLOSED_PENDING depuis > MAX_ORACLE_WAIT_HOURS → alerte Telegram
+    """
+    from config.settings import ORACLE_POLL_INTERVAL_SEC, MAX_ORACLE_WAIT_HOURS
+
+    positions = _load(_positions_path())
+    if not positions:
+        return
+
+    log.info(f"📊 {len(positions)} position(s) ouverte(s) — vérification...")
+    now_mono = time.monotonic()
+    now_dt   = datetime.now(timezone.utc)
+    closed_n = 0
 
     for pos in positions:
         condition_id = pos.get("condition_id", "")
@@ -54,88 +161,150 @@ def check_and_close_positions() -> int:
         end_date_str = pos.get("end_date") or ""
         side         = pos.get("side", "YES")
         size_usd     = float(pos.get("size_usd", 0))
-        price        = float(pos.get("price", 0.5))
+        price_entry  = float(pos.get("price", 0.5))
         dry_run      = pos.get("dry_run", True)
+        pos_status   = pos.get("market_status", MarketStatus.ACTIVE.value)
 
-        # Vérifie si la date d'expiry est passée
+        # ── 1. Déjà résolu côté cache → fermeture directe ────────────────────
+        if pos_status in (
+            MarketStatus.RESOLVED_YES.value,
+            MarketStatus.RESOLVED_NO.value,
+            MarketStatus.CANCELLED.value,
+        ):
+            # Ne devrait pas arriver (fermé au cycle précédent), mais sécurité
+            log.warning(f"Position {condition_id[:16]} marquée {pos_status} mais encore ouverte — correction")
+            _close_pos(pos, MarketStatus(pos_status), {}, condition_id, side, size_usd, price_entry, dry_run)
+            closed_n += 1
+            continue
+
+        # ── 2. Vérifie si end_date dépassée ──────────────────────────────────
         try:
             end_dt = datetime.strptime(end_date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            if end_dt > now:
-                continue  # Pas encore expiré
+            if end_dt > now_dt:
+                continue   # pas encore expiré
         except Exception:
+            pass   # date inconnue → on poll quand même
+
+        # ── 3. Throttle : pas plus d'1 poll toutes les ORACLE_POLL_INTERVAL_SEC ──
+        last = _last_poll.get(condition_id, 0.0)
+        if now_mono - last < ORACLE_POLL_INTERVAL_SEC:
             continue
 
-        # Marché expiré — vérifie la résolution via API
-        market = _fetch_market_status(condition_id)
-        if not market:
+        _last_poll[condition_id] = now_mono
+
+        # ── 4. Poll Gamma ─────────────────────────────────────────────────────
+        data       = _fetch_market(condition_id)
+        new_status = _read_status(data)
+
+        if new_status is None:
+            # Marché toujours actif selon Gamma (rare, end_date peut être approximatif)
             continue
 
-        closed   = market.get("closed", False)
-        outcomes = market.get("outcomes") or []
-        prices   = market.get("outcomePrices") or []
+        # ── 5. Mise à jour du statut dans la position (pour spec_cache) ───────
+        if spec_cache is not None:
+            spec_cache.update_status(
+                condition_id,
+                new_status,
+                last_oracle_poll = now_dt.isoformat(),
+            )
 
-        if not closed:
-            log.info(f"Marché expiré mais pas encore résolu : {question}...")
+        # ── 6. Timeout oracle ─────────────────────────────────────────────────
+        if new_status == MarketStatus.CLOSED_PENDING:
+            first_poll_str = pos.get("first_pending_at", "")
+            if not first_poll_str:
+                # Premier cycle CLOSED_PENDING → on enregistre l'heure
+                _mark_first_pending(condition_id, now_dt.isoformat())
+            else:
+                try:
+                    first_dt  = datetime.fromisoformat(first_poll_str)
+                    elapsed_h = (now_dt - first_dt).total_seconds() / 3600
+                    if elapsed_h > MAX_ORACLE_WAIT_HOURS:
+                        msg = (
+                            f"⚠️ *Oracle timeout* `{condition_id[:16]}`\n"
+                            f"{elapsed_h:.0f}h sans résolution — vérification manuelle requise\n"
+                            f"_{question}_"
+                        )
+                        log.error(msg.replace("*", "").replace("`", "").replace("_", ""))
+                        _telegram(msg)
+                except Exception:
+                    pass
+            log.info(f"En attente oracle : {question}…")
             continue
 
-        # Détermine le résultat
-        try:
-            import json as _json
-            if isinstance(outcomes, str):
-                outcomes = _json.loads(outcomes)
-            if isinstance(prices, str):
-                prices = _json.loads(prices)
-            prices_f = [float(p) for p in prices]
-        except Exception:
-            continue
+        # ── 7. Terminal → ferme la position ───────────────────────────────────
+        _close_pos(pos, new_status, data, condition_id, side, size_usd, price_entry, dry_run)
+        closed_n += 1
 
-        # YES token = index 0, NO token = index 1
-        yes_resolved = prices_f[0] >= 0.99 if prices_f else False
-        no_resolved  = prices_f[1] >= 0.99 if len(prices_f) > 1 else False
-
-        if side == "YES":
-            won = yes_resolved
-        else:
-            won = no_resolved
-
-        if not (yes_resolved or no_resolved):
-            log.info(f"Résolution ambiguë pour {question}...")
-            continue
-
-        # Calcul PnL
-        if won:
-            # On a payé `price` par token, on reçoit 1.0
-            pnl = size_usd * (1.0 / price - 1.0)
-            result = "win"
-        else:
-            pnl    = -size_usd
-            result = "loss"
-
-        # Frais taker 2% sur la mise initiale
-        if not dry_run:
-            pnl -= size_usd * 0.02
-
-        pnl = round(pnl, 4)
-
-        emoji = "✅" if won else "❌"
-        log.info(f"{emoji} Position fermée | {side} | {result} | PnL=${pnl:+.2f} | {question}...")
-
-        close_position(condition_id, result, pnl)
-        closed_count += 1
-
-    return closed_count
+    if closed_n:
+        log.info(f"   {closed_n} position(s) fermée(s) ce cycle")
 
 
-def position_monitor_cycle() -> None:
-    """À appeler dans la boucle principale à chaque cycle."""
-    positions = _load(POSITIONS_FILE)
-    if not positions:
-        return
+def _close_pos(
+    pos:          dict,
+    status:       MarketStatus,
+    data:         dict,
+    condition_id: str,
+    side:         str,
+    size_usd:     float,
+    price_entry:  float,
+    dry_run:      bool,
+) -> None:
+    """Calcule le PnL, ferme la position et notifie."""
+    res_price = _resolution_price(status, side, data)
 
-    log.info(f"📊 {len(positions)} position(s) ouverte(s) — vérification...")
-    closed = check_and_close_positions()
-    if closed > 0:
-        log.info(f"   {closed} position(s) fermée(s) ce cycle")
+    # PnL = (prix_résolution − prix_entrée) × nombre_de_tokens
+    nb_tokens = size_usd / price_entry if price_entry > 0 else 0
+    pnl       = round((res_price - price_entry) * nb_tokens, 4)
+
+    result  = "win" if pnl >= 0 else "loss"
+    emoji   = "✅" if pnl >= 0 else "❌"
+    question = pos.get("question", "")[:50]
+
+    log.info(
+        f"{emoji} Fermé [{side}] {status.value} | "
+        f"PnL={pnl:+.2f}$ ({price_entry:.3f}→{res_price:.3f}) | {question}…"
+    )
+
+    close_position(condition_id, result, pnl)
+
+    # Notification Telegram pour CANCELLED ou pertes importantes
+    if status == MarketStatus.CANCELLED or pnl < -10:
+        msg_parts = [
+            f"{emoji} *Position fermée* `{condition_id[:16]}`",
+            f"Statut: `{status.value}`",
+            f"PnL: `{pnl:+.2f}$`",
+            f"_{question}_",
+        ]
+        if status == MarketStatus.CANCELLED:
+            msg_parts.append(f"⚠️ Remboursement partiel à {res_price:.3f}$")
+        _telegram("\n".join(msg_parts))
+
+
+def _positions_path() -> Path:
+    from config.settings import POSITIONS_FILE
+    return Path(POSITIONS_FILE)
+
+
+def _mark_first_pending(condition_id: str, iso_str: str) -> None:
+    """Enregistre l'heure du premier CLOSED_PENDING dans le fichier positions."""
+    path      = _positions_path()
+    positions = _load(path)
+    for pos in positions:
+        if pos.get("condition_id") == condition_id:
+            pos["first_pending_at"]  = iso_str
+            pos["market_status"]     = MarketStatus.CLOSED_PENDING.value
+    _save(path, positions)
+
+
+def check_and_close_positions() -> int:
+    """
+    Alias public pour rétrocompatibilité.
+    Retourne le nombre de positions fermées ce cycle.
+    """
+    before = len(get_open_positions())
+    position_monitor_cycle()
+    after  = len(get_open_positions())
+    return before - after
 
 
 if __name__ == "__main__":

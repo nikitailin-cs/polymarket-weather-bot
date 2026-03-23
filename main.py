@@ -3,9 +3,10 @@ Point d'entrée principal — bot Polymarket Weather.
 - Persistance JSON (survit aux crashes)
 - Suivi des positions ouvertes
 - Tracker PnL en temps réel
+- v2 : ContractSpecCache injecté dans scanner, edge_detector, position_manager
 """
 import sys, time
-from config.settings import DRY_RUN, WEATHER_REFRESH_SEC
+from config.settings import DRY_RUN, WEATHER_REFRESH_SEC, CONTRACT_SPECS_FILE
 from monitoring.logger import log
 from monitoring.telegram_alert import alert_start, alert_stop, alert_error
 from monitoring.pnl_tracker import print_open_positions, print_pnl_summary
@@ -14,6 +15,7 @@ from scanners.ws_price_feed import start_ws_feed, subscribe_tokens, get_price
 from signals.edge_detector import find_best_trades, print_signals
 from execution.order_manager import place_order
 from execution.position_manager import position_monitor_cycle
+from core.models import ContractSpecCache
 
 
 def run() -> None:
@@ -21,9 +23,14 @@ def run() -> None:
     log.info("=" * 52)
     log.info(f"  Bot démarré — Mode : {mode}")
     log.info("=" * 52)
+
     alert_start()
     start_ws_feed()
-    time.sleep(2)  # Laisse le WS se connecter
+    time.sleep(2)
+
+    # Cache ContractSpec partagé — chargé depuis disque au démarrage
+    spec_cache = ContractSpecCache(CONTRACT_SPECS_FILE)
+    log.info(f"  ContractSpecs en cache : {len(spec_cache)}")
 
     print_open_positions()
     print_pnl_summary()
@@ -35,10 +42,12 @@ def run() -> None:
             log.info(f"── Cycle #{cycle} ──────────────────────────────────")
 
             # 1. Vérifier les positions existantes
-            position_monitor_cycle()
+            position_monitor_cycle(spec_cache=spec_cache)
 
             # 2. Scanner les marchés météo actifs
-            markets = scan_weather_markets()
+            #    → parse ContractSpec sur chaque nouveau marché (1 fois, mis en cache)
+            #    → écarte les marchés avec oracle_alignment_score < MIN_ORACLE_ALIGNMENT
+            markets = scan_weather_markets(spec_cache=spec_cache)
             if not markets:
                 log.warning("Aucun marché météo actif — pause 5 min")
                 time.sleep(300)
@@ -56,8 +65,13 @@ def run() -> None:
                         token.price = ws_price
 
             # 3. Trouver les edges
+            #    → déflation oracle + Kelly ajusté + filtre condition_id dupliqués
             from monitoring.pnl_tracker import get_current_bankroll
-            signals = find_best_trades(markets, bankroll=get_current_bankroll())
+            signals = find_best_trades(
+                markets,
+                bankroll   = get_current_bankroll(),
+                spec_cache = spec_cache,
+            )
             print_signals(signals)
 
             # 4. Passer les ordres (top 3 par edge)
@@ -77,6 +91,7 @@ def run() -> None:
         print_open_positions()
         print_pnl_summary()
         alert_stop("Arrêt manuel")
+
     except Exception as e:
         log.exception(f"Erreur critique : {e}")
         alert_error(str(e))
