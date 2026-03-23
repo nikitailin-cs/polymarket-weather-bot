@@ -129,7 +129,8 @@ class ContractSpec:
     weather_variable: str   = "unknown"   # temp_max / temp_min / precip / snow / wind_avg
     threshold_value:  float = 0.0
     threshold_unit:   str   = "unknown"   # celsius / fahrenheit / mm / cm / kmh
-    threshold_op:     str   = "gte"       # gt / gte / lt / lte
+    threshold_op:     str   = "gte"       # gt / gte / lt / lte / eq / between
+    threshold_range:  Optional[List[float]] = None  # [low, high] si op=between
     time_window_utc:  Optional[List[int]] = None   # [heure_debut, heure_fin]
 
     # Source oracle
@@ -185,6 +186,13 @@ class ContractSpec:
     def evaluate(self, observed_value: float) -> bool:
         """Vérifie si la valeur observée satisfait la condition contractuelle."""
         v = round(observed_value, self.oracle_rounding)
+        if self.threshold_op == "between":
+            if not self.threshold_range or len(self.threshold_range) != 2:
+                return False
+            low, high = self.threshold_range
+            if low > high:
+                low, high = high, low
+            return low <= v <= high
         t = self.threshold_value
         return {
             "gt":  v > t,

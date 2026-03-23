@@ -6,6 +6,7 @@ Point d'entrée principal — bot Polymarket Weather.
 - v2 : ContractSpecCache injecté dans scanner, edge_detector, position_manager
 - v2.1 : update_actuals() appelé toutes les 10 cycles pour calibration modèle
 """
+print("TEST DE DEPLOIEMENT AUTOMATIQUE REUSSI - VERSION 1.1")
 import sys, time
 from config.settings import DRY_RUN, WEATHER_REFRESH_SEC, CONTRACT_SPECS_FILE
 from monitoring.logger import log

@@ -16,7 +16,12 @@ import re, math, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict
-from signals.sources.aggregator import get_max_temp_consensus, get_precip_consensus
+from signals.sources.aggregator import (
+    get_max_temp_consensus,
+    get_max_temp_contract_aligned,
+    get_precip_contract_aligned,
+    get_precip_consensus,
+)
 from signals.sources.climate_history import (
     get_climate_stats,
     climate_prob_above,
@@ -85,7 +90,7 @@ def parse_temp_question(question: str) -> Optional[Dict]:
     """
     m = re.search(
         r"(?:highest|lowest)?\s*temperature in ([A-Za-z\s]+?) be "
-        r"(\d+(?:\.\d+)?)\s*°([CF])"
+        r"([-+]?\d+(?:\.\d+)?)\s*°([CF])"
         r"(\s+or\s+(?:below|above|higher|lower))?",
         question, re.IGNORECASE
     )
@@ -279,7 +284,20 @@ def compute_yes_prob(
         month     = parsed["month"]
 
         # ── Couche 1 : prévisions météo ───────────────────────────────────────
-        forecast_c, forecast_conf, sources = get_max_temp_consensus(city, date_str)
+        # Si une source oracle contractuelle est connue, on l'utilise en priorité.
+        contract_source = ""
+        if spec is not None:
+            contract_source = str(getattr(spec, "oracle_source", "") or "")
+
+        if contract_source:
+            forecast_c, forecast_conf, sources = get_max_temp_contract_aligned(
+                city, date_str, contract_source
+            )
+            # Source inconnue/non supportée => ne pas trader à l'aveugle.
+            if forecast_c is None:
+                return None
+        else:
+            forecast_c, forecast_conf, sources = get_max_temp_consensus(city, date_str)
 
         if forecast_c is None or forecast_conf < MIN_CONFIDENCE:
             return None
@@ -405,7 +423,17 @@ def compute_yes_prob(
         modifier   = parsed["modifier"]
         month      = parsed["month"]
 
-        forecast_mm, forecast_conf, sources = get_precip_consensus(city, date_str)
+        contract_source = ""
+        if spec is not None:
+            contract_source = str(getattr(spec, "oracle_source", "") or "")
+        if contract_source:
+            forecast_mm, forecast_conf, sources = get_precip_contract_aligned(
+                city, date_str, contract_source
+            )
+            if forecast_mm is None:
+                return None
+        else:
+            forecast_mm, forecast_conf, sources = get_precip_consensus(city, date_str)
         if forecast_mm is None or forecast_conf < MIN_CONFIDENCE:
             return None
 

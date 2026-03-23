@@ -1,0 +1,1273 @@
+--------------------------------------------------------------------------------------------------------------
+Q: Will global temperature increase by between 1.20-1.24ºC in January 2025?
+condition_id: 0x46fc88a8946c0d12f94e496141afae4bcceea70d8ceceb668b0cea10a1cfdd78
+gamma.resolutionSource: N/A
+step2.source_from_rules: nasa_giss
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.txt
+rules_text_full:
+This market will resolve to "Yes" if the data for the Global Land-Ocean Temperature Index for January 2025 shows an increase of between 1.20°C and 1.24°C when it is released. Otherwise, this market will resolve to "No".
+
+An anomaly of between 1.20°C and 1.24°C for January 2025 is necessary and sufficient to resolve this market to "Yes" immediately once the data becomes available regardless of whether the figure for January 2025 is later revised.
+
+The primary resolution source for this market will be the figure found in the table titled "GLOBAL Land-Ocean Temperature Index in 0.01 degrees Celsius" under the column "Jan" in the row "2025" (https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.txt). If NASA's "Global Temperature Index" is rendered permanently unavailable, other information from NASA may be used. If no information for January 2025 is provided by NASA by May 1, 2025, 11:59 PM ET, this market will resolve "No".
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be 46°F or higher on February 11?
+condition_id: 0x91a31d4d8972e1865861fbd636daee18588fd6258647368a0dcffcd60c7f1f1c
+gamma.resolutionSource: N/A
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Fahrenheit on February 11, 2025.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market’s timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be between 66-67°F on May 10?
+condition_id: 0x3cceb59864badf888207c53060ebbb2edc42cea2e602c433dd270a681a3bbfde
+gamma.resolutionSource: N/A
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Fahrenheit on May 10, 2025.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market’s timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be between 83-84°F on July 13?
+condition_id: 0x8e075c8ed6dc0cb996a3ba4eeb3baaf6caca64e7c175b713a0d666532539aea9
+gamma.resolutionSource: N/A
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Fahrenheit on 13 Jul '25.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be 76°F or higher on July 27?
+condition_id: 0xc878a5318df424e28ed11b6965e36c56275f94c88ff99ad21a74740f85d760db
+gamma.resolutionSource: N/A
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Fahrenheit on 27 Jul '25.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in New York City be between 73-74°F on September 3?
+condition_id: 0x164dfbce5c5e2d4aba6e6a889cf123ca5c3a468700c61ee131eda1e5fcaa03d0
+gamma.resolutionSource: N/A
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the LaGuardia Airport Station in degrees Fahrenheit on 3 Sep '25.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the LaGuardia Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in New York City be between 83-84°F on October 7?
+condition_id: 0x02e27ba6ae745bcfe1602c72ed4a909510d821d136f4f66ab9ff1590f1aaf610
+gamma.resolutionSource: N/A
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the LaGuardia Airport Station in degrees Fahrenheit on 7 Oct '25.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the LaGuardia Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Seattle be between 60-61°F on December 15?
+condition_id: 0x54a7cca5541dc61af6161982d1f62ad3d4ebb7ab59c139287f188ccaacf56c00
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/wa/seatac/KSEA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/wa/seatac/KSEA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Seattle-Tacoma International Airport Station in degrees Fahrenheit on 15 Dec '25.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Seattle-Tacoma International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/wa/seatac/KSEA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Toronto be -1°C or higher on February 5?
+condition_id: 0x681b3c134b42ea2c6cfb1bca03bfbc25b364f3e39484f5f4cbf2ef013cd5b8ec
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ca/mississauga/CYYZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ca/mississauga/CYYZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Toronto Pearson Intl Airport Station in degrees Celsius on 5 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Toronto Pearson Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ca/mississauga/CYYZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Wellington be 15°C or below on February 5?
+condition_id: 0xc005b8e5a65ad79b87b6f2e15c765aa5b0af7fb68fa4b38cae2992e64d249c39
+gamma.resolutionSource: https://www.wunderground.com/history/daily/nz/wellington/NZWN
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/nz/wellington/NZWN.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Wellington Intl Airport Station in degrees Celsius on 5 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Wellington Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/nz/wellington/NZWN.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Buenos Aires be 30°C on February 12?
+condition_id: 0x631d8696eb08059b7896f02937b534e1a36bb92b1df058ce7f5be0d83cc77867
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Minister Pistarini Intl Airport Station in degrees Celsius on 12 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Minister Pistarini Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Dallas be between 72-73°F on February 16?
+condition_id: 0x87233e2b412c7dd292d3022998bd69faace8cedac6e18593c43d471b5a8a501a
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/tx/dallas/KDAL
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/tx/dallas/KDAL.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Dallas Love Field Station in degrees Fahrenheit on 16 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Dallas Love Field Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/tx/dallas/KDAL.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Atlanta be between 50-51°F on February 23?
+condition_id: 0x70ada6b7b27e41d695018b8be5541a59ab201e19c2138c92b28dfdda5d291d76
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Hartsfield-Jackson International Airport Station in degrees Fahrenheit on 23 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Hartsfield-Jackson International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be 13°C on February 24?
+condition_id: 0xac786bb939a9bfd27d3319fa7072eea43c7b9b45e6d044b64deeeec846ee21a6
+gamma.resolutionSource: https://www.wunderground.com/history/daily/gb/london/EGLC
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Celsius on 24 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be 18°C on February 25?
+condition_id: 0x4f2e29a96f68d743a0c8137967a7db5f78d5f2342f9304c631c6ed50092fc932
+gamma.resolutionSource: https://www.wunderground.com/history/daily/gb/london/EGLC
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Celsius on 25 Feb '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 36°C on March 23?
+condition_id: 0x2166353da5884af7b796403072bade072aae3ec8ed944725d71f018d66511681
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 23 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be 19°C or higher on March 23?
+condition_id: 0x45a7217d65f0224f90bdec707e430917a0a16501a6720fd49689612610b29abb
+gamma.resolutionSource: https://www.wunderground.com/history/daily/gb/london/EGLC
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Celsius on 23 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Hong Kong be 23°C on March 23?
+condition_id: 0x5b4f7e8fc62a6b114500b1e0c2b0ca6eb9fa4261d7f502ed472b0fd65670f262
+gamma.resolutionSource: N/A
+step2.source_from_rules: hk_observatory
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.weather.gov.hk/en/cis/climat.htm
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded by the Hong Kong Observatory in degrees Celsius on 23 Mar '26.
+
+The resolution source for this market will be information from the Hong Kong Observatory, specifically the "Absolute Daily Max (deg. C)" the specified date once information is finalized in the relevant "Daily Extract", available here: https://www.weather.gov.hk/en/cis/climat.htm
+
+This market can not resolve to "Yes" until data for this date has been finalized.
+
+The resolution source for this market measures temperatures in Celsius to one decimal place (eg, 9.1°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Buenos Aires be 29°C or higher on March 23?
+condition_id: 0x5dc921085c7a98b166268435833969f394c095e743af0fb29d9eb4885af32e18
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Minister Pistarini Intl Airport Station in degrees Celsius on 23 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Minister Pistarini Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Atlanta be 84°F or higher on March 23?
+condition_id: 0x6d53789326534e8805cfbe07263210be2b54b2e8f67efa7f6fbcd419f70080c5
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Hartsfield-Jackson International Airport Station in degrees Fahrenheit on 23 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Hartsfield-Jackson International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 31°C or below on March 23?
+condition_id: 0xe1535ec7078e0942676322d453c7eedee0f72149ce43816b0307ee15b69397bd
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 23 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 33°C on March 24?
+condition_id: 0x0b0a8dfc94f8c7b56665ea447e32e0f37bd56fb7a591598ee51fd93b2e950371
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Beijing be 20°C on March 23?
+condition_id: 0x1aa4972fc4c2fc59b6e63625e3e49f53700aba001319f29ecc2fc5ea213c342c
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/beijing/ZBAA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Beijing Capital International Airport Station in degrees Celsius on 23 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Beijing Capital International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Denver be between 78-79°F on March 24?
+condition_id: 0x3d8364e849e9e682f098db808507c30f96fb8112cd9accb76255714781e7a9bc
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/co/denver/KDEN
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/co/denver/KDEN.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Denver International Airport Station in degrees Fahrenheit on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Denver International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/co/denver/KDEN.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Atlanta be between 76-77°F on March 24?
+condition_id: 0x46fb1f6801a5e5624efa801bf460c421165a4c3f734922f1badeba7678dfe60c
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Hartsfield-Jackson International Airport Station in degrees Fahrenheit on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Hartsfield-Jackson International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Buenos Aires be 28°C on March 24?
+condition_id: 0x631a9c9fc1d1c74a77408492244ec0defe02bd0e90c14cd3f81de02235289638
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Minister Pistarini Intl Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Minister Pistarini Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Madrid be 14°C on March 24?
+condition_id: 0x65ea8a320279b75cbcd15555bad44b93aceda3b7d47905f9b2cfb653ee0dc3d3
+gamma.resolutionSource: https://www.wunderground.com/history/daily/es/madrid/LEMD
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/es/madrid/LEMD.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Adolfo Suárez Madrid-Barajas Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Adolfo Suárez Madrid-Barajas Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/es/madrid/LEMD.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 32°C on March 24?
+condition_id: 0x6e6a09f8640d56bfdf94af207bc710651a6df035f5109c63db2344d1f1956057
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Madrid be 13°C or below on March 24?
+condition_id: 0x74ec5b8ec0949fa919163a3b540883cd8835550fb28ad654fb97afe5c960f531
+gamma.resolutionSource: https://www.wunderground.com/history/daily/es/madrid/LEMD
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/es/madrid/LEMD.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Adolfo Suárez Madrid-Barajas Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Adolfo Suárez Madrid-Barajas Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/es/madrid/LEMD.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 37°C on March 24?
+condition_id: 0x77e3985f3a3e7da07054fa141170a742c1c0fabb16b8234e040ce2c3775b1270
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Buenos Aires be 32°C on March 24?
+condition_id: 0xa9e4a1159ce30289ad76b48d477d522db57118d95955515a91b3d2c26663c71b
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Minister Pistarini Intl Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Minister Pistarini Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Denver be between 80-81°F on March 24?
+condition_id: 0xb2b120140876fb4c260d6041dab09fa43961f3fdbf98717e7d1f1429c350e624
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/co/denver/KDEN
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/co/denver/KDEN.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Denver International Airport Station in degrees Fahrenheit on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Denver International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/co/denver/KDEN.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Seoul be 12°C on March 24?
+condition_id: 0xb50fd0e8569928782e0320442abd2f54bc84a08f080c51099709eac8719f9dcc
+gamma.resolutionSource: https://www.wunderground.com/history/daily/kr/incheon/RKSI
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/kr/incheon/RKSI.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Incheon Intl Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Incheon Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/kr/incheon/RKSI.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Shanghai be 16°C on March 24?
+condition_id: 0xcc2ad85eb99601771f094a767a8100808c12c0c58bbc203eb3cc5526beeacec6
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Shanghai Pudong International Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Shanghai Pudong International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 33°C or below on March 25?
+condition_id: 0x07b643c1e6f62c17d3e5a9b3160cecbd485fd7945342d05337708f364eabbb66
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Paris be 15°C on March 25?
+condition_id: 0x18134db3b0f2ec59bb9eb2afaf36670e3553655be707d5c694ab7c3c092e5587
+gamma.resolutionSource: https://www.wunderground.com/history/daily/fr/paris/LFPG
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/fr/paris/LFPG.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Charles de Gaulle Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Charles de Gaulle Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/fr/paris/LFPG.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Hong Kong be 24°C on March 25?
+condition_id: 0x21c1a3b66aceec1ddf1cdf64c88e804ce1c6210309d52d8ec3dadfcf3a75f8af
+gamma.resolutionSource: N/A
+step2.source_from_rules: hk_observatory
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.weather.gov.hk/en/cis/climat.htm
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded by the Hong Kong Observatory in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from the Hong Kong Observatory, specifically the "Absolute Daily Max (deg. C)" the specified date once information is finalized in the relevant "Daily Extract", available here: https://www.weather.gov.hk/en/cis/climat.htm
+
+This market can not resolve to "Yes" until data for this date has been finalized.
+
+The resolution source for this market measures temperatures in Celsius to one decimal place (eg, 9.1°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Buenos Aires be 20°C or below on March 25?
+condition_id: 0x425280865703f6a534c41b2d9197dd91e57f3cdb45184333a7ad6b6fab647e45
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Minister Pistarini Intl Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Minister Pistarini Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Paris be 9°C on March 25?
+condition_id: 0x556f669861ba2d0b3f1b08aebfad2ee26f2276f74251800ef0752c858ed43d7b
+gamma.resolutionSource: https://www.wunderground.com/history/daily/fr/paris/LFPG
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/fr/paris/LFPG.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Charles de Gaulle Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Charles de Gaulle Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/fr/paris/LFPG.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Beijing be 16°C on March 24?
+condition_id: 0x7985de0e7669807ba76341f80bfc43f1aa77ec9098a4a914374e9e7fc6f7d51c
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/beijing/ZBAA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Beijing Capital International Airport Station in degrees Celsius on 24 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Beijing Capital International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Buenos Aires be 30°C or higher on March 25?
+condition_id: 0xa55347fd74ab71d8e5ffdb610b94f9100f971df477d320a19b4281155dd2f4ab
+gamma.resolutionSource: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Minister Pistarini Intl Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Minister Pistarini Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/ar/ezeiza/SAEZ.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in New York City be between 52-53°F on March 25?
+condition_id: 0xa5921d7e2c9ef9f59c0e33da63b4c542887b491455ea52b36acd67afa7d7d6f5
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the LaGuardia Airport Station in degrees Fahrenheit on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the LaGuardia Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in London be 14°C on March 25?
+condition_id: 0xab45ed91f057e6df25306d1dae868c77da214ca1496998a6378af8d18ce2f051
+gamma.resolutionSource: https://www.wunderground.com/history/daily/gb/london/EGLC
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/gb/london/EGLC.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the London City Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the London City Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/gb/london/EGLC.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Chengdu be 14°C or below on March 25?
+condition_id: 0xc54f6648dd95a8eeaeb785d4f58f59f96cd4cce901d8912d695165839ca2bc55
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/chengdu/ZUUU
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/chengdu/ZUUU.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chengdu Shuangliu International Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chengdu Shuangliu International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/chengdu/ZUUU.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Lucknow be 37°C on March 25?
+condition_id: 0xc81f01d5bafff3d8bc2a8940eaf1195c14a5c08b9d5c894995a3b694ac2ece6d
+gamma.resolutionSource: https://www.wunderground.com/history/daily/in/lucknow/VILK
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Chaudhary Charan Singh Intl Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Chaudhary Charan Singh Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/in/lucknow/VILK.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Atlanta be between 54-55°F on March 25?
+condition_id: 0xd39b7cef75abec6d2cadd2d632abc14152ee871c5861a14071e8b3eb3ec2e991
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Hartsfield-Jackson International Airport Station in degrees Fahrenheit on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Hartsfield-Jackson International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ga/atlanta/KATL.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Austin be between 100-101°F on March 25?
+condition_id: 0xd445afca91188f0deb6fbb726c93e9e6c3fa625a710f904db8331f295ba290cf
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/tx/austin/KAUS
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/tx/austin/KAUS.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Austin-Bergstrom International Airport Station in degrees Fahrenheit on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Austin-Bergstrom International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/tx/austin/KAUS.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Beijing be 20°C on March 25?
+condition_id: 0xf1b997457ffb89f90c5c73cef4165558894c2c9288f68c8d2ef6a415051a0e03
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/beijing/ZBAA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Beijing Capital International Airport Station in degrees Celsius on 25 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Beijing Capital International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in San Francisco be between 58-59°F on March 26?
+condition_id: 0x43c19bce6f2887d2eb5a96cc19a30e8ec38702b7af61db37dc5246e109d6b237
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/ca/san-francisco/KSFO
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/ca/san-francisco/KSFO.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the San Francisco International Airport Station in degrees Fahrenheit on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the San Francisco International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/ca/san-francisco/KSFO.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Dallas be between 96-97°F on March 26?
+condition_id: 0x5228feff111181bdaa5af758eb87d008dfbc30a1869c76dfed20dfe299d6da26
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/tx/dallas/KDAL
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/tx/dallas/KDAL.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Dallas Love Field Station in degrees Fahrenheit on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Dallas Love Field Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/tx/dallas/KDAL.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Tokyo be 15°C on March 26?
+condition_id: 0x8eb28eeb7bb7a689227952df3585590ccc70ed80b5cd158e7448280179f187d2
+gamma.resolutionSource: https://www.wunderground.com/history/daily/jp/tokyo/RJTT
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/jp/tokyo/RJTT.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Tokyo Haneda Airport Station in degrees Celsius on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Tokyo Haneda Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/jp/tokyo/RJTT.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Shanghai be 21°C on March 26?
+condition_id: 0x93057a632a55b4206b024edd93a0b0cc7006b637b754a4f006c7875c9070ce9f
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Shanghai Pudong International Airport Station in degrees Celsius on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Shanghai Pudong International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Wellington be 11°C on March 26?
+condition_id: 0xda9a5fd8e64899ea9fadab03cb0aaf8671dd9e99f92abc1f8a7c6b8d36fe6bb1
+gamma.resolutionSource: https://www.wunderground.com/history/daily/nz/wellington/NZWN
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/nz/wellington/NZWN.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Wellington Intl Airport Station in degrees Celsius on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Wellington Intl Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/nz/wellington/NZWN.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Denver be 90°F or higher on March 26?
+condition_id: 0xe08fcb2106f50abd0c3526f70c827167a604ac2cd92b08d2cf7bb97e2e30904a
+gamma.resolutionSource: https://www.wunderground.com/history/daily/us/co/denver/KDEN
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/us/co/denver/KDEN.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Denver International Airport Station in degrees Fahrenheit on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Denver International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/us/co/denver/KDEN.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Fahrenheit (eg, 21°F). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Beijing be 26°C on March 26?
+condition_id: 0xead3443023a6ea1965034b803ee75b54e3b1e788a22c63e974bab408e0baf519
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/beijing/ZBAA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Beijing Capital International Airport Station in degrees Celsius on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Beijing Capital International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Shanghai be 17°C on March 26?
+condition_id: 0xf6adb37e1f151b700b5e1866eeb20cf99c3f88f241148856a4f6b29ad490aa7e
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Shanghai Pudong International Airport Station in degrees Celsius on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Shanghai Pudong International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/shanghai/ZSPD.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Tokyo be 11°C on March 26?
+condition_id: 0xf882793b74760958a1114c1277ccd70fc96dcf35ebc2c4b1e6c88ded8970dd94
+gamma.resolutionSource: https://www.wunderground.com/history/daily/jp/tokyo/RJTT
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/jp/tokyo/RJTT.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Tokyo Haneda Airport Station in degrees Celsius on 26 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Tokyo Haneda Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/jp/tokyo/RJTT.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Sao Paulo be 28°C on March 27?
+condition_id: 0x0bbbb5d783b53473f325dcffbcbc571a8ecaf8ca07261941b60853f11ce73bd6
+gamma.resolutionSource: https://www.wunderground.com/history/daily/br/guarulhos/SBGR
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/br/guarulhos/SBGR.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Sao Paulo-Guarulhos International Airport Station in degrees Celsius on 27 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Sao Paulo-Guarulhos International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/br/guarulhos/SBGR.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Beijing be 16°C or below on March 27?
+condition_id: 0x1f111ae10a40652cd4bd7748a10693682ee500ccf7e5e8865a14d8aac44fae08
+gamma.resolutionSource: https://www.wunderground.com/history/daily/cn/beijing/ZBAA
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Beijing Capital International Airport Station in degrees Celsius on 27 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Beijing Capital International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/cn/beijing/ZBAA.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Sao Paulo be 30°C on March 27?
+condition_id: 0x456501b463aa20efcdbbd3a92dfae8191fc8ec14f7a48f567974439b0e9bd508
+gamma.resolutionSource: https://www.wunderground.com/history/daily/br/guarulhos/SBGR
+step2.source_from_rules: wunderground
+step2.source_from_gamma_resolutionSource: wunderground
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.wunderground.com/history/daily/br/guarulhos/SBGR.
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded at the Sao Paulo-Guarulhos International Airport Station in degrees Celsius on 27 Mar '26.
+
+The resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day by the Forecast for the Sao Paulo-Guarulhos International Airport Station once information is finalized, available here: https://www.wunderground.com/history/daily/br/guarulhos/SBGR.
+
+To toggle between Fahrenheit and Celsius, click the gear icon next to the search bar and switch the Temperature setting between °F and °C.
+
+This market can not resolve to "Yes" until all data for this date has been finalized.
+
+The resolution source for this market measures temperatures to whole degrees Celsius (eg, 9°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Hong Kong be 27°C on March 27?
+condition_id: 0x77abd1e490dc72bd4031d8bc250ae71810cd74bfec3c1bb0372040043ba56e4a
+gamma.resolutionSource: N/A
+step2.source_from_rules: hk_observatory
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.weather.gov.hk/en/cis/climat.htm
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded by the Hong Kong Observatory in degrees Celsius on 27 Mar '26.
+
+The resolution source for this market will be information from the Hong Kong Observatory, specifically the "Absolute Daily Max (deg. C)" the specified date once information is finalized in the relevant "Daily Extract", available here: https://www.weather.gov.hk/en/cis/climat.htm
+
+This market can not resolve to "Yes" until data for this date has been finalized.
+
+The resolution source for this market measures temperatures in Celsius to one decimal place (eg, 9.1°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.
+
+--------------------------------------------------------------------------------------------------------------
+Q: Will the highest temperature in Hong Kong be 29°C or higher on March 27?
+condition_id: 0x85928a933777a12c2efc5a8032c9cfa78497be55bc6c10f2bd41c4520afcb787
+gamma.resolutionSource: N/A
+step2.source_from_rules: hk_observatory
+step2.source_from_gamma_resolutionSource: unknown
+step2.urls_from_rules: 1
+step2.first_url_from_rules: https://www.weather.gov.hk/en/cis/climat.htm
+rules_text_full:
+This market will resolve to the temperature range that contains the highest temperature recorded by the Hong Kong Observatory in degrees Celsius on 27 Mar '26.
+
+The resolution source for this market will be information from the Hong Kong Observatory, specifically the "Absolute Daily Max (deg. C)" the specified date once information is finalized in the relevant "Daily Extract", available here: https://www.weather.gov.hk/en/cis/climat.htm
+
+This market can not resolve to "Yes" until data for this date has been finalized.
+
+The resolution source for this market measures temperatures in Celsius to one decimal place (eg, 9.1°C). Thus, this is the level of precision that will be used when resolving the market.
+
+Any revisions to temperatures recorded after data is finalized for this market's timeframe will not be considered for this market's resolution.

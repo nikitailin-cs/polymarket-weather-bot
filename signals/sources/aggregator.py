@@ -11,7 +11,7 @@ Logique de fusion :
 from __future__ import annotations
 import sys, os, math
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from typing import Optional
+from typing import Optional, Callable, Dict, Any
 from signals.sources import open_meteo, noaa, weatherapi, tomorrow_io
 
 # Poids par source (somme = 1.0 si toutes disponibles)
@@ -21,6 +21,81 @@ SOURCE_WEIGHTS = {
     "noaa":         0.20,   # Officiel US, ultra-fiable pour villes US
     "weatherapi":   0.10,   # Bon complément mondial
     "owm":          0.05,   # Moins précis, en dernier recours
+}
+
+ConnectorFn = Callable[[str, str], Optional[float]]
+
+
+def _none_connector(_city: str, _date_str: str) -> Optional[float]:
+    return None
+
+
+# Registry centralisé des connecteurs contractuels (Étape 3).
+# - fetch_temp_max / fetch_precip_mm : fonction de collecte
+# - base_confidence: confiance de base de la source
+# - proxy: True si approximation via une autre source
+CONTRACT_SOURCE_CONNECTORS: Dict[str, Dict[str, Any]] = {
+    "noaa_ghcnd": {
+        "fetch_temp_max": lambda city, date_str: noaa.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.90,
+        "proxy": False,
+    },
+    "wmo_station": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.84,
+        "proxy": True,
+    },
+    "wunderground": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.82,
+        "proxy": True,
+    },
+    "weather_com": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.80,
+        "proxy": True,
+    },
+    "accuweather": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.80,
+        "proxy": True,
+    },
+    "hk_observatory": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.82,
+        "proxy": True,
+    },
+    "meteo_france": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.82,
+        "proxy": True,
+    },
+    "copernicus": {
+        "fetch_temp_max": lambda city, date_str: open_meteo.get_max_temp(city, date_str),
+        "fetch_precip_mm": lambda city, date_str: open_meteo.get_precip_mm(city, date_str),
+        "base_confidence": 0.80,
+        "proxy": True,
+    },
+    # Sources reconnues mais non implémentées localement pour l'instant.
+    "nhc": {
+        "fetch_temp_max": _none_connector,
+        "fetch_precip_mm": _none_connector,
+        "base_confidence": 0.0,
+        "proxy": False,
+    },
+    "nasa_giss": {
+        "fetch_temp_max": _none_connector,  # marché d'anomalie globale, pas station/city-day.
+        "fetch_precip_mm": _none_connector,
+        "base_confidence": 0.0,
+        "proxy": False,
+    },
 }
 
 
@@ -109,6 +184,64 @@ def get_max_temp_consensus(city: str, date_str: str) -> tuple[Optional[float], f
 
     mean, confidence = _weighted_mean(results)
     return mean, confidence, results
+
+
+def get_max_temp_contract_aligned(
+    city: str,
+    date_str: str,
+    oracle_source: str,
+) -> tuple[Optional[float], float, dict]:
+    """
+    Prédiction temp alignée sur la source contractuelle.
+    Retourne (temp, confiance, details).
+    Si la source n'est pas supportée, retourne (None, 0.0, {}).
+    """
+    source = (oracle_source or "").lower().strip()
+    meta = CONTRACT_SOURCE_CONNECTORS.get(source)
+    if meta is None:
+        return None, 0.0, {"reason": "unknown_source"}
+    fetch: ConnectorFn = meta["fetch_temp_max"]
+    value = fetch(city, date_str)
+    if value is None:
+        return None, 0.0, {"reason": "connector_returned_none", "source": source}
+    conf = float(meta.get("base_confidence", 0.75))
+    return value, conf, {source: value, "_router_proxy": bool(meta.get("proxy", False))}
+
+
+def get_precip_contract_aligned(
+    city: str,
+    date_str: str,
+    oracle_source: str,
+) -> tuple[Optional[float], float, dict]:
+    """
+    Précipitations alignées sur la source contractuelle.
+    """
+    source = (oracle_source or "").lower().strip()
+    meta = CONTRACT_SOURCE_CONNECTORS.get(source)
+    if meta is None:
+        return None, 0.0, {"reason": "unknown_source"}
+    fetch: ConnectorFn = meta["fetch_precip_mm"]
+    value = fetch(city, date_str)
+    if value is None:
+        return None, 0.0, {"reason": "connector_returned_none", "source": source}
+    conf = float(meta.get("base_confidence", 0.75))
+    return value, conf, {source: value, "_router_proxy": bool(meta.get("proxy", False))}
+
+
+def is_contract_source_supported(oracle_source: str, weather_variable: str) -> bool:
+    """
+    Vérifie si la source contractuelle est routable pour la variable demandée.
+    """
+    source = (oracle_source or "").lower().strip()
+    var = (weather_variable or "").lower().strip()
+    meta = CONTRACT_SOURCE_CONNECTORS.get(source)
+    if meta is None:
+        return False
+    if var.startswith("temp"):
+        return meta.get("fetch_temp_max") is not _none_connector
+    if var in {"precip", "snow"}:
+        return meta.get("fetch_precip_mm") is not _none_connector
+    return False
 
 
 def get_precip_consensus(city: str, date_str: str) -> tuple[Optional[float], float, dict]:

@@ -54,17 +54,17 @@ def kelly_stake(
     return round(min(k * bankroll, MAX_BET_USD), 2)
 
 
-def _get_contract_info(condition_id: str, spec_cache) -> tuple[float, str]:
+def _get_contract_info(condition_id: str, spec_cache) -> tuple[float, str, object]:
     """
     Récupère (oracle_alignment_score, resolution_source) depuis le cache.
     Retourne (1.0, "uma") par défaut — UMA est la règle sur Polymarket météo.
     """
     if spec_cache is None:
-        return 1.0, "uma"
+        return 1.0, "uma", None
     spec = spec_cache.get(condition_id)
     if spec is None:
-        return 1.0, "uma"
-    return spec.oracle_alignment_score, spec.resolution_source
+        return 1.0, "uma", None
+    return spec.oracle_alignment_score, spec.resolution_source, spec
 
 
 def analyze_market(
@@ -87,7 +87,7 @@ def analyze_market(
 
     # ── Déflation oracle + résolution UMA (v3) ───────────────────────────────
     # Doit être calculé AVANT compute_yes_prob car passé en argument
-    alignment, resolution_source = _get_contract_info(market.condition_id, spec_cache)
+    alignment, resolution_source, spec = _get_contract_info(market.condition_id, spec_cache)
 
     result = compute_yes_prob(
         question          = market.question,
@@ -98,6 +98,7 @@ def analyze_market(
         kelly_stake_usd   = 0.0,    # affiné après kelly_stake
         oracle_alignment  = alignment,
         resolution_source = resolution_source,
+        spec              = spec,
     )
     if result is None:
         return None

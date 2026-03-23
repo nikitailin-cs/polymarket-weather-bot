@@ -34,6 +34,28 @@ def _fetch_gamma(limit: int = GAMMA_LIMIT) -> List[dict]:
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
 
+
+def _extract_resolution_rules(raw: dict) -> str:
+    """
+    Extrait un texte "rules" robuste depuis les champs Gamma connus/optionnels.
+    """
+    candidates: list[str] = []
+    keys = (
+        "resolutionRules", "resolution_rules", "resolutionCriteria",
+        "description", "rules", "details", "clarification",
+    )
+    for k in keys:
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip():
+            candidates.append(v.strip())
+    meta = raw.get("metadata")
+    if isinstance(meta, dict):
+        for k in keys:
+            v = meta.get(k)
+            if isinstance(v, str) and v.strip():
+                candidates.append(v.strip())
+    return "\n".join(candidates)
+
 def _build_market(raw: dict) -> Optional[tuple]:
     if not raw.get("enableOrderBook"):  return None
     if not raw.get("acceptingOrders"):  return None
@@ -123,6 +145,7 @@ def scan_weather_markets(
                 cache              = spec_cache,
                 resolution_source  = resolution_source,
                 liquidity_usd      = liquidity_usd,
+                resolution_rules_text = _extract_resolution_rules(raw),
             )
 
             # Marché écarté : parsing insuffisant ou oracle inconnu
@@ -131,6 +154,13 @@ def scan_weather_markets(
 
             # Marché non tradeable (déjà fermé / résolu côté cache)
             if not spec.is_tradeable:
+                continue
+
+            # Étape 4 (hard guard): ne jamais trader à l'aveugle.
+            # Si la source contractuelle n'est pas routable pour la variable du contrat,
+            # on ignore explicitement le marché.
+            from signals.sources.aggregator import is_contract_source_supported
+            if not is_contract_source_supported(spec.oracle_source, spec.weather_variable):
                 continue
 
         results.append(market)
