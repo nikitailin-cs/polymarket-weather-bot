@@ -11,6 +11,9 @@ from config.settings import DRY_RUN, WEATHER_REFRESH_SEC, CONTRACT_SPECS_FILE
 from monitoring.logger import log
 from monitoring.telegram_alert import alert_start, alert_stop, alert_error
 from monitoring.pnl_tracker import print_open_positions, print_pnl_summary
+from monitoring.onchain_logger import print_onchain_summary
+from signals.model_registry import print_model_info
+from signals.feature_store import print_store_summary
 from scanners.market_scanner import scan_weather_markets
 from scanners.ws_price_feed import start_ws_feed, subscribe_tokens, get_price
 from signals.edge_detector import find_best_trades, print_signals
@@ -38,6 +41,8 @@ def run() -> None:
 
     print_open_positions()
     print_pnl_summary()
+    print_model_info()
+    print_store_summary()
 
     cycle = 0
     try:
@@ -85,6 +90,7 @@ def run() -> None:
             if cycle % CALIBRATION_EVERY_N == 0:
                 print_open_positions()
                 print_pnl_summary()
+                print_onchain_summary()
                 _run_calibration()
 
             log.info(f"Cycle #{cycle} terminé — prochain dans {WEATHER_REFRESH_SEC}s")

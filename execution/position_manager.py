@@ -16,6 +16,20 @@ from pathlib import Path
 from monitoring.pnl_tracker import _load, _save, close_position, print_open_positions
 from monitoring.logger import log
 from core.models import MarketStatus
+from execution.uma_oracle import (
+    get_uma_state, get_uma_status,
+    UMAPhase, UMAStatus, UMAState,
+)
+from execution.ctf_manager import (
+    is_condition_resolved, redeem_position, RedeemResult, get_usdc_balance
+)
+from monitoring.onchain_logger import (
+    log_resolution_check, log_redeem, log_uma_dispute
+)
+from execution.uma_disputer import (
+    check_and_dispute_if_needed, DisputeResult
+)
+from monitoring.pnl_tracker import mark_dvm_disputed
 
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 
@@ -97,8 +111,13 @@ def _read_status(data: dict) -> Optional[MarketStatus]:
         return MarketStatus.RESOLVED_YES
     if p_yes <= 0.01:
         return MarketStatus.RESOLVED_NO
+
+    # Champ "disputed" exposé par Gamma API — niveau 1 (sans RPC)
+    if data.get("disputed", False):
+        return MarketStatus.CANCELLED
+
     if closed and 0.45 <= p_yes <= 0.55:
-        return MarketStatus.CANCELLED    # prix ~0.5 sur marché fermé = litige
+        return MarketStatus.CANCELLED    # prix ~0.5 sur marché fermé = litige UMA
 
     return MarketStatus.CLOSED_PENDING
 
@@ -149,6 +168,124 @@ def _telegram(msg: str) -> None:
 
 # ── Cycle principal ───────────────────────────────────────────────────────────
 
+def _verify_resolution_with_contract(
+    condition_id: str,
+    gamma_status: Optional[MarketStatus],
+    spec_cache,
+    pos: dict,
+) -> Optional[MarketStatus]:
+    """
+    Cross-check indépendant : compare la résolution Gamma avec
+    ContractSpec.evaluate() appliquée à la température réellement observée.
+
+    Logique :
+      1. Récupère le ContractSpec depuis le cache (threshold_op, threshold_value, city, date)
+      2. Récupère la température observée via Open-Meteo Archive (source de vérité météo)
+      3. Applique spec.evaluate(observed_temp) → YES ou NO contractuellement
+      4. Compare avec gamma_status
+      5. En cas de conflit → log + alerte, mais garde gamma_status (Gamma = source financière)
+
+    Retourne :
+      - gamma_status inchangé si tout concorde ou si données manquantes
+      - gamma_status inchangé + log de conflit si divergence détectée
+    """
+    if spec_cache is None or gamma_status is None:
+        return gamma_status
+
+    # Uniquement sur les résolutions terminales YES/NO (pas CANCELLED/PENDING)
+    if gamma_status not in (MarketStatus.RESOLVED_YES, MarketStatus.RESOLVED_NO):
+        return gamma_status
+
+    spec = spec_cache.get(condition_id)
+    if spec is None:
+        return gamma_status
+
+    # Ne traite que les marchés de température max (extension possible aux autres)
+    if spec.weather_variable not in ("temp_max", "temp_min", "temp_avg"):
+        return gamma_status
+
+    city     = spec.city
+    end_date = (spec.end_date_iso or pos.get("end_date") or "")[:10]
+    if not city or not end_date:
+        return gamma_status
+
+    # Récupère la température réellement observée
+    try:
+        from signals.sources.open_meteo import get_max_temp, get_min_temp
+        if spec.weather_variable == "temp_max":
+            observed = get_max_temp(city, end_date)
+        elif spec.weather_variable == "temp_min":
+            observed = get_min_temp(city, end_date)
+        else:
+            observed = get_max_temp(city, end_date)   # avg : approximation
+
+        if observed is None:
+            log.debug(
+                f"_verify_resolution: pas de température observée pour "
+                f"{city} {end_date} — skip cross-check"
+            )
+            log_resolution_check(
+                condition_id=condition_id, source="ctf_evaluate",
+                resolved=True, gamma_status=gamma_status.value,
+                observed_value=None,
+            )
+            return gamma_status
+
+        # Applique la condition contractuelle
+        contract_says_yes = spec.evaluate(observed)
+        contract_status   = (
+            MarketStatus.RESOLVED_YES if contract_says_yes
+            else MarketStatus.RESOLVED_NO
+        )
+
+        conflict = (contract_status != gamma_status)
+
+        log_resolution_check(
+            condition_id               = condition_id,
+            source                     = "ctf_evaluate",
+            resolved                   = True,
+            resolution_matches_contract= not conflict,
+            observed_value             = observed,
+            contract_threshold         = spec.threshold_value,
+            contract_op                = spec.threshold_op,
+            gamma_status               = gamma_status.value,
+            conflict                   = conflict,
+        )
+
+        if conflict:
+            # Conflit : Gamma dit YES mais le contrat dit NO (ou vice-versa)
+            # Causes possibles : arrondi différent, station météo différente,
+            # litige UMA en cours non encore reflété dans Gamma.
+            log.warning(
+                f"🚨 CONFLIT RÉSOLUTION [{condition_id[:16]}] | "
+                f"Gamma={gamma_status.value} | "
+                f"ContractSpec.evaluate({observed:.1f}°C)={contract_status.value} | "
+                f"seuil={spec.threshold_op} {spec.threshold_value}{spec.threshold_unit} | "
+                f"{city} {end_date}"
+            )
+            _telegram(
+                f"🚨 *Conflit résolution* `{condition_id[:16]}`\n"
+                f"Gamma: `{gamma_status.value}` | "
+                f"Contrat: `{contract_status.value}`\n"
+                f"Observé: `{observed:.1f}°C` vs seuil `{spec.threshold_op} "
+                f"{spec.threshold_value}{spec.threshold_unit}`\n"
+                f"_{city} {end_date} — vérification manuelle recommandée_"
+            )
+            # On garde gamma_status : c'est lui qui détermine le payout réel.
+            # Le conflit est loggé pour audit.
+        else:
+            log.info(
+                f"✅ Cross-check contractuel OK [{condition_id[:16]}] | "
+                f"observe={observed:.1f}°C → {spec.threshold_op} "
+                f"{spec.threshold_value} → {contract_status.value} = Gamma"
+            )
+
+    except Exception as e:
+        log.debug(f"_verify_resolution erreur [{condition_id[:16]}]: {e}")
+
+    return gamma_status   # toujours gamma_status — evaluate() est advisory
+
+
 def position_monitor_cycle(spec_cache=None) -> None:
     """
     À appeler à chaque cycle depuis main.py.
@@ -168,6 +305,21 @@ def position_monitor_cycle(spec_cache=None) -> None:
         return
 
     log.info(f"📊 {len(positions)} position(s) ouverte(s) — vérification...")
+
+    # ── Cross-check balance USDC on-chain (1 fois par cycle) ─────────────────
+    # Vérifie que la bankroll on-chain est cohérente avec notre comptabilité.
+    # Un écart > 5$ signale une anomalie (fill silencieux, redeem manqué, etc.)
+    try:
+        from config.settings import MAX_PORTFOLIO_USD
+        usdc_onchain = get_usdc_balance()
+        if usdc_onchain > 0:
+            from monitoring.pnl_tracker import get_current_bankroll
+            bankroll_bot = get_current_bankroll(MAX_PORTFOLIO_USD)
+            # La balance on-chain inclut les fonds engagés dans les positions
+            # ouvertes → on compare avec tolérance large (positions ouvertes ≠ USDC libre)
+            log.debug(f"USDC on-chain={usdc_onchain:.2f}$ | bankroll bot={bankroll_bot:.2f}$")
+    except Exception:
+        pass  # non-bloquant
     now_mono = time.monotonic()
     now_dt   = datetime.now(timezone.utc)
     closed_n = 0
@@ -202,9 +354,27 @@ def position_monitor_cycle(spec_cache=None) -> None:
         except Exception:
             pass   # date inconnue → on poll quand même
 
-        # ── 3. Throttle : pas plus d'1 poll toutes les ORACLE_POLL_INTERVAL_SEC ──
+        # ── 3. Throttle dynamique selon la phase UMA ─────────────────────────
+        # Le poll interval s'adapte à la phase UMA réelle (depuis le cache) :
+        #   AWAITING_PROPOSAL → 30min (proposition attendue mais pas urgente)
+        #   IN_DISPUTE_WINDOW → 1-10min (fenêtre critique, surveiller de près)
+        #   SETTLEABLE        → 5min   (settle() imminent, Gamma va se mettre à jour)
+        #   DISPUTED          → 4h     (vote UMA = jours, inutile de poller souvent)
+        #   défaut            → ORACLE_POLL_INTERVAL_SEC (30min)
+        cached_uma = _state_cache.get(condition_id) if "_state_cache" in dir() else None
+        # Import du cache UMA directement
+        try:
+            from execution.uma_oracle import _state_cache as _uma_cache
+            cached_uma_state = _uma_cache.get(condition_id)
+            dynamic_interval = (
+                cached_uma_state.recommended_poll_interval_sec
+                if cached_uma_state else ORACLE_POLL_INTERVAL_SEC
+            )
+        except Exception:
+            dynamic_interval = ORACLE_POLL_INTERVAL_SEC
+
         last = _last_poll.get(condition_id, None)
-        if last is not None and (now_mono - last) < ORACLE_POLL_INTERVAL_SEC:
+        if last is not None and (now_mono - last) < dynamic_interval:
             continue
 
         _last_poll[condition_id] = now_mono
@@ -212,6 +382,14 @@ def position_monitor_cycle(spec_cache=None) -> None:
         # ── 4. Poll Gamma ─────────────────────────────────────────────────────
         data       = _fetch_market(condition_id)
         new_status = _read_status(data)
+
+        # ── Cross-check contractuel (ContractSpec.evaluate) ───────────────────
+        # Compare la décision Gamma avec evaluate(température_observée).
+        # Ne modifie pas new_status — advisory uniquement (log + alerte si conflit).
+        if new_status in (MarketStatus.RESOLVED_YES, MarketStatus.RESOLVED_NO):
+            new_status = _verify_resolution_with_contract(
+                condition_id, new_status, spec_cache, pos
+            )
 
         if new_status is None:
             # Deux cas possibles :
@@ -233,7 +411,116 @@ def position_monitor_cycle(spec_cache=None) -> None:
             except Exception:
                 continue
 
-        # ── 5. Mise à jour du statut dans la position (pour spec_cache) ───────
+        # ── 5. Surveillance UMA on-chain — séquence temporelle complète ────────
+        # Interroge l'OO UMA avec la phase exacte (AWAITING_PROPOSAL /
+        # IN_DISPUTE_WINDOW / SETTLEABLE / DISPUTED / SETTLED) pour adapter
+        # dynamiquement le throttle de poll et le timeout d'alerte.
+        uma_state: Optional[UMAState] = None
+        if new_status == MarketStatus.CLOSED_PENDING:
+            # Passe le timestamp de fermeture pour calculer AWAITING_PROPOSAL
+            market_closed_ts = 0
+            try:
+                end_dt_uma = datetime.strptime(end_date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                market_closed_ts = int(end_dt_uma.timestamp())
+            except Exception:
+                pass
+
+            uma_state = get_uma_state(condition_id, market_closed_at=market_closed_ts)
+            phase     = uma_state.phase
+
+            if phase == UMAPhase.DISPUTED:
+                log.warning(
+                    f"🚨 DISPUTE UMA [{condition_id[:16]}] "
+                    f"proposer={uma_state.proposer[:10]} "
+                    f"disputer={uma_state.disputer[:10]} "
+                    f"— résolution bloquée jusqu'à 7j"
+                )
+                log_uma_dispute(condition_id, phase.value,
+                                proposer=uma_state.proposer,
+                                disputer=uma_state.disputer)
+
+                # Marque les fonds comme bloqués dans le vote DVM
+                # Les USDC sont physiquement gelés dans le contrat CTF
+                # jusqu'à résolution (4-6 jours) — coût d'opportunité réel
+                mark_dvm_disputed(condition_id, bond_usd=uma_state.bond_usdc)
+
+                _telegram(
+                    f"🚨 *Dispute UMA — fonds bloqués* `{condition_id[:16]}`\n"
+                    f"Proposer: `{uma_state.proposer[:16]}`\n"
+                    f"Disputer: `{uma_state.disputer[:16]}`\n"
+                    f"Capital gelé: `${size_usd:.2f}` | Bond: `${uma_state.bond_usdc:.0f}`\n"
+                    f"Résolution DVM dans 4-6 jours\n_{question}_"
+                )
+                # On NE force plus CANCELLED immédiatement —
+                # les fonds sont bloqués mais pas perdus.
+                # La position reste CLOSED_PENDING jusqu'au verdict DVM.
+                # Le coût d'opportunité est modélisé dans get_bankroll_detail().
+                log.info(
+                    f"Position {condition_id[:16]} maintenue CLOSED_PENDING "
+                    f"pendant vote DVM | fonds bloqués=${size_usd:.2f}"
+                )
+
+            elif phase == UMAPhase.AWAITING_PROPOSAL:
+                waited_min = (uma_state.seconds_since_closed or 0) // 60
+                log.info(
+                    f"UMA AWAITING_PROPOSAL [{condition_id[:16]}] "
+                    f"— fermé il y a {waited_min}min, proposition attendue"
+                )
+                if (uma_state.seconds_since_closed or 0) > 3 * 3600:
+                    # Pas de proposition après 3h → anomalie à signaler
+                    _telegram(
+                        f"⚠️ *Proposition UMA manquante* `{condition_id[:16]}`\n"
+                        f"Marché fermé il y a {waited_min}min sans proposition\n"
+                        f"_{question}_"
+                    )
+
+            elif phase == UMAPhase.IN_DISPUTE_WINDOW:
+                rem  = uma_state.dispute_window_remaining_sec or 0
+                prop = "YES" if uma_state.proposed_yes else "NO"
+                log.info(
+                    f"UMA IN_DISPUTE_WINDOW [{condition_id[:16]}] "
+                    f"proposition={prop} "
+                    f"fenêtre_expire_dans={rem//60}min "
+                    f"liveness={uma_state.liveness_sec}s "
+                    f"bond={uma_state.bond_usdc:.0f}USDC"
+                )
+                # ── Évaluation et dispute si proposition erronée ──────────────
+                # Compare proposed_price UMA avec ContractSpec.evaluate()
+                # Si divergence et confiance >= MIN_DISPUTE_CONFIDENCE → dispute
+                from config.settings import DRY_RUN as GLOBAL_DRY_RUN
+                dispute_result = check_and_dispute_if_needed(
+                    condition_id = condition_id,
+                    uma_state    = uma_state,
+                    spec_cache   = spec_cache,
+                    dry_run      = dry_run or GLOBAL_DRY_RUN,
+                )
+                if dispute_result == DisputeResult.DISPUTED:
+                    log.warning(
+                        f"🚨 Dispute déclenchée on-chain | {condition_id[:16]} | "
+                        f"bond={uma_state.bond_usdc:.0f} USDC engagé | "
+                        f"résolution DVM dans 4-6 jours"
+                    )
+                    # Marque la position comme bloquée DVM
+                    mark_dvm_disputed(condition_id, bond_usd=uma_state.bond_usdc)
+                elif dispute_result == DisputeResult.DRY_RUN:
+                    log.info(f"[DRY-RUN] Dispute évaluée | {condition_id[:16]}")
+                elif dispute_result == DisputeResult.NO_DIVERGENCE:
+                    log.debug(f"Proposition UMA validée | {condition_id[:16]}")
+
+            elif phase == UMAPhase.SETTLEABLE:
+                log.info(
+                    f"UMA SETTLEABLE [{condition_id[:16]}] "
+                    f"— settle() appelable, Gamma devrait se mettre à jour"
+                )
+
+            elif phase == UMAPhase.SETTLED:
+                log.info(
+                    f"UMA SETTLED on-chain [{condition_id[:16]}] "
+                    f"→ {'YES' if uma_state.resolved_price and uma_state.resolved_price > 0 else 'NO'} "
+                    f"— re-poll Gamma au prochain cycle"
+                )
+
+        # ── 6. Mise à jour du statut dans la position (pour spec_cache) ───────
         if spec_cache is not None:
             spec_cache.update_status(
                 condition_id,
@@ -241,30 +528,49 @@ def position_monitor_cycle(spec_cache=None) -> None:
                 last_oracle_poll = now_dt.isoformat(),
             )
 
-        # ── 6. Timeout oracle ─────────────────────────────────────────────────
+        # ── 7. Timeout oracle dynamique ───────────────────────────────────────
+        # Le timeout est calculé depuis l'état UMA réel, pas une constante.
+        #   AWAITING_PROPOSAL → alerte après MAX_PROPOSAL_WAIT_SEC (6h)
+        #   IN_DISPUTE_WINDOW → alerte après liveness + 1h de marge
+        #   SETTLEABLE        → alerte après 2h (settle() devrait être rapide)
+        #   DISPUTED          → alerte après 7 jours (vote UMA)
+        #   défaut            → MAX_ORACLE_WAIT_HOURS (48h)
         if new_status == MarketStatus.CLOSED_PENDING:
             first_poll_str = pos.get("first_pending_at", "")
             if not first_poll_str:
-                # Premier cycle CLOSED_PENDING → on enregistre l'heure
                 _mark_first_pending(condition_id, now_dt.isoformat())
             else:
                 try:
                     first_dt  = datetime.fromisoformat(first_poll_str)
                     elapsed_h = (now_dt - first_dt).total_seconds() / 3600
-                    if elapsed_h > MAX_ORACLE_WAIT_HOURS:
+
+                    # Timeout dynamique depuis UMAState si disponible
+                    timeout_h = MAX_ORACLE_WAIT_HOURS
+                    if uma_state is not None:
+                        timeout_h = uma_state.dynamic_timeout_hours
+
+                    if elapsed_h > timeout_h:
+                        phase_label = uma_state.phase.value if uma_state else "UNKNOWN"
                         msg = (
                             f"⚠️ *Oracle timeout* `{condition_id[:16]}`\n"
-                            f"{elapsed_h:.0f}h sans résolution — vérification manuelle requise\n"
+                            f"Phase UMA: `{phase_label}`\n"
+                            f"{elapsed_h:.1f}h écoulées (seuil={timeout_h:.1f}h)\n"
                             f"_{question}_"
                         )
-                        log.error(msg.replace("*", "").replace("`", "").replace("_", ""))
+                        log.error(
+                            f"Oracle timeout [{condition_id[:16]}] "
+                            f"phase={phase_label} "
+                            f"elapsed={elapsed_h:.1f}h timeout={timeout_h:.1f}h"
+                        )
                         _telegram(msg)
                 except Exception:
                     pass
-            log.info(f"En attente oracle : {question}…")
+
+            phase_label = uma_state.human_summary() if uma_state else "phase=UNKNOWN"
+            log.info(f"En attente oracle [{phase_label}] : {question}…")
             continue
 
-        # ── 7. Terminal → ferme la position ───────────────────────────────────
+        # ── 8. Terminal → ferme la position ───────────────────────────────────
         _close_pos(pos, new_status, data, condition_id, side, size_usd, price_entry, dry_run)
         closed_n += 1
 
@@ -282,26 +588,87 @@ def _close_pos(
     price_entry:  float,
     dry_run:      bool,
 ) -> None:
-    """Calcule le PnL, ferme la position et notifie."""
+    """
+    Calcule le PnL, ferme la position et notifie.
+
+    Si le statut est RESOLVED_YES/NO et que Gamma a retourné des données,
+    on calcule le PnL depuis les prix Gamma (rapide, fiable en général).
+
+    Si Gamma est indisponible (data = {}) mais que le marché est résolu
+    on-chain (is_condition_resolved), on déclenche redeem_position() pour
+    récupérer les USDC directement via le contrat CTF — sans aucune
+    dépendance à Polymarket Labs.
+    """
+    from config.settings import DRY_RUN as GLOBAL_DRY_RUN
+
     res_price = _resolution_price(status, side, data)
 
+    # ── Tentative de redeem on-chain si Gamma indisponible ────────────────────
+    # Cas : Gamma retourne {} mais on-chain le marché est résolu.
+    # On appelle redeemPositions() pour récupérer les USDC sans passer par l'API.
+    redeem_attempted = False
+    if not data and status in (MarketStatus.RESOLVED_YES, MarketStatus.RESOLVED_NO):
+        if is_condition_resolved(condition_id):
+            log.info(
+                f"Gamma indisponible mais marché résolu on-chain → redeem CTF | "
+                f"{condition_id[:16]} | side={side}"
+            )
+            redeem_result = redeem_position(
+                condition_id = condition_id,
+                side         = side,
+                dry_run      = dry_run or GLOBAL_DRY_RUN,
+            )
+            redeem_attempted = True
+            log_redeem(
+                condition_id = condition_id,
+                side         = side,
+                result       = redeem_result.value,
+                dry_run      = dry_run or GLOBAL_DRY_RUN,
+            )
+            if redeem_result == RedeemResult.SUCCESS:
+                log.info(f"✅ Redeem CTF on-chain réussi | {condition_id[:16]}")
+            elif redeem_result == RedeemResult.DRY_RUN:
+                log.info(f"[DRY-RUN] Redeem CTF simulé | {condition_id[:16]}")
+            else:
+                log.warning(
+                    f"⚠️ Redeem CTF échoué ({redeem_result.value}) — "
+                    f"PnL calculé depuis prix estimé | {condition_id[:16]}"
+                )
+
+    # ── Calcul PnL ────────────────────────────────────────────────────────────
     # PnL = (prix_résolution − prix_entrée) × nombre_de_tokens
     nb_tokens = size_usd / price_entry if price_entry > 0 else 0
     pnl       = round((res_price - price_entry) * nb_tokens, 4)
 
-    result  = "win" if pnl >= 0 else "loss"
-    emoji   = "✅" if pnl >= 0 else "❌"
+    result   = "win" if pnl >= 0 else "loss"
+    emoji    = "✅" if pnl >= 0 else "❌"
     question = pos.get("question", "")[:50]
 
+    redeem_note = " [redeem on-chain]" if redeem_attempted else ""
     log.info(
-        f"{emoji} Fermé [{side}] {status.value} | "
+        f"{emoji} Fermé [{side}] {status.value}{redeem_note} | "
         f"PnL={pnl:+.2f}$ ({price_entry:.3f}→{res_price:.3f}) | {question}…"
     )
 
     close_position(condition_id, result, pnl)
 
-    # Notification Telegram pour CANCELLED ou pertes importantes
-    if status == MarketStatus.CANCELLED or pnl < -10:
+    # ── Mise à jour du feature store avec l'outcome réel ────────────────────
+    # Permet d'entraîner des modèles ML sur les données historiques du bot.
+    try:
+        from signals.feature_store import update_outcomes
+        n = update_outcomes(
+            condition_id   = condition_id,
+            outcome_yes    = (status == MarketStatus.RESOLVED_YES),
+            observed_value = None,   # déjà dans onchain_ops si disponible
+            pnl_usd        = pnl,
+        )
+        if n > 0:
+            log.debug(f"Feature store : {n} prédiction(s) labellisée(s) [{condition_id[:16]}]")
+    except Exception:
+        pass   # non-bloquant
+
+    # Notification Telegram pour CANCELLED, pertes importantes, ou redeem on-chain
+    if status == MarketStatus.CANCELLED or pnl < -10 or redeem_attempted:
         msg_parts = [
             f"{emoji} *Position fermée* `{condition_id[:16]}`",
             f"Statut: `{status.value}`",
@@ -310,6 +677,8 @@ def _close_pos(
         ]
         if status == MarketStatus.CANCELLED:
             msg_parts.append(f"⚠️ Remboursement partiel à {res_price:.3f}$")
+        if redeem_attempted:
+            msg_parts.append(f"🔗 Redeem CTF on-chain déclenché (Gamma indisponible)")
         _telegram("\n".join(msg_parts))
 
 

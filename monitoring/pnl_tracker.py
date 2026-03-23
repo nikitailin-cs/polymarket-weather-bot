@@ -45,42 +45,51 @@ def _save(path: Path, data: Any) -> None:
 # ── Enregistrement des trades ─────────────────────────────────────────────────
 
 def record_trade(
-    condition_id:  str,
-    token_id:      str,
-    question:      str,
-    side:          str,
-    size_usd:      float,
-    price:         float,
-    edge:          float,
-    our_prob:      float,
-    market_prob:   float,
-    confidence:    float,
-    end_date:      Optional[str],
-    dry_run:       bool = True,
-    order_id:      Optional[str] = None,
+    condition_id:   str,
+    token_id:       str,
+    question:       str,
+    side:           str,
+    size_usd:       float,          # taille effectivement remplie
+    price:          float,
+    edge:           float,
+    our_prob:       float,
+    market_prob:    float,
+    confidence:     float,
+    end_date:       Optional[str],
+    dry_run:        bool = True,
+    order_id:       Optional[str] = None,
+    size_requested: Optional[float] = None,   # taille demandée (avant fill partiel)
+    fill_ratio:     float = 1.0,              # 1.0 = fill complet, 0.6 = 60% rempli
 ) -> Dict:
     POSITIONS_FILE, TRADES_FILE, _ = _get_paths()
     now = datetime.now(timezone.utc).isoformat()
 
     trade = {
-        "id":           order_id or f"{'DRY' if dry_run else 'LIVE'}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
-        "timestamp":    now,
-        "condition_id": condition_id,
-        "token_id":     token_id,
-        "question":     question,
-        "side":         side,
-        "size_usd":     size_usd,
-        "price":        price,
-        "edge_pct":     round(edge * 100, 2),
-        "our_prob":     round(our_prob * 100, 2),
-        "market_prob":  round(market_prob * 100, 2),
-        "confidence":   round(confidence * 100, 2),
-        "end_date":     end_date,
-        "dry_run":      dry_run,
-        "status":       "open",
-        "result":       None,
-        "pnl_usd":      None,
-        "closed_at":    None,
+        "id":             order_id or f"{'DRY' if dry_run else 'LIVE'}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+        "timestamp":      now,
+        "condition_id":   condition_id,
+        "token_id":       token_id,
+        "question":       question,
+        "side":           side,
+        "size_usd":       size_usd,
+        "size_requested": size_requested or size_usd,
+        "fill_ratio":     round(fill_ratio, 4),
+        "price":          price,
+        "edge_pct":       round(edge * 100, 2),
+        "our_prob":       round(our_prob * 100, 2),
+        "market_prob":    round(market_prob * 100, 2),
+        "confidence":     round(confidence * 100, 2),
+        "end_date":       end_date,
+        "dry_run":        dry_run,
+        "status":         "open",
+        "result":         None,
+        "pnl_usd":        None,
+        "closed_at":      None,
+        # Fonds bloqués DVM : rempli quand la position entre en dispute UMA
+        "dvm_disputed":   False,    # True = vote DVM en cours
+        "dvm_blocked_usd": 0.0,     # USDC réels bloqués dans le contrat CTF
+        "dvm_bond_usd":    0.0,     # bond du bot engagé dans la dispute
+        "dvm_since":       None,    # ISO timestamp de début de dispute
     }
 
     trades = _load(TRADES_FILE)
@@ -92,6 +101,58 @@ def record_trade(
     _save(POSITIONS_FILE, positions)
 
     return trade
+
+
+def mark_dvm_disputed(
+    condition_id: str,
+    bond_usd:     float = 0.0,
+) -> None:
+    """
+    Marque une position comme bloquée en vote DVM UMA.
+    Les fonds sont physiquement gelés dans le contrat CTF
+    jusqu'à résolution du vote (4-6 jours).
+
+    dvm_blocked_usd = fonds de la position (récupérables si DVM vote juste)
+    dvm_bond_usd    = bond engagé par le bot dans la dispute (perdu si DVM contre)
+    """
+    POSITIONS_FILE, TRADES_FILE, _ = _get_paths()
+    now = datetime.now(timezone.utc).isoformat()
+
+    for path in (POSITIONS_FILE, TRADES_FILE):
+        data = _load(path)
+        changed = False
+        for entry in data:
+            if entry.get("condition_id") == condition_id and entry.get("status") == "open":
+                entry["dvm_disputed"]   = True
+                entry["dvm_blocked_usd"] = float(entry.get("size_usd", 0))
+                entry["dvm_bond_usd"]   = bond_usd
+                entry["dvm_since"]      = now
+                changed = True
+        if changed:
+            _save(path, data)
+
+
+def get_dvm_blocked_capital() -> dict:
+    """
+    Retourne le capital bloqué dans des votes DVM en cours.
+    Utilisé par get_current_bankroll() pour scinder la bankroll.
+
+    Returns:
+        {
+          "total_blocked_usd":  float,   # USDC gelés dans CTF
+          "total_bond_usd":     float,   # bonds engagés (à risque)
+          "positions": [...]             # liste des positions bloquées
+        }
+    """
+    POSITIONS_FILE, _, _ = _get_paths()
+    positions = _load(POSITIONS_FILE)
+    blocked = [p for p in positions if p.get("dvm_disputed")]
+    return {
+        "total_blocked_usd": sum(p.get("dvm_blocked_usd", 0) for p in blocked),
+        "total_bond_usd":    sum(p.get("dvm_bond_usd", 0)    for p in blocked),
+        "count":             len(blocked),
+        "positions":         blocked,
+    }
 
 
 def close_position(condition_id: str, result: str, pnl_usd: float) -> None:
@@ -147,11 +208,51 @@ def _update_pnl(pnl_usd: float, result: str) -> None:
 
 
 def get_current_bankroll(initial: float = 150.0) -> float:
-    """Retourne la bankroll courante = initial + PnL réalisé uniquement."""
+    """
+    Retourne la bankroll disponible = initial + PnL réalisé.
+    N'inclut PAS les fonds bloqués en vote DVM.
+
+    Pour la bankroll complète (disponible + bloquée) :
+        from monitoring.pnl_tracker import get_bankroll_detail
+    """
     _, _, PNL_FILE = _get_paths()
     pnl_data = _load(PNL_FILE)
     realized = pnl_data.get("total_pnl_usd", 0.0) if isinstance(pnl_data, dict) else 0.0
     return round(initial + realized, 2)
+
+
+def get_bankroll_detail(initial: float = 150.0) -> dict:
+    """
+    Bankroll scindée selon la nature des fonds.
+
+    Returns:
+        {
+          "disponible":   float,  # USDC librement tradables
+          "bloquee_dvm":  float,  # gelés en vote DVM (récupérables)
+          "bond_risque":  float,  # bonds à risque de confiscation
+          "total":        float,  # total théorique
+          "realised_pnl": float,
+        }
+    """
+    _, _, PNL_FILE = _get_paths()
+    pnl_data = _load(PNL_FILE)
+    realized = pnl_data.get("total_pnl_usd", 0.0) if isinstance(pnl_data, dict) else 0.0
+
+    dvm = get_dvm_blocked_capital()
+    blocked = dvm["total_blocked_usd"]
+    bond    = dvm["total_bond_usd"]
+
+    disponible = round(initial + realized, 2)
+    total      = round(disponible + blocked + bond, 2)
+
+    return {
+        "disponible":   disponible,
+        "bloquee_dvm":  round(blocked, 2),
+        "bond_risque":  round(bond, 2),
+        "total":        total,
+        "realised_pnl": round(realized, 2),
+        "dvm_positions": dvm["count"],
+    }
 
 
 def get_open_positions() -> list:
@@ -214,6 +315,15 @@ def print_pnl_summary() -> None:
     print(f"  PnL net         : ${net:+.2f}")
     print(f"  Meilleur trade  : ${best:+.2f}")
     print(f"  Pire trade      : ${worst:+.2f}")
+
+    # Affiche les fonds bloqués DVM si applicable
+    dvm = get_dvm_blocked_capital()
+    if dvm["count"] > 0:
+        print(f"{'─'*72}")
+        print(f"  ⚠️  Fonds bloqués DVM UMA ({dvm['count']} position(s))")
+        print(f"     Capital gelé  : ${dvm['total_blocked_usd']:+.2f} (récupérable)")
+        print(f"     Bonds à risque: ${dvm['total_bond_usd']:+.2f} (confisqués si DVM défavorable)")
+        print(f"     Coût opportunité estimé : impact sur rotation portefeuille")
     print(f"{'═'*72}")
 
 

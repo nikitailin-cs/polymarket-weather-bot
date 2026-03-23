@@ -11,20 +11,28 @@
 ║    python tests/test_all.py --live     → live uniquement (DRY_RUN forcé)    ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  COUCHES TESTÉES                                                             ║
-║    Unitaires (42 tests, aucun réseau) :                                      ║
+║    Unitaires (80+ tests, aucun réseau) :                                     ║
 ║      • ContractSpec / MarketStatus    — modèles + états                     ║
 ║      • ContractSpecCache              — persistance JSON + thread-safety     ║
 ║      • ContractParser                 — regex + détection station/variable   ║
 ║      • PositionManager                — machine d'états + PnL               ║
 ║      • EdgeDetector                   — kelly + déflation oracle             ║
+║      • UMAOracle                      — phases + timestamps + throttle       ║
+║      • UMADisputer                    — assess_proposal + DisputeResult      ║
+║      • CTFManager                     — condition_id + RedeemResult          ║
+║      • FeatureStore                   — FeatureVector + persist + label      ║
+║      • ModelInterface                 — Statistical/Ensemble/ModelPrediction ║
+║      • ModelRegistry                  — get_model + predict + fallback       ║
+║      • PnLTracker                     — bankroll scindée + DVM blocked       ║
+║      • OnchainLogger                  — log_resolution_check + get_ops       ║
 ║      • Intégration                    — cycle scan→trade→résolution          ║
 ║    Live (6 étapes, réseau, DRY_RUN=1 forcé) :                               ║
 ║      1. Gamma API       — scan marchés actifs                                ║
 ║      2. ContractParser  — parsing sur vrais marchés                         ║
 ║      3. WebSocket       — connexion + prix temps réel                       ║
-║      4. ProbabilityEngine — calcul P(Yes) multi-sources                     ║
+║      4. ProbabilityEngine — calcul P(Yes) multi-sources + modèle ML         ║
 ║      5. EdgeDetector    — signaux avec déflation oracle                     ║
-║      6. Cycle complet   — simulation main.py                                ║
+║      6. Cycle complet   — simulation main.py + feature store                ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 from __future__ import annotations
@@ -491,6 +499,539 @@ class TestEdgeDetector(unittest.TestCase):
         self.assertGreater(total_cost, 0)
 
 
+
+# ── UMAOracle — phases et séquence temporelle ─────────────────────────────────
+
+class TestUMAOracle(unittest.TestCase):
+
+    def test_uma_phase_enum_values(self):
+        from execution.uma_oracle import UMAPhase
+        phases = [p.value for p in UMAPhase]
+        self.assertIn("AWAITING_PROPOSAL",  phases)
+        self.assertIn("IN_DISPUTE_WINDOW",  phases)
+        self.assertIn("SETTLEABLE",         phases)
+        self.assertIn("SETTLED",            phases)
+        self.assertIn("DISPUTED",           phases)
+        self.assertIn("UNKNOWN",            phases)
+
+    def test_uma_state_dispute_window_remaining(self):
+        from execution.uma_oracle import UMAState, UMAPhase
+        now = int(time.time())
+        state = UMAState(
+            condition_id        = "0xtest",
+            phase               = UMAPhase.IN_DISPUTE_WINDOW,
+            dispute_window_ends = now + 3600,
+        )
+        rem = state.dispute_window_remaining_sec
+        self.assertIsNotNone(rem)
+        self.assertGreater(rem, 3500)
+        self.assertLessEqual(rem, 3600)
+
+    def test_uma_state_window_expired(self):
+        from execution.uma_oracle import UMAState, UMAPhase
+        state = UMAState(
+            condition_id        = "0xtest",
+            phase               = UMAPhase.IN_DISPUTE_WINDOW,
+            dispute_window_ends = int(time.time()) - 10,  # expirée
+        )
+        self.assertEqual(state.dispute_window_remaining_sec, 0)
+
+    def test_recommended_poll_interval_by_phase(self):
+        from execution.uma_oracle import UMAState, UMAPhase
+        now = int(time.time())
+
+        # IN_DISPUTE_WINDOW avec 45min restantes → 600s
+        s1 = UMAState("0x1", UMAPhase.IN_DISPUTE_WINDOW,
+                       dispute_window_ends=now + 2700)
+        self.assertEqual(s1.recommended_poll_interval_sec, 600)
+
+        # IN_DISPUTE_WINDOW avec 5min restantes → 60s
+        s2 = UMAState("0x2", UMAPhase.IN_DISPUTE_WINDOW,
+                       dispute_window_ends=now + 300)
+        self.assertEqual(s2.recommended_poll_interval_sec, 60)
+
+        # AWAITING_PROPOSAL → 1800s
+        s3 = UMAState("0x3", UMAPhase.AWAITING_PROPOSAL)
+        self.assertEqual(s3.recommended_poll_interval_sec, 1800)
+
+        # DISPUTED → 4h
+        s4 = UMAState("0x4", UMAPhase.DISPUTED)
+        self.assertEqual(s4.recommended_poll_interval_sec, 4 * 3600)
+
+    def test_dynamic_timeout_by_phase(self):
+        from execution.uma_oracle import UMAState, UMAPhase, DEFAULT_LIVENESS_SEC
+        now = int(time.time())
+
+        s_waiting  = UMAState("0x1", UMAPhase.AWAITING_PROPOSAL)
+        s_window   = UMAState("0x2", UMAPhase.IN_DISPUTE_WINDOW,
+                               dispute_window_ends=now + 3600,
+                               liveness_sec=DEFAULT_LIVENESS_SEC)
+        s_disputed = UMAState("0x3", UMAPhase.DISPUTED)
+        s_settle   = UMAState("0x4", UMAPhase.SETTLEABLE)
+
+        self.assertAlmostEqual(s_waiting.dynamic_timeout_hours, 6.0)
+        self.assertAlmostEqual(s_disputed.dynamic_timeout_hours, 168.0)
+        self.assertAlmostEqual(s_settle.dynamic_timeout_hours, 2.0)
+        # IN_DISPUTE_WINDOW : (liveness + 1h) / 3600
+        expected_window = (DEFAULT_LIVENESS_SEC + 3600) / 3600
+        self.assertAlmostEqual(s_window.dynamic_timeout_hours, expected_window)
+
+    def test_proposed_yes_from_price(self):
+        from execution.uma_oracle import UMAState, UMAPhase
+        yes_state = UMAState("0x1", UMAPhase.IN_DISPUTE_WINDOW, proposed_price=10**18)
+        no_state  = UMAState("0x2", UMAPhase.IN_DISPUTE_WINDOW, proposed_price=0)
+        none_state = UMAState("0x3", UMAPhase.IN_DISPUTE_WINDOW, proposed_price=None)
+        self.assertTrue(yes_state.proposed_yes)
+        self.assertFalse(no_state.proposed_yes)
+        self.assertIsNone(none_state.proposed_yes)
+
+    def test_human_summary_contains_phase(self):
+        from execution.uma_oracle import UMAState, UMAPhase
+        state = UMAState("0xtest", UMAPhase.AWAITING_PROPOSAL,
+                          market_closed_at=int(time.time()) - 3600)
+        summary = state.human_summary()
+        self.assertIn("AWAITING_PROPOSAL", summary)
+
+    def test_retrocompat_get_uma_status(self):
+        # get_uma_status (ancien) doit toujours fonctionner
+        from execution.uma_oracle import get_uma_status, UMAStatus
+        # Sans RPC → UNKNOWN
+        status = get_uma_status("0xtest_no_rpc_available")
+        self.assertIn(status, list(UMAStatus))
+
+
+# ── UMADisputer — évaluation propositions ────────────────────────────────────
+
+class TestUMADisputer(unittest.TestCase):
+
+    def test_dispute_result_enum(self):
+        from execution.uma_disputer import DisputeResult
+        results = [r.value for r in DisputeResult]
+        self.assertIn("DISPUTED",          results)
+        self.assertIn("NO_DIVERGENCE",     results)
+        self.assertIn("LOW_CONFIDENCE",    results)
+        self.assertIn("WINDOW_EXPIRED",    results)
+        self.assertIn("INSUFFICIENT_USDC", results)
+        self.assertIn("DISABLED",          results)
+        self.assertIn("DRY_RUN",           results)
+        self.assertIn("FAILED",            results)
+
+    def test_assess_proposal_no_spec(self):
+        from execution.uma_disputer import assess_proposal
+        from execution.uma_oracle import UMAState, UMAPhase
+        state = UMAState("0xtest", UMAPhase.IN_DISPUTE_WINDOW,
+                          proposed_price=10**18,
+                          dispute_window_ends=int(time.time()) + 3600)
+        assessment = assess_proposal("0xtest", state, spec_cache=None)
+        self.assertFalse(assessment.diverges)
+        self.assertFalse(assessment.should_dispute)
+
+    def test_check_and_dispute_wrong_phase_returns_no_divergence(self):
+        from execution.uma_disputer import check_and_dispute_if_needed, DisputeResult
+        from execution.uma_oracle import UMAState, UMAPhase
+        state = UMAState("0xtest", UMAPhase.SETTLED)
+        result = check_and_dispute_if_needed("0xtest", state, None, dry_run=True)
+        self.assertEqual(result, DisputeResult.NO_DIVERGENCE)
+
+    def test_dry_run_returns_dry_run_result(self):
+        from execution.uma_disputer import execute_dispute, DisputeResult, DisputeAssessment
+        from execution.uma_oracle import UMAState, UMAPhase
+        state = UMAState("0xtest", UMAPhase.IN_DISPUTE_WINDOW,
+                          proposed_price=10**18,
+                          dispute_window_ends=int(time.time()) + 3600,
+                          bond_usdc=500.0)
+        assessment = DisputeAssessment(
+            condition_id="0xtest", proposed_yes=True, contract_says_yes=False,
+            diverges=True, observed_temp=8.0, threshold_value=15.0,
+            threshold_op="gte", confidence=0.95,
+            bond_required_usdc=500.0, should_dispute=True,
+        )
+        result = execute_dispute("0xtest", state, assessment, dry_run=True)
+        self.assertEqual(result, DisputeResult.DRY_RUN)
+
+
+# ── CTFManager — gestion tokens ERC-1155 ─────────────────────────────────────
+
+class TestCTFManager(unittest.TestCase):
+
+    def test_parse_condition_id_short(self):
+        from execution.ctf_manager import _parse_condition_id
+        cid    = "0x113e93e6c20e4340afedd0d405648d"
+        parsed = _parse_condition_id(cid)
+        self.assertEqual(len(parsed), 32)   # bytes32
+        self.assertIsInstance(parsed, bytes)
+
+    def test_parse_condition_id_full(self):
+        from execution.ctf_manager import _parse_condition_id
+        cid    = "0x" + "ab" * 32
+        parsed = _parse_condition_id(cid)
+        self.assertEqual(len(parsed), 32)
+
+    def test_redeem_result_enum(self):
+        from execution.ctf_manager import RedeemResult
+        results = [r.value for r in RedeemResult]
+        self.assertIn("SUCCESS",          results)
+        self.assertIn("NOT_RESOLVED",     results)
+        self.assertIn("ALREADY_REDEEMED", results)
+        self.assertIn("FAILED",           results)
+        self.assertIn("DRY_RUN",          results)
+
+    def test_redeem_dry_run(self):
+        from execution.ctf_manager import redeem_position, RedeemResult
+        result = redeem_position("0xtest", "YES", dry_run=True)
+        self.assertEqual(result, RedeemResult.DRY_RUN)
+
+    def test_get_usdc_balance_no_rpc(self):
+        from execution.ctf_manager import get_usdc_balance
+        # Sans RPC → 0.0 (pas d'exception)
+        balance = get_usdc_balance("0x0000000000000000000000000000000000000001")
+        self.assertEqual(balance, 0.0)
+
+
+# ── FeatureStore — dataset ML ─────────────────────────────────────────────────
+
+class TestFeatureStore(unittest.TestCase):
+
+    def setUp(self):
+        """Redirige le feature store vers un fichier temporaire."""
+        self._tmp = Path(tempfile.mktemp(suffix=".jsonl"))
+        import signals.feature_store as fs
+        self._orig_path = fs._get_store_path
+        fs._get_store_path = lambda: self._tmp
+
+    def tearDown(self):
+        import signals.feature_store as fs
+        fs._get_store_path = self._orig_path
+        self._tmp.unlink(missing_ok=True)
+        self._tmp.with_suffix(".tmp").unlink(missing_ok=True)
+
+    def test_feature_vector_defaults(self):
+        from signals.feature_store import FeatureVector
+        fv = FeatureVector()
+        self.assertEqual(fv.p_final, 0.5)
+        self.assertEqual(fv.layers_used, 1)
+        self.assertIsNone(fv.outcome_yes)
+        self.assertIsNone(fv.observed_value)
+
+    def test_record_and_get_stats(self):
+        from signals.feature_store import FeatureVector, record_features, get_stats
+        fv = FeatureVector(condition_id="0xtest", city="London",
+                            date_str="2026-03-25", p_final=0.15,
+                            forecast_open_meteo=12.5, forecast_owm=13.0)
+        record_features(fv)
+        stats = get_stats()
+        self.assertEqual(stats["total"], 1)
+        self.assertEqual(stats["labeled"], 0)
+        self.assertIn("London", stats["cities"])
+
+    def test_update_outcomes(self):
+        from signals.feature_store import FeatureVector, record_features, update_outcomes, get_stats
+        fv = FeatureVector(condition_id="0xupdate", city="Paris",
+                            date_str="2026-03-25", p_final=0.20)
+        record_features(fv)
+        n = update_outcomes("0xupdate", outcome_yes=False, pnl_usd=-3.5)
+        self.assertEqual(n, 1)
+        stats = get_stats()
+        self.assertEqual(stats["labeled"], 1)
+
+    def test_update_outcomes_nonexistent_id(self):
+        from signals.feature_store import update_outcomes
+        n = update_outcomes("0xnonexistent", outcome_yes=True)
+        self.assertEqual(n, 0)
+
+    def test_compute_derived_n_sources(self):
+        from signals.feature_store import FeatureVector
+        fv = FeatureVector(
+            forecast_open_meteo=12.5, forecast_owm=13.0, forecast_noaa=None,
+            forecast_weatherapi=None, forecast_tomorrow_io=14.0,
+        )
+        fv.compute_derived()
+        self.assertEqual(fv.forecast_n_sources, 3)
+        self.assertIsNotNone(fv.forecast_std)
+
+    def test_to_dict_roundtrip(self):
+        from signals.feature_store import FeatureVector
+        fv1 = FeatureVector(condition_id="0xroundtrip", city="Madrid",
+                             p_final=0.35, threshold_value=18.0)
+        d   = fv1.to_dict()
+        fv2 = FeatureVector.from_dict(d)
+        self.assertEqual(fv2.condition_id, fv1.condition_id)
+        self.assertAlmostEqual(fv2.p_final, fv1.p_final)
+
+    def test_load_dataframe_empty(self):
+        from signals.feature_store import load_dataframe
+        df = load_dataframe()
+        # pandas peut ne pas être disponible → None, ou DataFrame vide
+        if df is not None:
+            self.assertEqual(len(df), 0)
+
+    def test_build_feature_vector_from_detail(self):
+        from signals.feature_store import build_feature_vector_from_detail
+        detail = {
+            "forecast_c": 12.5, "bias_corr": -0.5, "sigma": 1.8,
+            "p_forecast": 0.15, "p_climate": 0.20, "p_trend": None,
+            "p_final": 0.17, "layers_used": 2,
+            "sources": ["open_meteo", "owm"], "days_to_expiry": 2,
+        }
+        fv = build_feature_vector_from_detail(
+            condition_id    = "0xfv_test",
+            question        = "Will London be >= 15C?",
+            city            = "London",
+            date_str        = "2026-03-25",
+            detail          = detail,
+            market_yes_prob = 0.40,
+            side            = "NO",
+            kelly_stake_usd = 12.5,
+            oracle_alignment= 0.88,
+        )
+        self.assertEqual(fv.condition_id, "0xfv_test")
+        self.assertAlmostEqual(fv.p_final, 0.17)
+        self.assertEqual(fv.side, "NO")
+        self.assertAlmostEqual(fv.oracle_alignment, 0.88)
+
+
+# ── ModelInterface — prédictions ──────────────────────────────────────────────
+
+class TestModelInterface(unittest.TestCase):
+
+    def test_model_prediction_clamp(self):
+        from signals.model_interface import ModelPrediction
+        p = ModelPrediction(p_yes=1.5, confidence=2.0, source="test").clamp()
+        self.assertLessEqual(p.p_yes, 0.98)
+        self.assertLessEqual(p.confidence, 1.0)
+
+    def test_model_prediction_clamp_low(self):
+        from signals.model_interface import ModelPrediction
+        p = ModelPrediction(p_yes=-0.5, confidence=-1.0, source="test").clamp()
+        self.assertGreaterEqual(p.p_yes, 0.02)
+        self.assertGreaterEqual(p.confidence, 0.0)
+
+    def test_statistical_model_three_layers(self):
+        from signals.model_interface import StatisticalModel
+        m = StatisticalModel()
+        self.assertTrue(m.is_available())
+        features = {
+            "p_forecast": 0.15, "p_climate": 0.20, "p_trend": 0.18,
+            "forecast_confidence": 0.85,
+        }
+        pred = m.predict(features)
+        self.assertIsNotNone(pred)
+        self.assertGreater(pred.p_yes, 0.02)
+        self.assertLess(pred.p_yes, 0.98)
+        self.assertEqual(pred.metadata["layers_used"], 3)
+
+    def test_statistical_model_one_layer(self):
+        from signals.model_interface import StatisticalModel
+        m = StatisticalModel()
+        pred = m.predict({"p_forecast": 0.30})
+        self.assertIsNotNone(pred)
+        self.assertAlmostEqual(pred.p_yes, 0.30, places=2)
+        self.assertEqual(pred.metadata["layers_used"], 1)
+
+    def test_statistical_model_none_when_no_forecast(self):
+        from signals.model_interface import StatisticalModel
+        m = StatisticalModel()
+        pred = m.predict({})
+        self.assertIsNone(pred)
+
+    def test_ensemble_model_averages(self):
+        from signals.model_interface import StatisticalModel, EnsembleModel
+        m1 = StatisticalModel()
+        m2 = StatisticalModel()
+        ensemble = EnsembleModel([(m1, 0.5), (m2, 0.5)])
+        features = {"p_forecast": 0.25, "p_climate": 0.30, "forecast_confidence": 0.80}
+        pred = ensemble.predict(features)
+        self.assertIsNotNone(pred)
+        self.assertIn("ensemble:", pred.source)
+
+    def test_ensemble_model_name(self):
+        from signals.model_interface import StatisticalModel, EnsembleModel
+        m = StatisticalModel()
+        ensemble = EnsembleModel([(m, 1.0)])
+        self.assertIn("statistical_v2", ensemble.name)
+
+    def test_sklearn_model_unavailable_on_bad_path(self):
+        from signals.model_interface import SklearnModel
+        m = SklearnModel("/nonexistent/path/model.pkl")
+        self.assertFalse(m.is_available())
+        self.assertIsNone(m.predict({"p_forecast": 0.5}))
+
+    def test_onnx_model_unavailable_on_bad_path(self):
+        from signals.model_interface import OnnxModel
+        m = OnnxModel("/nonexistent/path/model.onnx")
+        self.assertFalse(m.is_available())
+        self.assertIsNone(m.predict({"p_forecast": 0.5}))
+
+
+# ── ModelRegistry — singleton ─────────────────────────────────────────────────
+
+class TestModelRegistry(unittest.TestCase):
+
+    def setUp(self):
+        # Reset le singleton entre les tests
+        import signals.model_registry as reg
+        import signals.model_interface as mi
+        reg._model = None
+        # Force StatisticalModel (pas de MODEL_PATH)
+        os.environ.pop("MODEL_PATH", None)
+        os.environ.pop("MODEL_ENDPOINT", None)
+        os.environ.pop("MODEL_WEIGHT", None)
+
+    def tearDown(self):
+        import signals.model_registry as reg
+        reg._model = None
+
+    def test_default_model_is_statistical(self):
+        from signals.model_registry import get_model
+        from signals.model_interface import StatisticalModel
+        model = get_model()
+        self.assertIsInstance(model, StatisticalModel)
+
+    def test_predict_returns_prediction(self):
+        from signals.model_registry import predict
+        pred = predict({
+            "p_forecast": 0.15, "p_climate": 0.22, "p_trend": 0.18,
+            "forecast_confidence": 0.85,
+        })
+        self.assertIsNotNone(pred)
+        self.assertGreater(pred.p_yes, 0.02)
+        self.assertLess(pred.p_yes, 0.98)
+
+    def test_predict_none_on_empty_features(self):
+        from signals.model_registry import predict
+        pred = predict({})
+        self.assertIsNone(pred)
+
+    def test_model_info_keys(self):
+        from signals.model_registry import model_info
+        info = model_info()
+        self.assertIn("name", info)
+        self.assertIn("available", info)
+        self.assertIn("type", info)
+        self.assertTrue(info["available"])
+
+    def test_bad_model_path_falls_back_to_statistical(self):
+        import signals.model_registry as reg
+        from signals.model_interface import StatisticalModel
+        os.environ["MODEL_PATH"] = "/nonexistent/model.pkl"
+        os.environ["MODEL_WEIGHT"] = "0.6"
+        reg._model = None
+        model = reg.get_model()
+        # Fallback → StatisticalModel car fichier inexistant
+        self.assertIsInstance(model, StatisticalModel)
+        os.environ.pop("MODEL_PATH", None)
+        os.environ.pop("MODEL_WEIGHT", None)
+        reg._model = None
+
+    def test_reload_model(self):
+        from signals.model_registry import get_model, reload_model
+        m1 = get_model()
+        m2 = reload_model()
+        self.assertEqual(type(m1), type(m2))
+
+
+# ── PnLTracker — bankroll scindée ─────────────────────────────────────────────
+
+class TestPnLBankroll(unittest.TestCase):
+
+    def test_get_bankroll_detail_structure(self):
+        from monitoring.pnl_tracker import get_bankroll_detail
+        detail = get_bankroll_detail(150.0)
+        self.assertIn("disponible",   detail)
+        self.assertIn("bloquee_dvm",  detail)
+        self.assertIn("bond_risque",  detail)
+        self.assertIn("total",        detail)
+        self.assertIn("realised_pnl", detail)
+        self.assertIn("dvm_positions", detail)
+
+    def test_bankroll_detail_no_dvm(self):
+        from monitoring.pnl_tracker import get_bankroll_detail
+        detail = get_bankroll_detail(150.0)
+        self.assertAlmostEqual(detail["bloquee_dvm"], 0.0)
+        self.assertAlmostEqual(detail["bond_risque"], 0.0)
+        self.assertEqual(detail["dvm_positions"], 0)
+
+    def test_get_dvm_blocked_capital_empty(self):
+        from monitoring.pnl_tracker import get_dvm_blocked_capital
+        dvm = get_dvm_blocked_capital()
+        self.assertEqual(dvm["count"], 0)
+        self.assertAlmostEqual(dvm["total_blocked_usd"], 0.0)
+        self.assertAlmostEqual(dvm["total_bond_usd"], 0.0)
+
+    def test_mark_dvm_disputed_nonexistent_noop(self):
+        from monitoring.pnl_tracker import mark_dvm_disputed, get_dvm_blocked_capital
+        # Position inexistante → pas d'erreur, count reste 0
+        mark_dvm_disputed("0xnonexistent", bond_usd=500.0)
+        dvm = get_dvm_blocked_capital()
+        self.assertEqual(dvm["count"], 0)
+
+
+# ── OnchainLogger ─────────────────────────────────────────────────────────────
+
+class TestOnchainLogger(unittest.TestCase):
+
+    def setUp(self):
+        """Redirige le logger vers un fichier temporaire."""
+        self._tmp = Path(tempfile.mktemp(suffix=".json"))
+        import monitoring.onchain_logger as ol
+        self._orig = ol._get_path
+        ol._get_path = lambda: self._tmp
+
+    def tearDown(self):
+        import monitoring.onchain_logger as ol
+        ol._get_path = self._orig
+        self._tmp.unlink(missing_ok=True)
+        self._tmp.with_suffix(".tmp").unlink(missing_ok=True)
+
+    def test_log_balance_check_and_retrieve(self):
+        from monitoring.onchain_logger import log_balance_check, get_ops
+        log_balance_check("0xtest", "token123", 10.0, 9.8, ok=False)
+        ops = get_ops("0xtest")
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0]["op"], "balance_check")
+        self.assertFalse(ops[0]["ok"])
+        self.assertAlmostEqual(ops[0]["expected"], 10.0)
+
+    def test_log_resolution_check_conflict(self):
+        from monitoring.onchain_logger import log_resolution_check, get_ops
+        log_resolution_check(
+            condition_id="0xconflict", source="ctf_evaluate",
+            resolved=True, resolution_matches_contract=False,
+            observed_value=8.87, contract_threshold=15.0,
+            contract_op="gte", gamma_status="RESOLVED_YES",
+            conflict=True,
+        )
+        ops = get_ops("0xconflict")
+        self.assertEqual(len(ops), 1)
+        self.assertTrue(ops[0]["conflict"])
+        self.assertAlmostEqual(ops[0]["observed_value"], 8.87)
+
+    def test_log_redeem(self):
+        from monitoring.onchain_logger import log_redeem, get_ops
+        log_redeem("0xredeem", "YES", "SUCCESS",
+                   tx_hash="0xabc123", usdc_gained=20.5, dry_run=False)
+        ops = get_ops("0xredeem")
+        self.assertEqual(ops[0]["op"], "redeem")
+        self.assertEqual(ops[0]["result"], "SUCCESS")
+        self.assertAlmostEqual(ops[0]["usdc_gained"], 20.5)
+
+    def test_get_ops_filter_by_condition_id(self):
+        from monitoring.onchain_logger import log_redeem, get_ops
+        log_redeem("0xa", "YES", "DRY_RUN", dry_run=True)
+        log_redeem("0xb", "NO",  "DRY_RUN", dry_run=True)
+        ops_a = get_ops("0xa")
+        ops_b = get_ops("0xb")
+        self.assertEqual(len(ops_a), 1)
+        self.assertEqual(len(ops_b), 1)
+
+    def test_get_ops_all(self):
+        from monitoring.onchain_logger import log_redeem, get_ops
+        log_redeem("0xc1", "YES", "DRY_RUN", dry_run=True)
+        log_redeem("0xc2", "NO",  "DRY_RUN", dry_run=True)
+        all_ops = get_ops()
+        self.assertEqual(len(all_ops), 2)
+
+
 # ── Intégration — cycle complet sans réseau ───────────────────────────────────
 
 class TestIntegration(unittest.TestCase):
@@ -675,7 +1216,8 @@ def _live_probability_engine(markets: list) -> list:
             _info(f"✅ {m.question[:55]}")
             _info(f"   P(bot)={p_yes*100:.1f}%  P(marché)={market_p*100:.1f}%  "
                   f"edge_brut={abs(p_yes-market_p)*100:.1f}%  conf={conf*100:.0f}%  "
-                  f"couches={detail.get('layers_used','?')}/3")
+                  f"couches={detail.get('layers_used','?')}/3"
+                  + (f"  p_model={detail.get('p_model',0)*100:.1f}%" if detail.get('p_model') else ""))
             fc = detail.get("forecast_c")
             if fc:
                 _info(f"   prévision={fc}°C  biais={detail.get('bias_corr',0):+.2f}°C  "
@@ -798,6 +1340,15 @@ def _live_full_cycle() -> bool:
     print_open_positions()
     print_pnl_summary()
     _ok("Cycle complet terminé sans erreur critique")
+    # Feature store
+    try:
+        from signals.feature_store import get_stats
+        stats = get_stats()
+        if stats["total"] > 0:
+            _info(f"Feature store : {stats['total']} prédictions "
+                  f"({stats['labeled']} labellisées) | {stats['size_mb']} MB")
+    except Exception:
+        pass
     return True
 
 
@@ -822,6 +1373,12 @@ def run_live_tests() -> bool:
     _info(f"MIN_ORACLE_ALIGN : {MIN_ORACLE_ALIGNMENT:.2f}")
     _info(f"ORACLE_POLL      : {ORACLE_POLL_INTERVAL_SEC//60} min")
     _info(f"ENABLE_YES_SIDE  : {ENABLE_YES_SIDE}")
+    try:
+        from signals.model_registry import model_info
+        info = model_info()
+        _info(f"MODÈLE ACTIF     : {info['name']} ({'✅' if info['available'] else '❌'})")
+    except Exception:
+        pass
 
     markets       = _live_gamma_scan()
     _, pairs      = _live_contract_parser(markets)
@@ -871,12 +1428,16 @@ if __name__ == "__main__":
 
     if run_unit:
         print(f"\n{SEP}")
-        print("  TESTS UNITAIRES (42 tests, aucun réseau)")
+        print("  TESTS UNITAIRES (80+ tests, aucun réseau)")
         print(SEP)
         loader  = unittest.TestLoader()
         suite   = unittest.TestSuite()
         for cls in (TestContractSpec, TestContractSpecCache, TestContractParser,
-                    TestPositionManager, TestEdgeDetector, TestIntegration):
+                    TestPositionManager, TestEdgeDetector,
+                    TestUMAOracle, TestUMADisputer, TestCTFManager,
+                    TestFeatureStore, TestModelInterface, TestModelRegistry,
+                    TestPnLBankroll, TestOnchainLogger,
+                    TestIntegration):
             suite.addTests(loader.loadTestsFromTestCase(cls))
         runner  = unittest.TextTestRunner(verbosity=2)
         result  = runner.run(suite)

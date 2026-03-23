@@ -143,6 +143,14 @@ class ContractSpec:
     # Dates
     end_date_iso: str = ""
 
+    # Source de résolution décentralisée
+    # "uma"     → Optimistic Oracle UMA (quasi-tous les marchés météo Polymarket)
+    #             Mécanisme : proposer → fenêtre dispute 2h → résolution auto ou vote (7-14j)
+    # "pyth"    → Oracle on-chain temps réel (marchés financiers)
+    # "manual"  → Résolution manuelle par Polymarket Labs
+    # "unknown" → Non déterminé au parsing
+    resolution_source: str = "unknown"
+
     # Fees
     fee_bps:          int = 0
     maker_rebate_bps: int = 0

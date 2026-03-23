@@ -13,6 +13,7 @@ from core.models import TradeSignal, Order
 from config.settings import DRY_RUN, FEE_BPS
 from monitoring.logger import log
 from monitoring.pnl_tracker import record_trade
+from execution.ctf_manager import verify_token_balance
 
 
 def _already_open(condition_id: str) -> bool:
@@ -81,33 +82,105 @@ def place_order(signal: TradeSignal) -> Optional[Order]:
             "price":        entry_price,
             "side":         "BUY",
             "size":         signal.kelly_stake_usd,
-            # FEE_BPS depuis settings — 0 si Polymarket CLOB est sans frais
             "fee_rate_bps": FEE_BPS,
         })
         order.order_id = resp.get("orderID") or resp.get("order_id")
-        order.status   = "filled" if resp.get("status") == "matched" else "pending"
+
+        # ── Gestion des fills partiels ────────────────────────────────────────
+        # Le CLOB Polymarket est un order book — un ordre peut être partiellement
+        # rempli si la liquidité est insuffisante au prix demandé.
+        # On lit size_matched (USDC remplis) vs size_usd demandé.
+        #
+        # Champs possibles selon la version du client :
+        #   "sizeMatched"  → USDC effectivement tradés
+        #   "makingAmount" → côté maker
+        #   "takingAmount" → côté taker
+        size_matched = float(
+            resp.get("sizeMatched")
+            or resp.get("size_matched")
+            or resp.get("makingAmount")
+            or signal.kelly_stake_usd   # fallback : on assume full fill
+        )
+        fill_ratio  = size_matched / signal.kelly_stake_usd if signal.kelly_stake_usd > 0 else 1.0
+        fill_ratio  = min(1.0, fill_ratio)
+
+        if fill_ratio < 0.95:
+            # Fill partiel significatif (< 95% de la taille demandée)
+            log.warning(
+                f"⚠️ Fill partiel | {order.order_id} | "
+                f"demandé=${signal.kelly_stake_usd:.2f} | "
+                f"rempli=${size_matched:.2f} ({fill_ratio*100:.0f}%) | "
+                f"{signal.market.question[:40]}"
+            )
+            order.status = "partial"
+        elif resp.get("status") == "matched" or fill_ratio >= 0.95:
+            order.status = "filled"
+        else:
+            order.status = "pending"
+
+        # On enregistre la taille réellement remplie, pas la taille demandée
+        effective_size = round(size_matched, 4)
+        order.size_usd = effective_size   # corrige l'ordre pour la comptabilité
 
         record_trade(
-            condition_id = signal.market.condition_id,
-            token_id     = signal.token_id,
-            question     = signal.market.question,
-            side         = signal.side,
-            size_usd     = signal.kelly_stake_usd,
-            price        = entry_price,
-            edge         = signal.edge,
-            our_prob     = signal.signal.our_yes_prob,
-            market_prob  = signal.market.market_yes_prob or 0.5,
-            confidence   = signal.signal.confidence,
-            end_date     = end_str,
-            dry_run      = False,
-            order_id     = order.order_id,
+            condition_id    = signal.market.condition_id,
+            token_id        = signal.token_id,
+            question        = signal.market.question,
+            side            = signal.side,
+            size_usd        = effective_size,
+            size_requested  = signal.kelly_stake_usd,
+            price           = entry_price,
+            edge            = signal.edge,
+            our_prob        = signal.signal.our_yes_prob,
+            market_prob     = signal.market.market_yes_prob or 0.5,
+            confidence      = signal.signal.confidence,
+            end_date        = end_str,
+            dry_run         = False,
+            order_id        = order.order_id,
+            fill_ratio      = round(fill_ratio, 4),
         )
 
+        emoji = "✅" if order.status == "filled" else "⚠️"
         log.info(
-            f"✅ Ordre LIVE placé | {order.order_id} | {signal.side} "
-            f"| ${signal.kelly_stake_usd:.2f} @ {entry_price:.3f} "
-            f"| {signal.market.question[:50]}"
+            f"{emoji} Ordre LIVE | {order.order_id} | {signal.side} "
+            f"| rempli=${effective_size:.2f}/{signal.kelly_stake_usd:.2f} "
+            f"({fill_ratio*100:.0f}%) @ {entry_price:.3f} "
+            f"| {signal.market.question[:40]}"
         )
+
+        # ── Vérification balance ERC-1155 on-chain ────────────────────────────
+        # On attend 3s que la tx soit indexée sur Polygon avant de lire la balance.
+        # expected_tokens = size remplie / prix d'entrée = nombre de shares achetés.
+        if order.status in ("filled", "partial") and signal.token_id:
+            import time as _time
+            _time.sleep(3)
+            expected_tokens = effective_size / entry_price if entry_price > 0 else 0
+            balance_ok, actual_balance = verify_token_balance(
+                token_id        = signal.token_id,
+                expected_tokens = expected_tokens,
+            )
+            # Log persistant de la vérification
+            try:
+                from monitoring.onchain_logger import log_balance_check
+                log_balance_check(
+                    condition_id    = signal.market.condition_id,
+                    token_id        = signal.token_id,
+                    expected_tokens = expected_tokens,
+                    actual_balance  = actual_balance,
+                    ok              = balance_ok,
+                )
+            except Exception:
+                pass
+            if not balance_ok:
+                log.error(
+                    f"🚨 FILL SILENCIEUX DÉTECTÉ | {order.order_id} | "
+                    f"tokens attendus={expected_tokens:.4f} reçus={actual_balance:.4f} | "
+                    f"Vérification manuelle requise — position NON enregistrée"
+                )
+                order.status = "balance_mismatch"
+            else:
+                log.debug(f"✅ Balance ERC-1155 confirmée | {actual_balance:.4f} tokens")
+
         return order
 
     except Exception as e:

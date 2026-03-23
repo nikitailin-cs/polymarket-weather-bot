@@ -34,7 +34,7 @@ def _fetch_gamma(limit: int = GAMMA_LIMIT) -> List[dict]:
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
 
-def _build_market(raw: dict) -> Optional[WeatherMarket]:
+def _build_market(raw: dict) -> Optional[tuple]:
     if not raw.get("enableOrderBook"):  return None
     if not raw.get("acceptingOrders"):  return None
     end_date = _parse_dt(raw.get("endDate") or raw.get("endDateIso"))
@@ -74,7 +74,7 @@ def _build_market(raw: dict) -> Optional[WeatherMarket]:
         accepting_orders  = True,
         enable_order_book = True,
         matched_keyword   = keyword,
-    )
+    ), raw.get("resolutionSource", ""), float(raw.get("liquidityNum") or raw.get("liquidity") or volume or 0)
 
 
 def scan_weather_markets(
@@ -96,8 +96,16 @@ def scan_weather_markets(
     results: List[WeatherMarket] = []
 
     for raw in raw_markets:
-        market = _build_market(raw)
-        if market is None:
+        result = _build_market(raw)
+        if result is None:
+            continue
+        market, resolution_source, liquidity_usd = result
+
+        # ── Filtre liquidité minimal ──────────────────────────────────────────
+        # En dessous de MIN_LIQUIDITY_USD, le spread réel dépasse notre
+        # estimation de 2.5% → edge calculé est fictif → on écarte.
+        from config.settings import MIN_LIQUIDITY_USD
+        if liquidity_usd < MIN_LIQUIDITY_USD and market.volume < MIN_LIQUIDITY_USD:
             continue
 
         # ── Parsing contractuel (v2, optionnel) ──────────────────────────────
@@ -108,11 +116,13 @@ def scan_weather_markets(
             # Récupère ou crée le ContractSpec (0 réseau si déjà en cache)
             end_iso = raw.get("endDate") or raw.get("endDateIso") or ""
             spec = parse_contract(
-                market_id    = market.condition_id,   # condition_id comme clé
-                condition_id = market.condition_id,
-                question     = market.question,
-                end_date_iso = str(end_iso),
-                cache        = spec_cache,
+                market_id          = market.condition_id,
+                condition_id       = market.condition_id,
+                question           = market.question,
+                end_date_iso       = str(end_iso),
+                cache              = spec_cache,
+                resolution_source  = resolution_source,
+                liquidity_usd      = liquidity_usd,
             )
 
             # Marché écarté : parsing insuffisant ou oracle inconnu

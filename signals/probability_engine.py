@@ -27,6 +27,10 @@ from signals.sources.model_calibrator import (
     get_bias_correction,
     record_prediction,
 )
+from signals.model_registry import predict as model_predict
+from signals.feature_store import (
+    record_features, build_feature_vector_from_detail,
+)
 
 # ── Paramètres ────────────────────────────────────────────────────────────────
 
@@ -241,8 +245,18 @@ def _prob_from_trend(target_c: float, modifier: str,
 
 # ── Point d'entrée principal ──────────────────────────────────────────────────
 
-def compute_yes_prob(question: str,
-                     record: bool = False) -> Optional[Tuple[float, float, Dict]]:
+def compute_yes_prob(
+    question:          str,
+    record:            bool  = False,
+    condition_id:      str   = "",
+    market_yes_prob:   float = 0.5,
+    side:              str   = "NO",
+    kelly_stake_usd:   float = 0.0,
+    oracle_alignment:  float = 0.0,
+    resolution_source: str   = "uma",
+    sources_detail:    Optional[dict] = None,
+    spec               = None,
+) -> Optional[Tuple[float, float, Dict]]:
     """
     Calcule P(Yes) pour un marché météo.
 
@@ -310,6 +324,35 @@ def compute_yes_prob(question: str,
         elif layers_used == 2:
             confidence = min(1.0, confidence + 0.05)
 
+        # ── Couche 4 : modèle ML externe (via model_registry) ────────────────
+        p_model = None
+        try:
+            ml_features = {
+                "p_forecast":          round(p_forecast, 4),
+                "p_climate":           round(p_climate, 4) if p_climate else None,
+                "p_trend":             round(p_trend, 4) if p_trend else None,
+                "forecast_consensus":  round(corrected_forecast, 2),
+                "forecast_confidence": round(forecast_conf, 3),
+                "forecast_n_sources":  len(sources),
+                "bias_correction":     round(bias_corr, 2),
+                "corrected_forecast":  round(corrected_forecast, 2),
+                "sigma":               round(sigma, 2),
+                "threshold_value":     target_c,
+                "days_to_expiry":      days,
+                "month":               month,
+                "market_yes_prob":     market_yes_prob,
+                "oracle_alignment":    oracle_alignment,
+            }
+            if sources:
+                ml_features.update({f"forecast_{k}": v for k, v in sources.items()})
+            ml_pred = model_predict(ml_features)
+            if ml_pred is not None:
+                p_model    = ml_pred.p_yes
+                p_final    = ml_pred.p_yes
+                confidence = ml_pred.confidence
+        except Exception:
+            pass   # non-bloquant — garde la fusion statistique
+
         # ── Enregistrement pour calibration ───────────────────────────────────
         if record:
             record_prediction(city, date_str, corrected_forecast)
@@ -321,11 +364,33 @@ def compute_yes_prob(question: str,
             "p_forecast":    round(p_forecast, 4),
             "p_climate":     round(p_climate, 4) if p_climate else None,
             "p_trend":       round(p_trend, 4) if p_trend else None,
+            "p_model":       round(p_model, 4) if p_model is not None else None,
             "p_final":       p_final,
             "layers_used":   layers_used,
             "sources":       list(sources.keys()),
             "days_to_expiry": days,
         }
+
+        # ── Feature store ─────────────────────────────────────────────────────
+        if condition_id:
+            try:
+                fv = build_feature_vector_from_detail(
+                    condition_id      = condition_id,
+                    question          = question,
+                    city              = city,
+                    date_str          = date_str,
+                    detail            = detail,
+                    market_yes_prob   = market_yes_prob,
+                    side              = side,
+                    kelly_stake_usd   = kelly_stake_usd,
+                    oracle_alignment  = oracle_alignment,
+                    resolution_source = resolution_source,
+                    sources_detail    = sources,
+                    spec              = spec,
+                )
+                record_features(fv)
+            except Exception:
+                pass   # non-bloquant
 
         return p_final, round(confidence, 3), detail
 

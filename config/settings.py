@@ -66,6 +66,20 @@ ORACLE_POLL_INTERVAL_SEC = int(os.getenv("ORACLE_POLL_INTERVAL_SEC",   "1800"))
 # Délai max avant alerte Telegram si l'oracle ne répond pas (heures).
 MAX_ORACLE_WAIT_HOURS    = int(os.getenv("MAX_ORACLE_WAIT_HOURS",       "48"))
 
+# ── Résolution décentralisée UMA (v3) ────────────────────────────────────────
+# Sur Polymarket, les marchés météo sont résolus via l'Optimistic Oracle UMA.
+# Mécanisme : un proposer soumet le résultat → fenêtre de dispute de 2h →
+# si pas de dispute, résolution automatique. Si dispute → vote UMA (jours).
+#
+# MIN_LIQUIDITY_USD : volume minimal (USDC) pour trader un marché.
+# En dessous, le spread réel dépasse notre estimation de 2.5% → edge fictif.
+MIN_LIQUIDITY_USD = float(os.getenv("MIN_LIQUIDITY_USD", "300.0"))
+
+# UMA_DISPUTE_PENALTY : réduction du kelly sur les marchés à résolution UMA.
+# Raison : risque de dispute (blocage 7-14j), liquidité gelée pendant ce temps.
+# 0.15 = kelly réduit de 15% sur ces marchés. 0.0 = pas de pénalité.
+UMA_DISPUTE_PENALTY = float(os.getenv("UMA_DISPUTE_PENALTY", "0.15"))
+
 # ── Chemins fichiers de persistance ───────────────────────────────────────────
 # Utilise des chemins absolus depuis la racine du projet pour éviter
 # tout conflit selon le CWD au lancement.
@@ -92,3 +106,27 @@ PNL_FILE = os.getenv(
 # Sans clé : le bot fonctionne uniquement avec le parsing regex (couvre ~90% des cas).
 # Avec clé : le fallback LLM prend en charge les questions ambiguës.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+ONCHAIN_OPS_FILE = os.getenv(
+    "ONCHAIN_OPS_FILE",
+    str(_ROOT / "data" / "logs" / "onchain_ops.json"),
+)
+
+# ── Dispute UMA active (v4) ───────────────────────────────────────────────────
+# Permet au bot de déclencher disputePrice() on-chain si une proposition
+# UMA diverge de ContractSpec.evaluate() avec confiance suffisante.
+# RISQUE : le bond (500 USDC) est perdu si le DVM vote contre le bot.
+# Désactivé par défaut — activer seulement avec PRIVATE_KEY et USDC suffisant.
+UMA_DISPUTE_ENABLED        = os.getenv("UMA_DISPUTE_ENABLED",        "0") == "1"
+UMA_DISPUTE_BOND_USDC      = float(os.getenv("UMA_DISPUTE_BOND_USDC",      "500.0"))
+UMA_DISPUTE_MIN_CONFIDENCE = float(os.getenv("UMA_DISPUTE_MIN_CONFIDENCE", "0.90"))
+
+# ── Modèle ML externe (v5) ────────────────────────────────────────────────────
+# MODEL_PATH     : chemin vers .pkl (sklearn/joblib) ou .onnx
+# MODEL_WEIGHT   : poids du ML dans l'ensemble (0=stat seul, 1=ML seul, défaut 0.6)
+# MODEL_ENDPOINT : URL d'une API de prédiction HTTP (RemoteModel)
+# MODEL_API_KEY  : clé API pour MODEL_ENDPOINT
+MODEL_PATH      = os.getenv("MODEL_PATH",      "")
+MODEL_WEIGHT    = float(os.getenv("MODEL_WEIGHT", "0.6"))
+MODEL_ENDPOINT  = os.getenv("MODEL_ENDPOINT",  "")
+MODEL_API_KEY   = os.getenv("MODEL_API_KEY",   "")

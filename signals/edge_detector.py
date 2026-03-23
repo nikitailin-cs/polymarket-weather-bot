@@ -12,9 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from typing import List, Optional
 from core.models import WeatherMarket, WeatherSignal, TradeSignal
 from signals.probability_engine import compute_yes_prob
-from config.settings import MIN_EDGE, MAX_BET_USD, KELLY_FRACTION
+from config.settings import MIN_EDGE, MAX_BET_USD, KELLY_FRACTION, FEE_BPS, UMA_DISPUTE_PENALTY, MIN_LIQUIDITY_USD
 
-TAKER_FEE   = 0.02
+# FEE_BPS depuis settings (actuellement 0 — Polymarket ne prélève pas de taker fee)
+# SPREAD_COST = coût du spread bid/ask estimé à 2.5%
+TAKER_FEE   = FEE_BPS / 10_000   # 0 bps → 0.0
 SPREAD_COST = 0.025
 TOTAL_COST  = TAKER_FEE + SPREAD_COST
 
@@ -22,18 +24,29 @@ TOTAL_COST  = TAKER_FEE + SPREAD_COST
 # ── Kelly + déflation oracle ──────────────────────────────────────────────────
 
 def kelly_stake(
-    p_win:      float,
-    odds:       float,
-    bankroll:   float,
-    alignment:  float = 1.0,   # oracle_alignment_score (1.0 si pas de ContractSpec)
+    p_win:             float,
+    odds:              float,
+    bankroll:          float,
+    alignment:         float = 1.0,    # oracle_alignment_score (1.0 si pas de ContractSpec)
+    resolution_source: str   = "uma",  # "uma" / "pyth" / "manual" / "unknown"
 ) -> float:
     """
-    Kelly fractionnel avec réduction si alignement oracle incertain.
-    alignment < 0.85 → kelly_fraction réduite proportionnellement.
+    Kelly fractionnel avec deux réductions :
+    1. alignment < 0.85  → fraction réduite proportionnellement (ambiguïté oracle)
+    2. resolution_source == "uma" → pénalité UMA_DISPUTE_PENALTY
+       Raison : l'Optimistic Oracle UMA a une fenêtre de dispute de 2h minimum.
+       En cas de dispute, la résolution prend 7-14j et la liquidité est gelée.
+       On réduit le kelly pour refléter ce risque de blocage.
     """
     fraction = KELLY_FRACTION
+
+    # Pénalité alignement oracle
     if alignment < 0.85:
-        fraction = KELLY_FRACTION * alignment
+        fraction *= alignment
+
+    # Pénalité résolution UMA (risque de dispute)
+    if resolution_source == "uma":
+        fraction *= (1.0 - UMA_DISPUTE_PENALTY)
 
     q_win = 1 - p_win
     k     = max(0.0, (p_win * odds - q_win) / odds)
@@ -41,14 +54,17 @@ def kelly_stake(
     return round(min(k * bankroll, MAX_BET_USD), 2)
 
 
-def _get_alignment(condition_id: str, spec_cache) -> float:
-    """Récupère le score d'alignement depuis le cache. Retourne 1.0 si pas de cache."""
+def _get_contract_info(condition_id: str, spec_cache) -> tuple[float, str]:
+    """
+    Récupère (oracle_alignment_score, resolution_source) depuis le cache.
+    Retourne (1.0, "uma") par défaut — UMA est la règle sur Polymarket météo.
+    """
     if spec_cache is None:
-        return 1.0
+        return 1.0, "uma"
     spec = spec_cache.get(condition_id)
     if spec is None:
-        return 1.0
-    return spec.oracle_alignment_score
+        return 1.0, "uma"
+    return spec.oracle_alignment_score, spec.resolution_source
 
 
 def analyze_market(
@@ -56,7 +72,33 @@ def analyze_market(
     bankroll:   float,
     spec_cache = None,   # ContractSpecCache optionnel
 ) -> Optional[TradeSignal]:
-    result = compute_yes_prob(market.question, record=True)
+    # ── Filtre liquidité (v3) ────────────────────────────────────────────────
+    # Si le volume est trop faible, le spread réel dépasse notre estimation.
+    if market.volume < MIN_LIQUIDITY_USD:
+        return None
+
+    # ── Clamp des bornes 0.01 / 0.99 (v3) ───────────────────────────────────
+    # Aux bornes du marché, le spread réel est inconnu :
+    # un prix YES=0.01 peut signifier "quasi-impossible" ou "illiquide".
+    # Dans les deux cas, notre edge calculé est fictif → on écarte.
+    market_yes_prob = market.market_yes_prob or 0.5
+    if market_yes_prob <= 0.02 or market_yes_prob >= 0.98:
+        return None
+
+    # ── Déflation oracle + résolution UMA (v3) ───────────────────────────────
+    # Doit être calculé AVANT compute_yes_prob car passé en argument
+    alignment, resolution_source = _get_contract_info(market.condition_id, spec_cache)
+
+    result = compute_yes_prob(
+        question          = market.question,
+        record            = True,
+        condition_id      = market.condition_id,
+        market_yes_prob   = market.market_yes_prob or 0.5,
+        side              = "NO",   # affiné après calcul edge
+        kelly_stake_usd   = 0.0,    # affiné après kelly_stake
+        oracle_alignment  = alignment,
+        resolution_source = resolution_source,
+    )
     if result is None:
         return None
     our_prob, confidence, detail = result
@@ -68,14 +110,11 @@ def analyze_market(
         sources             = detail.get("sources", []),
     )
 
-    market_yes_prob = market.market_yes_prob or 0.5
+    # market_yes_prob déjà calculé et validé plus haut (clamp bornes)
     edge_yes = our_prob - market_yes_prob
     edge_no  = (1 - our_prob) - (1 - market_yes_prob)
     side     = "YES" if edge_yes >= edge_no else "NO"
     raw_edge = abs(edge_yes if side == "YES" else edge_no)
-
-    # ── Déflation oracle (v2) ─────────────────────────────────────────────────
-    alignment = _get_alignment(market.condition_id, spec_cache)
     # edge_net = edge_brut × alignement − frais
     net_edge  = (raw_edge * alignment) - TOTAL_COST
 
@@ -95,7 +134,7 @@ def analyze_market(
 
     odds  = (1 / entry_price) - 1
     p_win = our_prob if side == "YES" else (1 - our_prob)
-    stake = kelly_stake(p_win, odds, bankroll, alignment=alignment)
+    stake = kelly_stake(p_win, odds, bankroll, alignment=alignment, resolution_source=resolution_source)
 
     if stake < 1.0:
         return None
@@ -187,7 +226,7 @@ def find_best_trades(
             if not _warned_exposure:
                 print(f"  ⚠️  Exposition max atteinte ({MAX_EXPOSURE_PCT*100:.0f}%) — nouveaux trades suspendus")
                 _warned_exposure = True
-            continue
+            break  # signaux triés par edge décroissant, inutile de continuer
 
         if cities_open.get(city, 0) >= MAX_PER_CITY:
             print(f"  ⚠️  Max positions pour {city} ({MAX_PER_CITY})")

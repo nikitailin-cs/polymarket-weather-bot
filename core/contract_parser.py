@@ -206,6 +206,11 @@ def _regex_parse(question: str, market_id: str, end_date_iso: str) -> Optional[C
     rounding    = _ORACLE_ROUNDING.get(variable, 0)
     time_window = _DEFAULT_TIME_WINDOW.get(variable)
 
+    # Sur Polymarket, les marchés météo sont quasi-exclusivement résolus via UMA.
+    # Le champ resolutionSource de Gamma confirme cela, mais on peut le déduire
+    # dès le parsing : tout marché météo non-financier → UMA par défaut.
+    resolution_source = "uma"
+
     return ContractSpec(
         market_id              = market_id,
         condition_id           = "",
@@ -220,6 +225,7 @@ def _regex_parse(question: str, market_id: str, end_date_iso: str) -> Optional[C
         oracle_source          = oracle_source,
         oracle_rounding        = rounding,
         oracle_alignment_score = alignment if station_id else 0.35,
+        resolution_source      = resolution_source,
         end_date_iso           = end_date_iso,
         status                 = MarketStatus.ACTIVE,
     )
@@ -296,6 +302,7 @@ def _llm_parse(question: str, market_id: str, end_date_iso: str) -> Optional[Con
             oracle_source          = src,
             oracle_rounding        = rounding,
             oracle_alignment_score = align,
+            resolution_source      = "uma",   # tous les marchés météo Polymarket → UMA
             end_date_iso           = end_date_iso,
             status                 = MarketStatus.ACTIVE,
         )
@@ -308,12 +315,14 @@ def _llm_parse(question: str, market_id: str, end_date_iso: str) -> Optional[Con
 # ── Point d'entrée public ─────────────────────────────────────────────────────
 
 def parse_contract(
-    market_id:    str,
-    condition_id: str,
-    question:     str,
-    end_date_iso: str,
-    cache:        ContractSpecCache,
-    force:        bool = False,
+    market_id:         str,
+    condition_id:      str,
+    question:          str,
+    end_date_iso:      str,
+    cache:             ContractSpecCache,
+    force:             bool = False,
+    resolution_source: str  = "",    # passé depuis Gamma (resolutionSource)
+    liquidity_usd:     float = 0.0,  # passé depuis Gamma (liquidityNum)
 ) -> Optional[ContractSpec]:
     """
     Retourne le ContractSpec du marché, depuis le cache si possible.
@@ -367,6 +376,19 @@ def parse_contract(
 
     # ── Succès ─────────────────────────────────────────────────────────────────
     spec.condition_id = condition_id
+
+    # Override resolution_source si Gamma le fournit explicitement
+    # Valeurs connues : "uma", "manual", "admin", "pythia"
+    if resolution_source:
+        rs = resolution_source.lower()
+        if "uma" in rs or "optimistic" in rs:
+            spec.resolution_source = "uma"
+        elif "pyth" in rs:
+            spec.resolution_source = "pyth"
+        elif "manual" in rs or "admin" in rs:
+            spec.resolution_source = "manual"
+        # sinon on garde "uma" par défaut (marchés météo)
+
     cache.set(spec)
 
     log.info(

@@ -115,15 +115,13 @@ def get_max_temp(city: str, date_str: str) -> Optional[float]:
 
 
 def get_min_temp(city: str, date_str: str) -> Optional[float]:
-    """Température min prévue (°C)."""
+    """Température min prévue ou observée (°C) — même stratégie que get_max_temp."""
     coords = geocode(city)
     if coords is None:
         return None
     lat, lon = coords
-    try:
-        today_utc   = datetime.now(timezone.utc).date()
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        api_url     = FORECAST_URL if target_date >= today_utc else ARCHIVE_URL
+
+    def _fetch(api_url: str) -> Optional[float]:
         url = (
             f"{api_url}"
             f"?latitude={lat}&longitude={lon}"
@@ -131,12 +129,19 @@ def get_min_temp(city: str, date_str: str) -> Optional[float]:
             f"&timezone=auto"
             f"&start_date={date_str}&end_date={date_str}"
         )
-        data = _get(url)
-        temps = data.get("daily", {}).get("temperature_2m_min", [])
-        return float(temps[0]) if temps and temps[0] is not None else None
-    except Exception as e:
-        print(f"  ⚠️ Open-Meteo min_temp [{city}]: {e}")
-        return None
+        try:
+            data = _get(url)
+            temps = data.get("daily", {}).get("temperature_2m_min", [])
+            return float(temps[0]) if temps and temps[0] is not None else None
+        except Exception as e:
+            host = api_url.split("/")[2][:20]
+            print(f"  ⚠️ Open-Meteo [{host}] min_temp [{city}]: {e}")
+            return None
+
+    result = _fetch(FORECAST_URL)
+    if result is not None:
+        return result
+    return _fetch(ARCHIVE_URL)
 
 
 def get_precip_mm(city: str, date_str: str) -> Optional[float]:
@@ -180,15 +185,13 @@ def get_precip_mm(city: str, date_str: str) -> Optional[float]:
 
 
 def get_wind_max(city: str, date_str: str) -> Optional[float]:
-    """Vitesse max du vent (km/h) prévue."""
+    """Vitesse max du vent (km/h) prévue ou observée — même stratégie que get_max_temp."""
     coords = geocode(city)
     if coords is None:
         return None
     lat, lon = coords
-    try:
-        today_utc   = datetime.now(timezone.utc).date()
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        api_url     = FORECAST_URL if target_date >= today_utc else ARCHIVE_URL
+
+    def _fetch(api_url: str) -> Optional[float]:
         url = (
             f"{api_url}"
             f"?latitude={lat}&longitude={lon}"
@@ -196,12 +199,19 @@ def get_wind_max(city: str, date_str: str) -> Optional[float]:
             f"&timezone=auto"
             f"&start_date={date_str}&end_date={date_str}"
         )
-        data = _get(url)
-        vals = data.get("daily", {}).get("wind_speed_10m_max", [])
-        return float(vals[0]) if vals and vals[0] is not None else None
-    except Exception as e:
-        print(f"  ⚠️ Open-Meteo wind [{city}]: {e}")
-        return None
+        try:
+            data = _get(url)
+            vals = data.get("daily", {}).get("wind_speed_10m_max", [])
+            return float(vals[0]) if vals and vals[0] is not None else None
+        except Exception as e:
+            host = api_url.split("/")[2][:20]
+            print(f"  ⚠️ Open-Meteo [{host}] wind [{city}]: {e}")
+            return None
+
+    result = _fetch(FORECAST_URL)
+    if result is not None:
+        return result
+    return _fetch(ARCHIVE_URL)
 
 
 if __name__ == "__main__":
