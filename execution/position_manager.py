@@ -20,7 +20,7 @@ from core.models import MarketStatus
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 
 # Timestamps en mémoire du dernier poll oracle par condition_id
-_last_poll: dict[str, float] = {}
+_last_poll: dict = {}
 
 
 def get_open_positions() -> list:
@@ -31,18 +31,35 @@ def get_open_positions() -> list:
 # ── Appel Gamma API ───────────────────────────────────────────────────────────
 
 def _fetch_market(condition_id: str) -> Dict:
-    """1 requête HTTP — retourne {} silencieusement en cas d'erreur réseau."""
-    try:
-        url = f"{GAMMA_URL}?conditionId={condition_id}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-        if isinstance(data, list) and data:
-            return data[0]
-        return {}
-    except Exception as e:
-        log.warning(f"Gamma API inaccessible pour {condition_id[:16]}: {e}")
-        return {}
+    """
+    Récupère les données d un marché Polymarket via Gamma API.
+    Essaie plusieurs variantes de query pour maximiser les chances
+    de trouver un marché expiré ou résolu.
+    """
+    # Gamma supporte conditionId et conditionIds (pluriel) selon les versions
+    variants = [
+        f"{GAMMA_URL}?conditionId={condition_id}",
+        f"{GAMMA_URL}?conditionIds={condition_id}",
+    ]
+    for url in variants:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            if isinstance(data, list) and data:
+                market = data[0]
+                log.debug(
+                    f"Gamma [{condition_id[:16]}]: "
+                    f"active={market.get('active')} "
+                    f"closed={market.get('closed')} "
+                    f"prices={market.get('outcomePrices')}"
+                )
+                return market
+        except Exception as e:
+            log.debug(f"Gamma variant [{url[-30:]}] erreur: {e}")
+            continue
+    log.warning(f"Gamma: aucune donnée pour {condition_id[:16]} (marché introuvable ou API down)")
+    return {}
 
 
 # ── Interprétation de la réponse Gamma ───────────────────────────────────────
@@ -186,8 +203,8 @@ def position_monitor_cycle(spec_cache=None) -> None:
             pass   # date inconnue → on poll quand même
 
         # ── 3. Throttle : pas plus d'1 poll toutes les ORACLE_POLL_INTERVAL_SEC ──
-        last = _last_poll.get(condition_id, 0.0)
-        if now_mono - last < ORACLE_POLL_INTERVAL_SEC:
+        last = _last_poll.get(condition_id, None)
+        if last is not None and (now_mono - last) < ORACLE_POLL_INTERVAL_SEC:
             continue
 
         _last_poll[condition_id] = now_mono
@@ -197,8 +214,24 @@ def position_monitor_cycle(spec_cache=None) -> None:
         new_status = _read_status(data)
 
         if new_status is None:
-            # Marché toujours actif selon Gamma (rare, end_date peut être approximatif)
-            continue
+            # Deux cas possibles :
+            # a) Marché toujours actif selon Gamma (end_date approximatif ou oracle en attente)
+            # b) _fetch_market a retourné {} car conditionId introuvable
+            #
+            # Si end_date est passée depuis > 12h et le marché reste introuvable,
+            # on force CLOSED_PENDING pour déclencher le timeout oracle.
+            try:
+                end_dt_check = datetime.strptime(end_date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                hours_overdue = (now_dt - end_dt_check).total_seconds() / 3600
+                if hours_overdue > 12 and not data:
+                    log.info(
+                        f"Position {condition_id[:16]} introuvable sur Gamma "                        f"({hours_overdue:.0f}h après expiry) → CLOSED_PENDING forcé"
+                    )
+                    new_status = MarketStatus.CLOSED_PENDING
+                else:
+                    continue
+            except Exception:
+                continue
 
         # ── 5. Mise à jour du statut dans la position (pour spec_cache) ───────
         if spec_cache is not None:

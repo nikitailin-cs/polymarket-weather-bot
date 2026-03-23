@@ -163,8 +163,9 @@ def find_best_trades(
     ]
     all_signals.sort(key=lambda s: s.edge, reverse=True)
 
-    filtered     = []
-    new_exposure = 0.0
+    filtered          = []
+    new_exposure      = 0.0
+    _warned_exposure  = False   # affiche le warning "exposition max" une seule fois
 
     for s in all_signals:
         # ── Déduplification condition_id (v2) ─────────────────────────────────
@@ -183,7 +184,9 @@ def find_best_trades(
             break
 
         if (open_exposure + new_exposure + s.kelly_stake_usd) > bankroll * MAX_EXPOSURE_PCT:
-            print(f"  ⚠️  Exposition max atteinte ({MAX_EXPOSURE_PCT*100:.0f}%)")
+            if not _warned_exposure:
+                print(f"  ⚠️  Exposition max atteinte ({MAX_EXPOSURE_PCT*100:.0f}%) — nouveaux trades suspendus")
+                _warned_exposure = True
             continue
 
         if cities_open.get(city, 0) >= MAX_PER_CITY:

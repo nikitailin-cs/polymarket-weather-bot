@@ -1,6 +1,9 @@
 """
 Tracker PnL — enregistre chaque trade et calcule les performances.
 Persistance JSON dans data/logs/ — survit aux crashes.
+
+Utilise les chemins absolus depuis config/settings pour cohérence
+avec position_manager (évite toute ambiguïté selon le CWD).
 """
 from __future__ import annotations
 import json, os, sys
@@ -9,9 +12,16 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-TRADES_FILE    = Path(__file__).parent.parent / "data" / "logs" / "trades.json"
-POSITIONS_FILE = Path(__file__).parent.parent / "data" / "logs" / "positions.json"
-PNL_FILE       = Path(__file__).parent.parent / "data" / "logs" / "pnl.json"
+
+def _get_paths():
+    """Charge les chemins depuis settings — import tardif pour éviter les circularités."""
+    try:
+        from config.settings import POSITIONS_FILE, TRADES_FILE, PNL_FILE
+        return Path(POSITIONS_FILE), Path(TRADES_FILE), Path(PNL_FILE)
+    except Exception:
+        # Fallback si settings pas encore chargé (tests unitaires)
+        base = Path(__file__).parent.parent / "data" / "logs"
+        return base / "positions.json", base / "trades.json", base / "pnl.json"
 
 
 def _load(path: Path) -> Any:
@@ -29,7 +39,7 @@ def _save(path: Path, data: Any) -> None:
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(path)  # Atomique — pas de corruption en cas de crash
+    tmp.replace(path)
 
 
 # ── Enregistrement des trades ─────────────────────────────────────────────────
@@ -49,7 +59,7 @@ def record_trade(
     dry_run:       bool = True,
     order_id:      Optional[str] = None,
 ) -> Dict:
-    """Enregistre un trade dans trades.json et positions.json."""
+    POSITIONS_FILE, TRADES_FILE, _ = _get_paths()
     now = datetime.now(timezone.utc).isoformat()
 
     trade = {
@@ -68,17 +78,15 @@ def record_trade(
         "end_date":     end_date,
         "dry_run":      dry_run,
         "status":       "open",
-        "result":       None,   # "win" / "loss" / "push"
+        "result":       None,
         "pnl_usd":      None,
         "closed_at":    None,
     }
 
-    # Sauvegarde dans trades.json
     trades = _load(TRADES_FILE)
     trades.append(trade)
     _save(TRADES_FILE, trades)
 
-    # Sauvegarde dans positions.json (positions ouvertes)
     positions = _load(POSITIONS_FILE)
     positions.append(trade)
     _save(POSITIONS_FILE, positions)
@@ -92,9 +100,9 @@ def close_position(condition_id: str, result: str, pnl_usd: float) -> None:
     result = "win" / "loss"
     pnl_usd = profit ou perte en dollars
     """
+    POSITIONS_FILE, TRADES_FILE, _ = _get_paths()
     now = datetime.now(timezone.utc).isoformat()
 
-    # Met à jour trades.json
     trades = _load(TRADES_FILE)
     for t in trades:
         if t["condition_id"] == condition_id and t["status"] == "open":
@@ -104,27 +112,26 @@ def close_position(condition_id: str, result: str, pnl_usd: float) -> None:
             t["closed_at"] = now
     _save(TRADES_FILE, trades)
 
-    # Retire de positions.json
     positions = _load(POSITIONS_FILE)
     positions = [p for p in positions if p["condition_id"] != condition_id]
     _save(POSITIONS_FILE, positions)
 
-    # Met à jour pnl.json
     _update_pnl(pnl_usd, result)
 
 
 def _update_pnl(pnl_usd: float, result: str) -> None:
+    _, _, PNL_FILE = _get_paths()
     pnl = _load(PNL_FILE) or {
         "total_trades": 0,
-        "wins": 0,
-        "losses": 0,
+        "wins":         0,
+        "losses":       0,
         "total_pnl_usd": 0.0,
-        "best_trade": 0.0,
-        "worst_trade": 0.0,
-        "history": [],
+        "best_trade":   0.0,
+        "worst_trade":  0.0,
+        "history":      [],
     }
-    pnl["total_trades"] += 1
-    pnl["total_pnl_usd"] = round(pnl["total_pnl_usd"] + pnl_usd, 4)
+    pnl["total_trades"]  += 1
+    pnl["total_pnl_usd"]  = round(pnl["total_pnl_usd"] + pnl_usd, 4)
     if result == "win":
         pnl["wins"] += 1
     else:
@@ -138,18 +145,25 @@ def _update_pnl(pnl_usd: float, result: str) -> None:
     })
     _save(PNL_FILE, pnl)
 
+
 def get_current_bankroll(initial: float = 150.0) -> float:
     """Retourne la bankroll courante = initial + PnL réalisé uniquement."""
+    _, _, PNL_FILE = _get_paths()
     pnl_data = _load(PNL_FILE)
     realized = pnl_data.get("total_pnl_usd", 0.0) if isinstance(pnl_data, dict) else 0.0
     return round(initial + realized, 2)
 
+
 def get_open_positions() -> list:
     """Retourne les positions ouvertes."""
+    POSITIONS_FILE, _, _ = _get_paths()
     return _load(POSITIONS_FILE)
+
+
 # ── Affichage ─────────────────────────────────────────────────────────────────
+
 def print_open_positions() -> None:
-    positions = _load(POSITIONS_FILE)
+    positions = get_open_positions()
     if not positions:
         print("  Aucune position ouverte.")
         return
@@ -165,7 +179,6 @@ def print_open_positions() -> None:
         edge  = p.get("edge_pct", 0)
         dry   = " [DRY]" if p.get("dry_run") else " [LIVE]"
         ts    = (p.get("timestamp") or "")[:16].replace("T", " ")
-        # Temps restant
         try:
             end_dt    = datetime.strptime(end[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
             days_left = (end_dt - now).days
@@ -179,6 +192,7 @@ def print_open_positions() -> None:
 
 
 def print_pnl_summary() -> None:
+    _, _, PNL_FILE = _get_paths()
     pnl = _load(PNL_FILE)
     if not pnl or not isinstance(pnl, dict):
         print("  Aucun trade clôturé pour l'instant.")

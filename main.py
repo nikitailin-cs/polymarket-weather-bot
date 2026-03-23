@@ -4,6 +4,7 @@ Point d'entrée principal — bot Polymarket Weather.
 - Suivi des positions ouvertes
 - Tracker PnL en temps réel
 - v2 : ContractSpecCache injecté dans scanner, edge_detector, position_manager
+- v2.1 : update_actuals() appelé toutes les 10 cycles pour calibration modèle
 """
 import sys, time
 from config.settings import DRY_RUN, WEATHER_REFRESH_SEC, CONTRACT_SPECS_FILE
@@ -17,6 +18,10 @@ from execution.order_manager import place_order
 from execution.position_manager import position_monitor_cycle
 from core.models import ContractSpecCache
 
+# Calibration : mise à jour des températures réelles observées
+# Toutes les N cycles → réduit les appels à l'API archive
+CALIBRATION_EVERY_N = 10
+
 
 def run() -> None:
     mode = "DRY-RUN (simulation)" if DRY_RUN else "⚠️  LIVE — ordres réels"
@@ -28,7 +33,6 @@ def run() -> None:
     start_ws_feed()
     time.sleep(2)
 
-    # Cache ContractSpec partagé — chargé depuis disque au démarrage
     spec_cache = ContractSpecCache(CONTRACT_SPECS_FILE)
     log.info(f"  ContractSpecs en cache : {len(spec_cache)}")
 
@@ -45,8 +49,6 @@ def run() -> None:
             position_monitor_cycle(spec_cache=spec_cache)
 
             # 2. Scanner les marchés météo actifs
-            #    → parse ContractSpec sur chaque nouveau marché (1 fois, mis en cache)
-            #    → écarte les marchés avec oracle_alignment_score < MIN_ORACLE_ALIGNMENT
             markets = scan_weather_markets(spec_cache=spec_cache)
             if not markets:
                 log.warning("Aucun marché météo actif — pause 5 min")
@@ -65,7 +67,6 @@ def run() -> None:
                         token.price = ws_price
 
             # 3. Trouver les edges
-            #    → déflation oracle + Kelly ajusté + filtre condition_id dupliqués
             from monitoring.pnl_tracker import get_current_bankroll
             signals = find_best_trades(
                 markets,
@@ -78,10 +79,13 @@ def run() -> None:
             for signal in signals[:3]:
                 place_order(signal)
 
-            # 5. Résumé PnL toutes les 10 cycles
-            if cycle % 10 == 0:
+            # 5. Toutes les N cycles :
+            #    - Résumé PnL
+            #    - Mise à jour calibration modèle (températures réelles observées)
+            if cycle % CALIBRATION_EVERY_N == 0:
                 print_open_positions()
                 print_pnl_summary()
+                _run_calibration()
 
             log.info(f"Cycle #{cycle} terminé — prochain dans {WEATHER_REFRESH_SEC}s")
             time.sleep(WEATHER_REFRESH_SEC)
@@ -96,6 +100,20 @@ def run() -> None:
         log.exception(f"Erreur critique : {e}")
         alert_error(str(e))
         sys.exit(1)
+
+
+def _run_calibration() -> None:
+    """
+    Met à jour les températures réelles observées pour calibrer les biais de modèle.
+    Appelé périodiquement — lent (appels réseau archive) mais exécuté hors boucle chaude.
+    """
+    try:
+        from signals.sources.model_calibrator import update_actuals
+        n = update_actuals()
+        if n > 0:
+            log.info(f"  🔧 Calibration : {n} observation(s) mise(s) à jour")
+    except Exception as e:
+        log.warning(f"  Calibration échouée (non critique) : {e}")
 
 
 if __name__ == "__main__":
