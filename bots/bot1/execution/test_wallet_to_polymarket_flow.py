@@ -19,6 +19,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from config.settings import FEE_BPS  # noqa: E402
+from core.client import invoke_clob_post_order  # noqa: E402
 from execution.ctf_manager import get_pol_balance, get_usdc_balances  # noqa: E402
 from core.polymarket_proxy import (  # noqa: E402
     apply_proxy_env_for_clob,
@@ -297,13 +298,7 @@ def _submit_or_simulate_order(
             order_type = getattr(OrderType, "GTC", None)
         except Exception:
             order_type = None
-        if order_type is not None:
-            try:
-                resp = post_fn(signed_or_resp, order_type=order_type)
-            except TypeError:
-                resp = post_fn(signed_or_resp, order_type)
-        else:
-            resp = post_fn(signed_or_resp)
+        resp = invoke_clob_post_order(client, signed_or_resp, order_type)
         details["submit_path"] = "post_order"
         return (resp if isinstance(resp, dict) else {"raw_response": resp}, details)
 

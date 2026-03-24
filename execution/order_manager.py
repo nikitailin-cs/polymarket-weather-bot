@@ -8,7 +8,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
 from typing import Any, Optional
-from core.client import get_client
+from core.client import get_client, invoke_clob_post_order
 from core.models import TradeSignal, Order
 from config.settings import DRY_RUN, FEE_BPS
 from monitoring.logger import log
@@ -28,21 +28,16 @@ def _submit_live_buy_order(client: Any, payload: dict[str, Any]) -> dict[str, An
     """
     signed_order = client.create_order(payload)
 
-    # Voie principale du SDK py_clob_client: post_order(signed_order, order_type=GTC)
     post_fn = getattr(client, "post_order", None)
     if callable(post_fn):
         order_type = None
         try:
             from py_clob_client.clob_types import OrderType  # type: ignore
+
             order_type = getattr(OrderType, "GTC", None)
         except Exception:
             order_type = None
-        if order_type is not None:
-            try:
-                return post_fn(signed_order, order_type=order_type)
-            except TypeError:
-                return post_fn(signed_order, order_type)
-        return post_fn(signed_order)
+        return invoke_clob_post_order(client, signed_order, order_type)
 
     # Fallback possible sur certaines versions:
     create_and_post_fn = getattr(client, "create_and_post_order", None)

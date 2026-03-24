@@ -25,6 +25,7 @@ from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
 from config.settings import FEE_BPS  # noqa: E402
+from core.client import invoke_clob_post_order  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
 
 import requests  # noqa: E402
@@ -117,12 +118,18 @@ def _get_clob_client() -> ClobClient:
     if not public_address:
         raise ValueError("PUBLIC_ADDRESS manquant dans le .env")
 
+    sig_type_raw = os.getenv("POLYMARKET_SIGNATURE_TYPE", "1").strip()
+    try:
+        signature_type = int(sig_type_raw)
+    except ValueError:
+        signature_type = 1
+
     base_kwargs: dict[str, Any] = {
         "host": CLOB_URL,
         "key": private_key,
         "chain_id": POLYGON,
         "funder": public_address,
-        "signature_type": 1,  # EIP-712
+        "signature_type": signature_type,
     }
     # Compatibilité multi-versions py_clob_client:
     # certaines versions n'acceptent pas host_rpc dans __init__.
@@ -508,13 +515,7 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
             order_type = None
 
         try:
-            if order_type is not None:
-                try:
-                    resp = post_fn(signed_or_resp, order_type=order_type)
-                except TypeError:
-                    resp = post_fn(signed_or_resp, order_type)
-            else:
-                resp = post_fn(signed_or_resp)
+            resp = invoke_clob_post_order(client, signed_or_resp, order_type)
         except Exception as exc:
             LOG.exception("post_order CLOB a échoué (ordre non soumis au carnet): %s", exc)
             return {"status": "failed", "errorMsg": str(exc)}
