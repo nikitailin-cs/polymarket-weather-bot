@@ -33,6 +33,7 @@ GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 CLOB_URL = "https://clob.polymarket.com"
 ORDER_TIMEOUT_SEC = 20
 _clob_client: Optional[ClobClient] = None
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 
 @dataclass(frozen=True)
@@ -394,8 +395,8 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
                 "side": "BUY",
                 "size": size,
                 "fee_rate_bps": FEE_BPS,
-                "taker": "",
-                "maker": "",
+                "taker": ZERO_ADDRESS,
+                "maker": ZERO_ADDRESS,
                 "nonce": 0,
                 "expiration": 0,
                 "salt": 0,
@@ -418,8 +419,8 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
                 side="BUY",
                 size=size,
                 fee_rate_bps=FEE_BPS,
-                taker="",
-                maker="",
+                taker=ZERO_ADDRESS,
+                maker=ZERO_ADDRESS,
                 nonce=0,
                 expiration=0,
                 salt=0,
