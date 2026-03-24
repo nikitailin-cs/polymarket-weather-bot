@@ -508,7 +508,7 @@ def _record_trade(
     conn.commit()
 
 
-def run(order_size_usdc: float = 5.0) -> int:
+def run(order_size_usdc: float = 2.5) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
