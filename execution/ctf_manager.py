@@ -48,7 +48,8 @@ def _log_op(fn, **kwargs):
 
 # ── Adresses contrats Polygon mainnet ────────────────────────────────────────
 CTF_ADDRESS      = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
-USDC_ADDRESS     = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+USDC_ADDRESS     = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # USDC.e (bridged)
+USDC_NATIVE_ADDRESS = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"  # native USDC
 EXCHANGE_ADDRESS = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
 
 # bytes32(0) — parentCollectionId pour les marchés simples (pas de split hiérarchique)
@@ -531,6 +532,37 @@ def get_usdc_balance(wallet_address: Optional[str] = None) -> float:
     except Exception as e:
         log.debug(f"get_usdc_balance erreur: {e}")
         return 0.0
+
+
+def get_usdc_balances(wallet_address: Optional[str] = None) -> dict[str, float]:
+    """
+    Retourne les balances USDC par contrat sur Polygon.
+    - bridged: USDC.e (0x2791...)
+    - native:  USDC natif (0x3c49...)
+    - total:   somme des deux
+    """
+    w3 = _get_web3()
+    if w3 is None:
+        return {"bridged": 0.0, "native": 0.0, "total": 0.0}
+    address = wallet_address or _get_wallet_address()
+    if address is None:
+        return {"bridged": 0.0, "native": 0.0, "total": 0.0}
+    try:
+        from web3 import Web3
+
+        bridged = w3.eth.contract(
+            address=Web3.to_checksum_address(USDC_ADDRESS),
+            abi=USDC_ABI,
+        ).functions.balanceOf(Web3.to_checksum_address(address)).call() / 1e6
+        native = w3.eth.contract(
+            address=Web3.to_checksum_address(USDC_NATIVE_ADDRESS),
+            abi=USDC_ABI,
+        ).functions.balanceOf(Web3.to_checksum_address(address)).call() / 1e6
+        total = float(bridged) + float(native)
+        return {"bridged": float(bridged), "native": float(native), "total": total}
+    except Exception as e:
+        log.debug(f"get_usdc_balances erreur: {e}")
+        return {"bridged": 0.0, "native": 0.0, "total": 0.0}
 
 
 def get_pol_balance(wallet_address: Optional[str] = None) -> float:

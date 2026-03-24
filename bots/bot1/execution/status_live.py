@@ -38,19 +38,22 @@ def _load_env() -> tuple[str, str, str]:
     return rpc, pk, addr
 
 
-def _get_usdc_onchain_safe(wallet_address: str = "") -> float:
+def _get_usdc_onchain_safe(wallet_address: str = "") -> tuple[float, float, float]:
     """
     Import tardif pour garantir que POLYGON_RPC_URL est chargé depuis .env
     avant l'initialisation interne de ctf_manager.
     """
     try:
-        from execution.ctf_manager import get_usdc_balance  # noqa: WPS433
+        from execution.ctf_manager import get_usdc_balances  # noqa: WPS433
 
-        if wallet_address:
-            return float(get_usdc_balance(wallet_address))
-        return float(get_usdc_balance())
+        balances = get_usdc_balances(wallet_address or None)
+        return (
+            float(balances.get("total", 0.0)),
+            float(balances.get("bridged", 0.0)),
+            float(balances.get("native", 0.0)),
+        )
     except Exception:
-        return 0.0
+        return 0.0, 0.0, 0.0
 
 
 def _build_client() -> Optional[ClobClient]:
@@ -123,7 +126,10 @@ def main() -> int:
     print("=== POLYMETEO LIVE STATUS ===")
     print("wallet           :", addr or "-")
     print("rpc_configured   :", "yes" if bool(rpc) else "no")
-    print("usdc_onchain     :", f"{_get_usdc_onchain_safe(addr):.4f}")
+    usdc_total, usdc_bridged, usdc_native = _get_usdc_onchain_safe(addr)
+    print("usdc_onchain     :", f"{usdc_total:.4f}")
+    print("usdc_bridged     :", f"{usdc_bridged:.4f}")
+    print("usdc_native      :", f"{usdc_native:.4f}")
 
     trades = _portfolio_snapshot(limit=10)
     print("recent_trades_db :", len(trades))
