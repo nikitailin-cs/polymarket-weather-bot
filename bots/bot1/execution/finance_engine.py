@@ -25,7 +25,7 @@ from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
 from config.settings import FEE_BPS  # noqa: E402
-from core.client import invoke_clob_post_order  # noqa: E402
+from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
 
 import requests  # noqa: E402
@@ -112,11 +112,14 @@ def _get_clob_client() -> ClobClient:
         raise ValueError("POLYGON_RPC_URL manquant dans le .env")
 
     private_key = os.getenv("PRIVATE_KEY")
-    public_address = os.getenv("PUBLIC_ADDRESS")
     if not private_key:
         raise ValueError("PRIVATE_KEY manquant dans le .env")
-    if not public_address:
-        raise ValueError("PUBLIC_ADDRESS manquant dans le .env")
+    funder = resolve_clob_funder()
+    if not funder:
+        raise ValueError(
+            "Adresse funder manquante: PUBLIC_ADDRESS ou POLYMARKET_PROXY_ADDRESS "
+            "ou POLYMARKET_FUNDER dans le .env"
+        )
 
     sig_type_raw = os.getenv("POLYMARKET_SIGNATURE_TYPE", "1").strip()
     try:
@@ -124,11 +127,17 @@ def _get_clob_client() -> ClobClient:
     except ValueError:
         signature_type = 1
 
+    LOG.info(
+        "CLOB client: signature_type=%s funder=%s (clé = PRIVATE_KEY; doit correspondre au compte Polymarket)",
+        signature_type,
+        funder,
+    )
+
     base_kwargs: dict[str, Any] = {
         "host": CLOB_URL,
         "key": private_key,
         "chain_id": POLYGON,
-        "funder": public_address,
+        "funder": funder,
         "signature_type": signature_type,
     }
     # Compatibilité multi-versions py_clob_client:

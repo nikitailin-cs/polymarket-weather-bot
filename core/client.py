@@ -12,6 +12,18 @@ from core.polymarket_proxy import apply_proxy_env_for_clob
 _client: Optional[ClobClient] = None
 
 
+def resolve_clob_funder() -> Optional[str]:
+    """
+    Adresse « funder » attendue par py_clob_client (souvent le proxy Polymarket, pas l'EOA).
+    Priorité : POLYMARKET_FUNDER > POLYMARKET_PROXY_ADDRESS > PUBLIC_ADDRESS.
+    """
+    for key in ("POLYMARKET_FUNDER", "POLYMARKET_PROXY_ADDRESS", "PUBLIC_ADDRESS"):
+        v = os.getenv(key, "").strip()
+        if v:
+            return v
+    return None
+
+
 def invoke_clob_post_order(
     client: Any, signed_or_resp: Any, order_type_obj: Optional[Any] = None
 ) -> Any:
@@ -42,7 +54,7 @@ def get_client() -> ClobClient:
         if not PRIVATE_KEY:
             raise ValueError("PRIVATE_KEY manquant (impossible d'initialiser le client CLOB)")
 
-        public_address = os.getenv("PUBLIC_ADDRESS")
+        funder = resolve_clob_funder()
         host_rpc = os.getenv("POLYGON_RPC_URL")
         sig_type_raw = os.getenv("POLYMARKET_SIGNATURE_TYPE", "1").strip()
         try:
@@ -56,8 +68,8 @@ def get_client() -> ClobClient:
             "chain_id": CHAIN_ID,
             "signature_type": signature_type,
         }
-        if public_address:
-            kwargs["funder"] = public_address
+        if funder:
+            kwargs["funder"] = funder
 
         init_params = set(inspect.signature(ClobClient).parameters.keys())
         if host_rpc and "host_rpc" in init_params:
