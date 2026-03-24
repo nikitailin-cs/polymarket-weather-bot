@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import urllib.parse
-from typing import Optional
+from typing import Any, Optional
 
 LOG = logging.getLogger(__name__)
 
@@ -36,6 +36,21 @@ def build_socks5_proxy_url() -> Optional[str]:
         q_pass = urllib.parse.quote(password, safe="")
         auth = f"{q_user}:{q_pass}@"
     return f"socks5h://{auth}{host}:{port}"
+
+
+def describe_socks_proxy_env() -> dict[str, Any]:
+    """
+    Résumé sans secret pour logs (diagnostic déploiement).
+    """
+    host = os.getenv("POLYMARKET_SOCKS5_HOST", "").strip()
+    port = os.getenv("POLYMARKET_SOCKS5_PORT", "").strip()
+    eff = build_socks5_proxy_url()
+    return {
+        "POLYMARKET_PROXY_ENABLED": _is_enabled(),
+        "host_set": bool(host),
+        "port_set": bool(port),
+        "clob_routes_via_socks": eff is not None,
+    }
 
 
 def patch_py_clob_httpx_client(proxy_url: str) -> None:

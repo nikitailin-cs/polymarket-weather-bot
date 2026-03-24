@@ -20,7 +20,11 @@ if str(_ROOT) not in sys.path:
 
 from config.settings import FEE_BPS  # noqa: E402
 from execution.ctf_manager import get_pol_balance, get_usdc_balances  # noqa: E402
-from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
+from core.polymarket_proxy import (  # noqa: E402
+    apply_proxy_env_for_clob,
+    build_socks5_proxy_url,
+    describe_socks_proxy_env,
+)
 import requests  # noqa: E402
 
 try:
@@ -169,6 +173,8 @@ def _fetch_best_ask(token_id: str) -> tuple[Optional[float], dict[str, Any]]:
 
 
 def _build_client() -> Any:
+    load_dotenv(dotenv_path=_ROOT / ".env", override=False)
+    apply_proxy_env_for_clob()
     try:
         from py_clob_client.client import ClobClient  # type: ignore
         from py_clob_client.constants import POLYGON  # type: ignore
@@ -176,9 +182,6 @@ def _build_client() -> Any:
         raise RuntimeError(
             "py_clob_client introuvable. Active le bon venv ou installe requirements."
         ) from exc
-
-    load_dotenv(dotenv_path=_ROOT / ".env", override=False)
-    apply_proxy_env_for_clob()
     private_key = os.getenv("PRIVATE_KEY", "").strip()
     public_address = os.getenv("PUBLIC_ADDRESS", "").strip()
     host_rpc = os.getenv("POLYGON_RPC_URL", "").strip()
@@ -335,6 +338,25 @@ def run() -> int:
         return 2
 
     log_path = _setup_logging(args.verbose)
+
+    load_dotenv(dotenv_path=_ROOT / ".env", override=False)
+    px = describe_socks_proxy_env()
+    if px.get("clob_routes_via_socks"):
+        LOG.info("Proxy Polymarket: SOCKS5 actif pour CLOB (py_clob_client / httpx)")
+    else:
+        LOG.warning(
+            "Proxy Polymarket: inactif — trafic CLOB direct (logs httpcore: host=clob.polymarket.com). "
+            "Pour SOCKS: POLYMARKET_PROXY_ENABLED=1 et POLYMARKET_SOCKS5_HOST/PORT dans .env"
+        )
+    LOG.debug("Proxy diagnostic: %s", px)
+
+    if args.execute_live and not (args.token_id.strip() or args.market_id.strip()):
+        LOG.error("Avec --execute-live, fournis --token-id ou --market-id")
+        print(
+            "Erreur: avec --execute-live, fournis --token-id ou --market-id",
+            file=sys.stderr,
+        )
+        return 2
     started_at = _utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
     results: list[StepResult] = []
 
@@ -344,7 +366,6 @@ def run() -> int:
         LOG.debug("STEP_DETAILS %s => %s", name, json.dumps(details, default=str)[:2000])
 
     # 1) ENV
-    load_dotenv(dotenv_path=_ROOT / ".env", override=False)
     env_presence = {
         "PRIVATE_KEY": bool(os.getenv("PRIVATE_KEY")),
         "PUBLIC_ADDRESS": bool(os.getenv("PUBLIC_ADDRESS")),
