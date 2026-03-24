@@ -108,6 +108,15 @@ def _looks_like_icao(code: str) -> bool:
     return bool(re.fullmatch(r"[A-Z]{4}", code))
 
 
+def _looks_like_icao_or_faa(code: str) -> bool:
+    # Wunderground peut exposer des codes FAA/locaux US sur 3-4 caractères.
+    return bool(re.fullmatch(r"[A-Z0-9]{3,4}", code))
+
+
+def _looks_like_wmo(code: str) -> bool:
+    return bool(re.fullmatch(r"\d{5}", code))
+
+
 def _normalize_wmo_id(code: str) -> Optional[str]:
     digits = "".join(ch for ch in (code or "") if ch.isdigit())
     if 1 <= len(digits) <= 5:
@@ -233,19 +242,19 @@ def get_station_lat_lon_by_wmo(conn: sqlite3.Connection, wmo_id: str) -> Optiona
     return float(row[0]), float(row[1])
 
 
-def _is_icao_source(source: str) -> bool:
-    s = (source or "").lower()
-    return ("icao" in s) or ("adds" in s) or ("aviation" in s)
+def get_station_lat_lon_by_ghcnd(conn: sqlite3.Connection, ghcnd_id: str) -> Optional[tuple[float, float]]:
+    row = conn.execute(
+        "SELECT latitude, longitude FROM stations_ghcnd WHERE ghcnd_id = ?",
+        (ghcnd_id.strip().upper(),),
+    ).fetchone()
+    if row is None:
+        return None
+    return float(row[0]), float(row[1])
 
 
 def _is_wmo_source(source: str) -> bool:
     s = (source or "").lower()
     return "wmo" in s
-
-
-def _is_ghcnd_source(source: str) -> bool:
-    s = (source or "").lower()
-    return "ghcnd" in s
 
 
 def resolve_station_lat_lon_strict(
@@ -262,7 +271,7 @@ def resolve_station_lat_lon_strict(
     src = (market.oracle_source or "unknown").lower()
     code = market.station_code
 
-    if _is_icao_source(src):
+    if src in ("icao", "adds", "aviation"):
         if not _looks_like_icao(code):
             return None, f"id ICAO invalide: {code}"
         ll = get_station_lat_lon_by_icao(conn, code)
@@ -276,8 +285,24 @@ def resolve_station_lat_lon_strict(
             return None, f"id WMO introuvable: {code}"
         return ll, "ok_wmo"
 
-    if _is_ghcnd_source(src):
-        return None, f"source ghcnd non supportée sans table dédiée: {src}"
+    if src in ("noaa_ghcnd", "ghcnd"):
+        ll = get_station_lat_lon_by_ghcnd(conn, code)
+        if ll is None:
+            return None, f"id GHCND introuvable: {code}"
+        return ll, "ok_ghcnd"
+
+    if src == "wunderground":
+        if _looks_like_icao_or_faa(code):
+            ll = get_station_lat_lon_by_icao(conn, code)
+            if ll is None:
+                return None, f"id ICAO/FAA introuvable (wunderground): {code}"
+            return ll, "ok_wunderground_icao_faa"
+        if _looks_like_wmo(code):
+            ll = get_station_lat_lon_by_wmo(conn, code)
+            if ll is None:
+                return None, f"id WMO introuvable (wunderground): {code}"
+            return ll, "ok_wunderground_wmo"
+        return None, f"id wunderground non supporté (ni ICAO/FAA 3-4 ni WMO-5): {code}"
 
     return None, f"source non gérée: {src}"
 
