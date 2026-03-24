@@ -29,6 +29,7 @@ DEFAULT_TIMEOUT_SEC = 60.0
 
 # Alias possibles selon la source CSV
 WMO_COLUMNS = ("WMO_ID", "WMOID", "WMO", "WMO ID")
+USAF_COLUMNS = ("USAF", "usaf")
 LAT_COLUMNS = ("LATITUDE", "LAT", "latitude", "lat")
 LON_COLUMNS = ("LONGITUDE", "LON", "longitude", "lon")
 ELEV_COLUMNS = ("ELEVATION", "ELEV_M", "ELEV", "elevation", "elevation_m")
@@ -67,6 +68,19 @@ def _norm_wmo_id(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def _wmo_from_usaf(raw_usaf: Optional[str]) -> Optional[str]:
+    """
+    NOAA ISD history expose souvent un identifiant USAF (6 digits).
+    Quand un code WMO existe, il correspond généralement aux 5 premiers digits.
+    """
+    if not raw_usaf:
+        return None
+    s = "".join(ch for ch in raw_usaf if ch.isdigit())
+    if len(s) != 6 or s == "999999":
+        return None
+    return _norm_wmo_id(s[:5])
+
+
 def _parse_float(raw: Optional[str]) -> Optional[float]:
     if not raw:
         return None
@@ -93,6 +107,8 @@ def _iter_wmo_rows(csv_text: str, min_end_year: int):
     best_by_wmo: dict[str, tuple[int, int, float, float, Optional[float]]] = {}
     for row in reader:
         wmo = _norm_wmo_id(_pick_first(row, WMO_COLUMNS))
+        if not wmo:
+            wmo = _wmo_from_usaf(_pick_first(row, USAF_COLUMNS))
         if not wmo:
             continue
         lat = _parse_float(_pick_first(row, LAT_COLUMNS))
