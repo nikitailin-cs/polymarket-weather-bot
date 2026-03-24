@@ -8,7 +8,6 @@ import os
 import sqlite3
 import sys
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
 from datetime import datetime, timezone
@@ -26,6 +25,9 @@ from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
 from config.settings import FEE_BPS  # noqa: E402
+from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
+
+import requests  # noqa: E402
 
 
 LOG = logging.getLogger("finance_engine")
@@ -78,9 +80,16 @@ def _today_utc() -> str:
 
 
 def _http_get_json(url: str, timeout: int = ORDER_TIMEOUT_SEC) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": "finance-engine/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    proxy_url = build_socks5_proxy_url()
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    resp = requests.get(
+        url,
+        timeout=timeout,
+        headers={"User-Agent": "finance-engine/1.0"},
+        proxies=proxies,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -96,6 +105,7 @@ def _get_clob_client() -> ClobClient:
         return _clob_client
 
     load_dotenv(dotenv_path=_ROOT / ".env", override=False)
+    apply_proxy_env_for_clob()
     poly_rpc_url = os.getenv("POLYGON_RPC_URL")
     if not poly_rpc_url:
         raise ValueError("POLYGON_RPC_URL manquant dans le .env")

@@ -17,6 +17,7 @@ if str(_ROOT) not in sys.path:
 from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
+from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 CLOB_HOST = "https://clob.polymarket.com"
@@ -58,6 +59,7 @@ def _get_usdc_onchain_safe(wallet_address: str = "") -> tuple[float, float, floa
 
 def _build_client() -> Optional[ClobClient]:
     rpc, pk, addr = _load_env()
+    apply_proxy_env_for_clob()
     if not pk or not addr:
         print("ENV manquant: PRIVATE_KEY/PUBLIC_ADDRESS", flush=True)
         return None

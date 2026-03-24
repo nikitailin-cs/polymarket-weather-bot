@@ -8,7 +8,6 @@ import logging
 import os
 import sys
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +20,8 @@ if str(_ROOT) not in sys.path:
 
 from config.settings import FEE_BPS  # noqa: E402
 from execution.ctf_manager import get_pol_balance, get_usdc_balances  # noqa: E402
+from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
+import requests  # noqa: E402
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -68,9 +69,16 @@ def _setup_logging(verbose: bool) -> Path:
 
 
 def _http_get_json(url: str, timeout: int = 20) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": "e2e-payment-flow/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    proxy_url = build_socks5_proxy_url()
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    resp = requests.get(
+        url,
+        timeout=timeout,
+        headers={"User-Agent": "e2e-payment-flow/1.0"},
+        proxies=proxies,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -170,6 +178,7 @@ def _build_client() -> Any:
         ) from exc
 
     load_dotenv(dotenv_path=_ROOT / ".env", override=False)
+    apply_proxy_env_for_clob()
     private_key = os.getenv("PRIVATE_KEY", "").strip()
     public_address = os.getenv("PUBLIC_ADDRESS", "").strip()
     host_rpc = os.getenv("POLYGON_RPC_URL", "").strip()

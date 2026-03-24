@@ -7,12 +7,15 @@ from typing import Any, Optional
 from py_clob_client.client import ClobClient
 
 from config.settings import CHAIN_ID, CLOB_HOST, PRIVATE_KEY
+from core.polymarket_proxy import apply_proxy_env_for_clob
 
 _client: Optional[ClobClient] = None
 
 def get_client() -> ClobClient:
     global _client
     if _client is None:
+        # Active le proxy réseau CLOB (SOCKS5) si configuré.
+        apply_proxy_env_for_clob()
         if not PRIVATE_KEY:
             raise ValueError("PRIVATE_KEY manquant (impossible d'initialiser le client CLOB)")
 

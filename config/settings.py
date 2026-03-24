@@ -130,3 +130,12 @@ MODEL_PATH      = os.getenv("MODEL_PATH",      "")
 MODEL_WEIGHT    = float(os.getenv("MODEL_WEIGHT", "0.6"))
 MODEL_ENDPOINT  = os.getenv("MODEL_ENDPOINT",  "")
 MODEL_API_KEY   = os.getenv("MODEL_API_KEY",   "")
+
+# ── Réseau Polymarket (proxy SOCKS5 optionnel) ───────────────────────────────
+# Active un proxy SOCKS5 pour les appels CLOB/Gamma lorsqu'un serveur est
+# géobloqué. Les credentials restent en variables d'environnement.
+POLYMARKET_PROXY_ENABLED = os.getenv("POLYMARKET_PROXY_ENABLED", "0") == "1"
+POLYMARKET_SOCKS5_HOST = os.getenv("POLYMARKET_SOCKS5_HOST", "")
+POLYMARKET_SOCKS5_PORT = os.getenv("POLYMARKET_SOCKS5_PORT", "")
+POLYMARKET_SOCKS5_USERNAME = os.getenv("POLYMARKET_SOCKS5_USERNAME", "")
+POLYMARKET_SOCKS5_PASSWORD = os.getenv("POLYMARKET_SOCKS5_PASSWORD", "")
