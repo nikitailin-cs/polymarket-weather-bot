@@ -127,12 +127,6 @@ def _get_clob_client() -> ClobClient:
     except ValueError:
         signature_type = 1
 
-    LOG.info(
-        "CLOB client: signature_type=%s funder=%s (clé = PRIVATE_KEY; doit correspondre au compte Polymarket)",
-        signature_type,
-        funder,
-    )
-
     base_kwargs: dict[str, Any] = {
         "host": CLOB_URL,
         "key": private_key,
@@ -152,6 +146,24 @@ def _get_clob_client() -> ClobClient:
         )
 
     client = ClobClient(**base_kwargs)
+    signer_addr = None
+    if hasattr(client, "get_address"):
+        try:
+            signer_addr = client.get_address()
+        except Exception:
+            signer_addr = None
+    LOG.info(
+        "CLOB client: signature_type=%s funder=%s signer(EOA depuis PRIVATE_KEY)=%s",
+        signature_type,
+        funder,
+        signer_addr or "?",
+    )
+    if signature_type == 1 and signer_addr:
+        LOG.info(
+            "POLY_PROXY(1): maker=funder (proxy), signature EIP-712 par signer=EOA. "
+            "invalid signature => PRIVATE_KEY n'est en général pas l'EOA lié au proxy sur Polymarket."
+        )
+
     if hasattr(client, "create_or_fetch_api_creds"):
         creds = client.create_or_fetch_api_creds()
     elif hasattr(client, "create_or_derive_api_creds"):
