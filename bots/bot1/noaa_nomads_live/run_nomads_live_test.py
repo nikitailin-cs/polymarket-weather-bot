@@ -6,26 +6,143 @@ https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/) via :mod:`noaa_engine`
 
 Usage (depuis la racine du repo ou ce dossier) ::
     python3 bots/bot1/noaa_nomads_live/run_nomads_live_test.py
-    python3 bots/bot1/noaa_nomads_live/run_nomads_live_test.py --lon -73.98 --lat 40.75
     python3 run_nomads_live_test.py --forecast-hours 3 --http-debug
 """
 from __future__ import annotations
 
 import argparse
 import io
+import json
 import logging
 import shutil
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, Optional, TypeVar
 
 # noaa_engine vit dans le dossier voisin « Long Term »
 _LONG_TERM = Path(__file__).resolve().parent.parent / "Long Term"
 if str(_LONG_TERM) not in sys.path:
     sys.path.insert(0, str(_LONG_TERM))
+_LONG_TERM_SCRIPTS = _LONG_TERM / "scripts"
+if str(_LONG_TERM_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_LONG_TERM_SCRIPTS))
+# .../POLYMARKET/bots/bot1/noaa_nomads_live/run_nomads_live_test.py -> .../POLYMARKET
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 import noaa_engine  # noqa: E402
+import market_manager  # noqa: E402
+from core.models import ContractSpec  # noqa: E402
+
+T = TypeVar("T")
+
+
+def _match_substring_for_variable(variable: str) -> Optional[str]:
+    v = (variable or "").lower()
+    if v in ("temp_max", "temp_min", "temp_avg"):
+        return ":TMP:2 m above ground:"
+    if v == "precip":
+        return ":APCP:surface:"
+    return None
+
+
+def _forecast_hours_for_target(fallback_fh: int, target: market_manager.MarketTarget) -> tuple[int, ...]:
+    """
+    Approximation métier pour mieux coller au contrat:
+    - temp_max/min: on sonde plusieurs échéances sur la journée plutôt qu'un seul point.
+    - sinon: fallback à l'échéance demandée.
+    """
+    v = (target.variable or "").lower()
+    if v in ("temp_max", "temp_min", "temp_avg"):
+        # 0h..24h, pas de 3h
+        return (0, 3, 6, 9, 12, 15, 18, 21, 24)
+    return (fallback_fh,)
+
+
+def _retry(name: str, fn: Callable[[], T], *, tries: int = 3, base_sleep: float = 0.8) -> T:
+    last_exc: Optional[Exception] = None
+    for i in range(1, tries + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if i >= tries:
+                break
+            time.sleep(base_sleep * (2 ** (i - 1)))
+    assert last_exc is not None
+    raise last_exc
+
+
+def _convert_value_to_contract_unit(*, variable: str, unit: str, raw_value: float) -> float:
+    """
+    Conversion stricte des unités NOAA/NOMADS -> unité contrat.
+    - TMP: NOAA renvoie Kelvin
+    - APCP: NOAA renvoie kg/m² = mm
+    """
+    var = (variable or "").lower()
+    u = (unit or "").lower()
+    if var in ("temp_max", "temp_min", "temp_avg"):
+        # raw_value = Kelvin
+        if u in ("c", "celsius", "degc", "°c"):
+            return raw_value - 273.15
+        if u in ("f", "fahrenheit", "degf", "°f"):
+            return (raw_value - 273.15) * 9.0 / 5.0 + 32.0
+        if u in ("k", "kelvin"):
+            return raw_value
+        raise ValueError(f"Unité température non supportée: {unit!r}")
+    if var == "precip":
+        # raw_value = mm (équivalent kg/m²)
+        if u in ("mm",):
+            return raw_value
+        if u in ("cm",):
+            return raw_value / 10.0
+        if u in ("m", "meter", "meters"):
+            return raw_value / 1000.0
+        if u in ("in", "inch", "inches"):
+            return raw_value / 25.4
+        raise ValueError(f"Unité précipitation non supportée: {unit!r}")
+    # fallback: aucune conversion
+    return raw_value
+
+
+def _build_contract_spec_from_target(target: market_manager.MarketTarget) -> ContractSpec:
+    return ContractSpec(
+        market_id=target.market_id,
+        condition_id=target.market_id,
+        weather_variable=target.variable,
+        threshold_value=target.threshold,
+        threshold_unit=target.unit,
+        threshold_op=target.operator,
+        threshold_range=target.threshold_range,
+        oracle_station_id=target.station_code,
+        oracle_rounding=target.oracle_rounding,
+    )
+
+
+def _aggregate_observed_value(raw_values: list[float], target: market_manager.MarketTarget) -> float:
+    """
+    Construit la valeur observée à donner à ContractSpec.evaluate.
+    - temp_max : max
+    - temp_min : min
+    - temp_avg : moyenne
+    - precip   : somme (accumulation)
+    - fallback : dernière valeur
+    """
+    if not raw_values:
+        raise ValueError("Aucune valeur brute à agréger")
+    v = (target.variable or "").lower()
+    if v == "temp_max":
+        return max(raw_values)
+    if v == "temp_min":
+        return min(raw_values)
+    if v == "temp_avg":
+        return sum(raw_values) / len(raw_values)
+    if v == "precip":
+        return sum(raw_values)
+    return raw_values[-1]
 
 
 def _configure_logging(*, http_debug: bool) -> logging.Logger:
@@ -56,6 +173,25 @@ def _configure_logging(*, http_debug: bool) -> logging.Logger:
     return log
 
 
+def _watchdog_state_path() -> Path:
+    p = _ROOT / "data" / "logs" / "noaa_watchdog_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _load_watchdog_state(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_watchdog_state(path: Path, state: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Test NOMADS live + noaa_engine (logs massifs).")
     p.add_argument("--forecast-hours", type=int, default=3, help="Échéance fXXX (ex. 3 → f003).")
@@ -76,26 +212,94 @@ def main() -> int:
         help="Ne pas invoquer wgrib2 même si présent.",
     )
     p.add_argument(
-        "--lon",
-        type=float,
-        default=None,
-        help="Avec --lat : utilise run_wgrib2_scalpel_at_point (1 valeur, pas de CSV grille entière).",
+        "--min-run-interval-sec",
+        type=int,
+        default=900,
+        help="Intervalle minimal entre 2 runs complets (défaut 900s).",
     )
     p.add_argument(
-        "--lat",
-        type=float,
-        default=None,
-        help="Avec --lon : extraction au point GPS.",
+        "--allow-outside-window",
+        action="store_true",
+        help="Autorise l'exécution hors fenêtre GFS intensive (debug).",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Ignore les garde-fous watchdog (debug uniquement).",
     )
     args = p.parse_args()
-
-    if (args.lon is None) ^ (args.lat is None):
-        print("Erreur : fournir --lon et --lat ensemble, ou aucun des deux.", file=sys.stderr)
-        return 2
 
     log = _configure_logging(http_debug=args.http_debug)
     fh = max(0, int(args.forecast_hours))
     max_chunk = int(args.max_chunk_mb * 1024 * 1024)
+    state_path = _watchdog_state_path()
+    now_ts = time.time()
+    status = noaa_engine.gfs_poll_status()
+    mode = str(status.get("mode", "sleep"))
+
+    if not args.force:
+        if (not args.allow_outside_window) and mode != "alert":
+            log.warning(
+                "Watchdog: hors fenêtre intensive GFS (mode=%s), run NOAA ignoré.",
+                mode,
+            )
+            return 0
+        st = _load_watchdog_state(state_path)
+        last_ts = float(st.get("last_run_started_ts", 0.0) or 0.0)
+        since = now_ts - last_ts
+        if last_ts > 0 and since < max(0, int(args.min_run_interval_sec)):
+            log.warning(
+                "Watchdog: run ignoré (dernière exécution il y a %.1fs, min=%ss).",
+                since,
+                int(args.min_run_interval_sec),
+            )
+            return 0
+
+    _save_watchdog_state(
+        state_path,
+        {
+            "last_run_started_ts": now_ts,
+            "last_run_started_utc": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+        },
+    )
+
+    # Vérification liaison JSON <-> SQLite (registre de marchés actifs)
+    try:
+        markets_json = market_manager.default_markets_json_path()
+        stations_db = market_manager.default_master_stations_db_path()
+        if not stations_db.is_file() or stations_db.stat().st_size == 0:
+            log.error("SQLite stations manquante ou vide: %s", stations_db)
+            log.error(
+                "Lance d'abord: python3 \"bots/bot1/Long Term/scripts/sync_master_stations.py\""
+            )
+            return 1
+        loaded = market_manager.load_active_markets(markets_json)
+        targets = market_manager.build_market_targets(markets_json, stations_db)
+        ok = len(targets)
+        miss = len(loaded) - ok
+        log.info(
+            "Liaison registre: markets=%s, stations trouvées=%s, manquantes=%s, targets=%s",
+            len(loaded),
+            ok,
+            miss,
+            len(targets),
+        )
+        for t in targets[:10]:
+            log.debug(
+                "  target market=%s station=%s var=%s unit=%s op=%s thr=%s lat=%.5f lon=%.5f",
+                t.market_id,
+                t.station_code,
+                t.variable,
+                t.unit,
+                t.operator,
+                t.threshold,
+                t.latitude,
+                t.longitude,
+            )
+    except Exception:
+        log.exception("Echec liaison JSON <-> SQLite")
+        return 1
 
     t0 = time.monotonic()
     now = datetime.now(timezone.utc)
@@ -159,41 +363,48 @@ def main() -> int:
         log.info("  head_get_content_length : %.3fs → %s", time.monotonic() - t2, total)
 
         log.info("— Étape byte_range TMP 2 m")
-        span = noaa_engine.byte_range_for_variable_and_level(
-            idx_text,
-            variable_must_contain=":TMP:",
-            level_must_contain="2 m above ground",
-            pgrb2_total_bytes=total,
-        )
-        log.info("  span = %s", span)
+        needed_match_substrings = {
+            ms for ms in (_match_substring_for_variable(t.variable) for t in targets) if ms
+        }
+        if not needed_match_substrings:
+            log.error("Aucun champ NOAA supporté par les targets (variables non mappées).")
+            return 1
 
-        if span is None:
-            log.warning("Pas de plage TMP 2 m — arrêt sans GET Range.")
+        # Correction RAM: vérifie la taille via offsets AVANT tout GET Range.
+        span_by_match: dict[str, tuple[int, int]] = {}
+        available_chunks: dict[str, bytes] = {}
+        for m in sorted(needed_match_substrings):
+            span = noaa_engine.byte_range_for_idx_line_containing(
+                idx_text,
+                m,
+                pgrb2_total_bytes=total,
+            )
+            if span is None:
+                log.warning("  champ NOAA introuvable dans idx: %s", m)
+                continue
+            a, b = span
+            nbytes = b - a + 1
+            span_by_match[m] = span
+            log.info("  span %s => %s..%s (%s octets ~%.3f Mo)", m, a, b, nbytes, nbytes / (1024 * 1024))
+            if nbytes > max_chunk:
+                log.warning("  span %s > plafond %s Mo — skip GET", m, args.max_chunk_mb)
+                continue
+            try:
+                chunk = _retry(
+                    f"get_range_bytes {m}",
+                    lambda m=m, a=a, b=b: noaa_engine.get_range_bytes(pgrb2_url, a, b),
+                    tries=3,
+                )
+            except Exception as exc:
+                log.warning("  GET range échoué pour %s: %s", m, exc)
+                continue
+            available_chunks[m] = chunk
+            log.info("  chunk %s récupéré: %s octets", m, len(chunk))
+        log.info("  champs NOAA demandés=%s, disponibles=%s", len(needed_match_substrings), len(available_chunks))
+        if not available_chunks:
+            log.warning("Aucun chunk NOAA disponible après contrôles mémoire/réseau.")
             log.info("========== FIN TEST (partiel) en %.2fs ==========", time.monotonic() - t0)
             return 0
-
-        a, b = span
-        nbytes = b - a + 1
-        log.info("  segment = %s octets (~%.3f Mo)", nbytes, nbytes / (1024 * 1024))
-
-        if nbytes > max_chunk:
-            log.warning(
-                "Segment > plafond %s Mo — GET Range ignoré (sécurité RAM).",
-                args.max_chunk_mb,
-            )
-            log.info("========== FIN TEST (sans chunk) en %.2fs ==========", time.monotonic() - t0)
-            return 0
-
-        log.info("— Étape GET Range pgrb2 [%s..%s]", a, b)
-        t3 = time.monotonic()
-        chunk = noaa_engine.get_range_bytes(pgrb2_url, a, b)
-        log.info("  get_range_bytes : %.3fs, reçu %s octets", time.monotonic() - t3, len(chunk))
-        log.debug("  premiers 32 octets (hex) = %s", chunk[:32].hex())
-
-        bio = io.BytesIO(chunk)
-        log.debug("BytesIO len avant release = %s", len(bio.getvalue()))
-        noaa_engine.release_bytesio(bio)
-        log.debug("BytesIO len après release_bytesio = %s", len(bio.getvalue()))
 
         wgrib_code: int | None = None
         if args.skip_wgrib2:
@@ -203,64 +414,137 @@ def main() -> int:
             if not wg:
                 log.warning("wgrib2 absent du PATH — étape scalpel ignorée")
             else:
-                t4 = time.monotonic()
-                if args.lon is not None and args.lat is not None:
-                    log.info(
-                        "— Étape run_wgrib2_scalpel_at_point (stdin) — %s lon=%s lat=%s",
-                        wg,
-                        args.lon,
-                        args.lat,
-                    )
-                    code, val, out, err = noaa_engine.run_wgrib2_scalpel_at_point(
-                        chunk,
-                        lon=args.lon,
-                        lat=args.lat,
-                        match_substring=":TMP:2 m above ground:",
-                        timeout_sec=120.0,
-                    )
-                    wgrib_code = code
-                    log.info(
-                        "  wgrib2 fin en %.3fs — code=%s valeur=%r stdout=%s stderr=%s",
-                        time.monotonic() - t4,
-                        code,
-                        val,
-                        len(out),
-                        len(err),
-                    )
-                    log.debug("  stdout\n%s", out[:8000])
-                    if err:
-                        log.debug("  stderr\n%s", err[:4000])
-                else:
-                    log.info(
-                        "— Étape run_wgrib2_scalpel (stdin, -csv grille entière) — %s",
-                        wg,
-                    )
-                    log.warning(
-                        "Sans --lon/--lat, le CSV peut faire des dizaines de Mo (tous les points). "
-                        "Préfère --lon X --lat Y pour un test léger.",
-                    )
-                    code, out, err = noaa_engine.run_wgrib2_scalpel(
-                        chunk,
-                        match_substring=":TMP:2 m above ground:",
-                        timeout_sec=120.0,
-                    )
-                    wgrib_code = code
-                    log.info(
-                        "  wgrib2 fin en %.3fs — code=%s stdout=%s stderr=%s",
-                        time.monotonic() - t4,
-                        code,
-                        len(out),
-                        len(err),
-                    )
-                    if len(out) > 5_000_000:
+                log.info(
+                    "— Étape run_wgrib2_scalpel_at_point (boucle dynamique sur targets) — %s",
+                    wg,
+                )
+                failed_targets = 0
+                compared_targets = 0
+                for target in targets:
+                    match_sub = _match_substring_for_variable(target.variable)
+                    if not match_sub:
+                        failed_targets += 1
                         log.warning(
-                            "Sortie wgrib2 très volumineuse (%s car.) — RAM / disque : "
-                            "utilise --lon/--lat pour l’extraction au point.",
-                            len(out),
+                            "  market=%s station=%s variable non supportée=%s",
+                            target.market_id,
+                            target.station_code,
+                            target.variable,
                         )
-                    log.debug("  stdout (4000 prem. car.)\n%s", out[:4000])
-                    if err:
-                        log.debug("  stderr\n%s", err[:4000])
+                        continue
+                    chunk = available_chunks.get(match_sub)
+                    if not chunk:
+                        failed_targets += 1
+                        log.warning(
+                            "  market=%s station=%s champ NOAA manquant pour variable=%s (%s)",
+                            target.market_id,
+                            target.station_code,
+                            target.variable,
+                            match_sub,
+                        )
+                        continue
+                    t4 = time.monotonic()
+                    fh_series = _forecast_hours_for_target(fh, target)
+                    raw_samples: list[float] = []
+                    for fh_i in fh_series:
+                        # Pour fH != run initial, on réutilise le même run + idx/pgrb2 calculé à la volée.
+                        # Best-effort: si indispo, on skip ce point et continue.
+                        try:
+                            pgrb2_url_i = noaa_engine.build_gfs_pgrb2_url(
+                                chosen_run.day, chosen_run.cycle_utc, fh_i, base=noaa_engine.GFS_PROD_BASE
+                            )
+                            idx_url_i = noaa_engine.build_gfs_idx_url(
+                                chosen_run.day, chosen_run.cycle_utc, fh_i, base=noaa_engine.BASE_URL_PRIORITY
+                            )
+                            idx_text_i = _retry(
+                                f"fetch_idx_text f{fh_i:03d}",
+                                lambda idx_url_i=idx_url_i: noaa_engine.fetch_idx_text(idx_url_i),
+                                tries=2,
+                            )
+                            total_i = noaa_engine.head_get_content_length(pgrb2_url_i)
+                            span_i = noaa_engine.byte_range_for_idx_line_containing(
+                                idx_text_i, match_sub, pgrb2_total_bytes=total_i
+                            )
+                            if span_i is None:
+                                continue
+                            a_i, b_i = span_i
+                            if (b_i - a_i + 1) > max_chunk:
+                                continue
+                            chunk_i = _retry(
+                                f"get_range_bytes f{fh_i:03d}",
+                                lambda pgrb2_url_i=pgrb2_url_i, a_i=a_i, b_i=b_i: noaa_engine.get_range_bytes(
+                                    pgrb2_url_i, a_i, b_i
+                                ),
+                                tries=2,
+                            )
+                        except Exception:
+                            continue
+                        code, val, out, err = _retry(
+                            f"wgrib2 f{fh_i:03d}",
+                            lambda chunk_i=chunk_i: noaa_engine.run_wgrib2_scalpel_at_point(
+                                chunk_i,
+                                lon=target.longitude,
+                                lat=target.latitude,
+                                match_substring=match_sub,
+                                timeout_sec=120.0,
+                            ),
+                            tries=2,
+                        )
+                        if code == 0 and val is not None:
+                            raw_samples.append(val)
+                        elif code != 0:
+                            wgrib_code = code
+                    compared_targets += 1
+                    if not raw_samples:
+                        failed_targets += 1
+                        log.error(
+                            "  market=%s station=%s -> aucune valeur NOAA exploitable",
+                            target.market_id,
+                            target.station_code,
+                        )
+                        continue
+                    try:
+                        raw_observed = _aggregate_observed_value(raw_samples, target)
+                        val_converted = _convert_value_to_contract_unit(
+                            variable=target.variable,
+                            unit=target.unit,
+                            raw_value=raw_observed,
+                        )
+                        spec = _build_contract_spec_from_target(target)
+                        passed = spec.evaluate(val_converted)
+                    except Exception as e:
+                        failed_targets += 1
+                        log.error(
+                            "  market=%s station=%s conversion/eval impossible: %s",
+                            target.market_id,
+                            target.station_code,
+                            e,
+                        )
+                        continue
+                    decision = "BET_WIN" if passed else "BET_LOSE"
+                    delta = val_converted - target.threshold
+                    log.info(
+                        "  decision market_id=%s station=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f result=%s (%.3fs)",
+                        target.market_id,
+                        target.station_code,
+                        target.variable,
+                        target.unit,
+                        target.operator,
+                        len(raw_samples),
+                        target.latitude,
+                        target.longitude,
+                        raw_observed,
+                        val_converted,
+                        target.threshold,
+                        delta,
+                        decision,
+                        time.monotonic() - t4,
+                    )
+                log.info(
+                    "  synthèse comparaison: targets=%s comparés=%s erreurs=%s",
+                    len(targets),
+                    compared_targets,
+                    failed_targets,
+                )
 
         if wgrib_code is not None and wgrib_code != 0:
             log.error("wgrib2 a retourné code=%s — échec", wgrib_code)

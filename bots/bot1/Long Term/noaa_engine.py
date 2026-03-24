@@ -114,6 +114,7 @@ import argparse
 import email.utils
 import io
 import os
+from pathlib import Path
 import random
 import re
 import subprocess
@@ -1553,6 +1554,57 @@ def read_local_grib_file(
     return data
 
 
+def _repo_root_from_this_file() -> Path:
+    # .../POLYMARKET/bots/bot1/Long Term/noaa_engine.py -> .../POLYMARKET
+    return Path(__file__).resolve().parents[3]
+
+
+def default_master_stations_db_candidates() -> Tuple[Path, ...]:
+    """
+    Chemins candidats pour la base stations maître.
+    Ordre:
+      1) racine repo /data/master_stations.sqlite3
+      2) cwd /data/master_stations.sqlite3 (utile si lancement hors repo)
+    """
+    repo_db = _repo_root_from_this_file() / "data" / "master_stations.sqlite3"
+    cwd_db = Path.cwd() / "data" / "master_stations.sqlite3"
+    if repo_db == cwd_db:
+        return (repo_db,)
+    return (repo_db, cwd_db)
+
+
+def resolve_master_stations_db_path(user_path: Optional[str]) -> Path:
+    if user_path:
+        return Path(user_path).expanduser().resolve()
+    for cand in default_master_stations_db_candidates():
+        if cand.is_file():
+            return cand
+    return default_master_stations_db_candidates()[0]
+
+
+def ensure_master_stations_db_exists(
+    user_path: Optional[str],
+    *,
+    allow_missing: bool = False,
+) -> Path:
+    """
+    Vérifie que la base SQLite des stations ADDS existe avant exécution du bot.
+    Retourne le chemin résolu ; lève ``SystemExit`` si absente (sauf ``allow_missing``).
+    """
+    db_path = resolve_master_stations_db_path(user_path)
+    if db_path.is_file() and db_path.stat().st_size > 0:
+        return db_path
+    if allow_missing:
+        return db_path
+    hint = f'python3 "bots/bot1/Long Term/scripts/sync_master_stations.py" --db-path "{db_path}"'
+    raise SystemExit(
+        "Base stations maître introuvable ou vide: "
+        f"{db_path}\n"
+        "Génère-la d'abord avec:\n"
+        f"  {hint}"
+    )
+
+
 def poll_until_idx_available(
     run: GfsRun,
     forecast_hours: int,
@@ -1849,7 +1901,27 @@ if __name__ == "__main__":
         default=12000,
         help="Mode local-wgrib : tronquer stdout/stderr au-delà de ce nombre de caractères.",
     )
+    parser.add_argument(
+        "--master-stations-db",
+        type=str,
+        default=None,
+        help=(
+            "Chemin SQLite stations maître (ADDS). "
+            "Par défaut: data/master_stations.sqlite3 (repo puis cwd)."
+        ),
+    )
+    parser.add_argument(
+        "--allow-missing-master-stations",
+        action="store_true",
+        help="Ne bloque pas si la base stations maître est absente (debug uniquement).",
+    )
     args = parser.parse_args()
+    db_path = ensure_master_stations_db_exists(
+        args.master_stations_db,
+        allow_missing=args.allow_missing_master_stations,
+    )
+    if not args.quiet:
+        print(f"Master stations DB: {db_path}", flush=True)
     if args.mode == "watch":
         run_watch_loop(forecast_hours=args.forecast_hours, quiet=args.quiet)
     elif args.mode == "local-wgrib":

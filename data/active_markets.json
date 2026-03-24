@@ -1,0 +1,14 @@
+{
+  "markets": [
+    {
+      "market_id": "nyc_temp_over_20c",
+      "icao": "KJFK",
+      "threshold": 20.0
+    },
+    {
+      "market_id": "paris_temp_over_18c",
+      "icao": "LFPG",
+      "threshold": 18.0
+    }
+  ]
+}
