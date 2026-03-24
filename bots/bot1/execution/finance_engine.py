@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 # .../POLYMARKET/bots/bot1/execution/finance_engine.py -> .../POLYMARKET
@@ -369,15 +370,19 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
         raise ValueError(f"price invalide pour CLOB: {price}")
     client = _get_clob_client()
     # Ordre passif uniquement: LIMIT buy au best ask validé.
-    resp = client.create_order(
-        {
-            "token_id": token_id,
-            "price": price,
-            "side": "BUY",
-            "size": size,
-            "fee_rate_bps": FEE_BPS,
-        }
-    )
+    order_payload = {
+        "token_id": token_id,
+        "price": price,
+        "side": "BUY",
+        "size": size,
+        "fee_rate_bps": FEE_BPS,
+    }
+    try:
+        # Certaines versions py_clob_client acceptent un dict.
+        resp = client.create_order(order_payload)
+    except AttributeError:
+        # Compat versions legacy: create_order attend un objet avec attributs.
+        resp = client.create_order(SimpleNamespace(**order_payload))
     if not isinstance(resp, dict):
         return {"raw_response": resp}
     return resp
