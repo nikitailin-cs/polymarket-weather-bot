@@ -1454,12 +1454,24 @@ def run_wgrib2_scalpel_at_point(
     """
     raw = _coerce_bytes_or_bytesio(grib_chunk)
     inv = inv_path if inv_path is not None else os.devnull
+
+    # 1) Tentative nominale demandée: -inv /dev/null + -lon.
     cmd = [wgrib2_bin, "-", "-match", match_substring, "-inv", inv, "-lon", str(lon), str(lat)]
     if extra_args:
         cmd.extend(extra_args)
     code, out, err = _wgrib2_run_bytes(cmd, raw, timeout_sec=timeout_sec)
     val = parse_wgrib2_stdout_scalar(out)
-    return code, val, out, err
+    if code != 0 or val is not None or out.strip() or err.strip():
+        return code, val, out, err
+
+    # 2) Fallback compat: certains builds n’émettent rien avec -inv /dev/null.
+    #    On force un inventaire court sur stdout pour récupérer la valeur au point.
+    cmd_fallback = [wgrib2_bin, "-", "-s", "-match", match_substring, "-lon", str(lon), str(lat)]
+    if extra_args:
+        cmd_fallback.extend(extra_args)
+    code2, out2, err2 = _wgrib2_run_bytes(cmd_fallback, raw, timeout_sec=timeout_sec)
+    val2 = parse_wgrib2_stdout_scalar(out2)
+    return code2, val2, out2, err2
 
 
 def release_bytesio(buf: io.BytesIO) -> None:
