@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import os
 import sqlite3
@@ -92,7 +93,7 @@ def _get_clob_client() -> ClobClient:
     if _clob_client is not None:
         return _clob_client
 
-    load_dotenv()
+    load_dotenv(dotenv_path=_ROOT / ".env", override=False)
     poly_rpc_url = os.getenv("POLYGON_RPC_URL")
     if not poly_rpc_url:
         raise ValueError("POLYGON_RPC_URL manquant dans le .env")
@@ -104,14 +105,25 @@ def _get_clob_client() -> ClobClient:
     if not public_address:
         raise ValueError("PUBLIC_ADDRESS manquant dans le .env")
 
-    client = ClobClient(
-        host=CLOB_URL,
-        key=private_key,
-        chain_id=POLYGON,
-        funder=public_address,
-        signature_type=1,  # EIP-712
-        host_rpc=poly_rpc_url,
-    )
+    base_kwargs: dict[str, Any] = {
+        "host": CLOB_URL,
+        "key": private_key,
+        "chain_id": POLYGON,
+        "funder": public_address,
+        "signature_type": 1,  # EIP-712
+    }
+    # Compatibilité multi-versions py_clob_client:
+    # certaines versions n'acceptent pas host_rpc dans __init__.
+    init_params = set(inspect.signature(ClobClient).parameters.keys())
+    if "host_rpc" in init_params:
+        base_kwargs["host_rpc"] = poly_rpc_url
+    else:
+        LOG.warning(
+            "ClobClient sans support host_rpc détecté; "
+            "mise à jour du package recommandée pour RPC privé."
+        )
+
+    client = ClobClient(**base_kwargs)
     client.set_creds(client.create_or_fetch_api_creds())
     _clob_client = client
     return client
