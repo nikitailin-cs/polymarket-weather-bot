@@ -1,0 +1,10 @@
+# Use UTC explicitly for deterministic execution windows.
+CRON_TZ=UTC
+
+# Settlement Watcher (OPEN -> RESOLVED)
+# Runs daily at 01:00 UTC and 13:00 UTC.
+0 1,13 * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settlement_watcher.sh
+
+# Settler (RESOLVED -> SETTLED + PnL + Telegram)
+# Runs 10 minutes after watcher, same windows.
+10 1,13 * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settler.sh

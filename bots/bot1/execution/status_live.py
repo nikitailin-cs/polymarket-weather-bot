@@ -18,8 +18,6 @@ from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
-from execution.ctf_manager import get_usdc_balance  # noqa: E402
-
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 CLOB_HOST = "https://clob.polymarket.com"
 
@@ -38,6 +36,19 @@ def _load_env() -> tuple[str, str, str]:
     pk = os.getenv("PRIVATE_KEY", "").strip()
     addr = os.getenv("PUBLIC_ADDRESS", "").strip()
     return rpc, pk, addr
+
+
+def _get_usdc_onchain_safe() -> float:
+    """
+    Import tardif pour garantir que POLYGON_RPC_URL est chargé depuis .env
+    avant l'initialisation interne de ctf_manager.
+    """
+    try:
+        from execution.ctf_manager import get_usdc_balance  # noqa: WPS433
+
+        return float(get_usdc_balance())
+    except Exception:
+        return 0.0
 
 
 def _build_client() -> Optional[ClobClient]:
@@ -110,7 +121,7 @@ def main() -> int:
     print("=== POLYMETEO LIVE STATUS ===")
     print("wallet           :", addr or "-")
     print("rpc_configured   :", "yes" if bool(rpc) else "no")
-    print("usdc_onchain     :", f"{get_usdc_balance():.4f}")
+    print("usdc_onchain     :", f"{_get_usdc_onchain_safe():.4f}")
 
     trades = _portfolio_snapshot(limit=10)
     print("recent_trades_db :", len(trades))
@@ -144,15 +155,13 @@ def main() -> int:
     else:
         print("orders_payload   :", _fmt(orders_data))
 
-    balance_method, balance_data = _call_first(
-        client,
-        [
-            "get_balance_allowance",
-            "get_balance",
-        ],
-    )
+    # Certaines versions de py_clob_client exigent des paramètres additionnels
+    # pour get_balance_allowance; on évite de polluer l'état avec des erreurs.
+    balance_method, balance_data = _call_first(client, ["get_balance"])
     print("balance_method   :", balance_method)
-    if isinstance(balance_data, (dict, list)):
+    if balance_method == "-":
+        print("balance_payload  : unsupported on this SDK version")
+    elif isinstance(balance_data, (dict, list)):
         print("balance_payload  :", json.dumps(balance_data, ensure_ascii=False)[:500])
     else:
         print("balance_payload  :", _fmt(balance_data))

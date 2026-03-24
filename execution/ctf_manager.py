@@ -34,6 +34,7 @@ from __future__ import annotations
 import os, time, logging
 from typing import Optional
 from enum import Enum
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
@@ -148,6 +149,17 @@ class RedeemResult(str, Enum):
     ALREADY_REDEEMED = "ALREADY_REDEEMED"  # balance déjà 0 avant tentative
     FAILED         = "FAILED"          # tx échouée ou RPC indisponible
     DRY_RUN        = "DRY_RUN"         # mode simulation
+
+
+@dataclass(frozen=True)
+class RedeemExecution:
+    result: RedeemResult
+    tx_hash: str = ""
+    usdc_before: float = 0.0
+    usdc_after: float = 0.0
+    usdc_gained: float = 0.0
+    payout_event_found: bool = False
+    error: str = ""
 
 
 def _get_web3():
@@ -309,13 +321,13 @@ def is_condition_resolved(condition_id: str) -> bool:
         return False
 
 
-def redeem_position(
+def redeem_position_detailed(
     condition_id:   str,
     side:           str,          # "YES" ou "NO"
     dry_run:        bool = True,
     wallet_address: Optional[str] = None,
     gas_price_gwei: float = 100.0,  # Polygon : 100-200 gwei standard
-) -> RedeemResult:
+) -> RedeemExecution:
     """
     Appelle redeemPositions() sur le contrat CTF Gnosis pour récupérer
     les USDC d'une position gagnante, directement on-chain.
@@ -339,13 +351,13 @@ def redeem_position(
         gas_price_gwei : prix du gas en gwei (Polygon)
 
     Returns:
-        RedeemResult enum
+        RedeemExecution détaillant résultat, tx et indices de validation.
     """
     if dry_run:
         log.info(
             f"[DRY-RUN] redeem_position simulé | {condition_id[:16]} | side={side}"
         )
-        return RedeemResult.DRY_RUN
+        return RedeemExecution(result=RedeemResult.DRY_RUN)
 
     # ── Vérifications préalables ───────────────────────────────────────────────
     if not is_condition_resolved(condition_id):
@@ -353,20 +365,20 @@ def redeem_position(
             f"redeem_position: marché {condition_id[:16]} pas encore résolu on-chain "
             f"(payoutDenominator == 0) — abandon"
         )
-        return RedeemResult.NOT_RESOLVED
+        return RedeemExecution(result=RedeemResult.NOT_RESOLVED)
 
     w3 = _get_web3()
     if w3 is None:
-        return RedeemResult.FAILED
+        return RedeemExecution(result=RedeemResult.FAILED, error="web3 unavailable")
 
     address = wallet_address or _get_wallet_address()
     if address is None:
-        return RedeemResult.FAILED
+        return RedeemExecution(result=RedeemResult.FAILED, error="wallet unavailable")
 
     private_key = os.getenv("PRIVATE_KEY", "")
     if not private_key:
         log.error("CTF redeem: PRIVATE_KEY manquante")
-        return RedeemResult.FAILED
+        return RedeemExecution(result=RedeemResult.FAILED, error="missing private key")
 
     try:
         from web3 import Web3
@@ -425,7 +437,19 @@ def redeem_position(
                 f"❌ redeemPositions échouée | tx={tx_hash.hex()[:20]} | "
                 f"status={receipt['status']}"
             )
-            return RedeemResult.FAILED
+            return RedeemExecution(
+                result=RedeemResult.FAILED,
+                tx_hash=tx_hash.hex(),
+                usdc_before=usdc_before,
+                error=f"receipt_status={receipt['status']}",
+            )
+
+        payout_event_found = False
+        try:
+            payout_events = ctf.events.PayoutRedemption().process_receipt(receipt)
+            payout_event_found = bool(payout_events)
+        except Exception as exc:
+            log.debug(f"PayoutRedemption decode error: {exc}")
 
         # ── Calcul du gain USDC effectif ──────────────────────────────────────
         usdc_after  = usdc.functions.balanceOf(
@@ -449,11 +473,38 @@ def redeem_position(
             gas_used     = receipt['gasUsed'],
             dry_run      = False,
         )
-        return RedeemResult.SUCCESS
+        return RedeemExecution(
+            result=RedeemResult.SUCCESS,
+            tx_hash=tx_hash.hex(),
+            usdc_before=usdc_before,
+            usdc_after=usdc_after,
+            usdc_gained=usdc_gained,
+            payout_event_found=payout_event_found,
+        )
 
     except Exception as e:
         log.error(f"❌ redeem_position erreur [{condition_id[:16]}]: {e}")
-        return RedeemResult.FAILED
+        return RedeemExecution(result=RedeemResult.FAILED, error=str(e))
+
+
+def redeem_position(
+    condition_id:   str,
+    side:           str,          # "YES" ou "NO"
+    dry_run:        bool = True,
+    wallet_address: Optional[str] = None,
+    gas_price_gwei: float = 100.0,  # Polygon : 100-200 gwei standard
+) -> RedeemResult:
+    """
+    API historique conservée pour compatibilité.
+    """
+    details = redeem_position_detailed(
+        condition_id=condition_id,
+        side=side,
+        dry_run=dry_run,
+        wallet_address=wallet_address,
+        gas_price_gwei=gas_price_gwei,
+    )
+    return details.result
 
 
 def get_usdc_balance(wallet_address: Optional[str] = None) -> float:
@@ -479,6 +530,26 @@ def get_usdc_balance(wallet_address: Optional[str] = None) -> float:
         return raw / 1e6
     except Exception as e:
         log.debug(f"get_usdc_balance erreur: {e}")
+        return 0.0
+
+
+def get_pol_balance(wallet_address: Optional[str] = None) -> float:
+    """
+    Retourne la balance native POL/MATIC du wallet (en POL).
+    """
+    w3 = _get_web3()
+    if w3 is None:
+        return 0.0
+    address = wallet_address or _get_wallet_address()
+    if address is None:
+        return 0.0
+    try:
+        from web3 import Web3
+
+        raw = w3.eth.get_balance(Web3.to_checksum_address(address))
+        return float(w3.from_wei(raw, "ether"))
+    except Exception as e:
+        log.debug(f"get_pol_balance erreur: {e}")
         return 0.0
 
 

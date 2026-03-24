@@ -188,6 +188,12 @@ def _open_portfolio_db(path: Path) -> sqlite3.Connection:
             traded_at_utc TEXT NOT NULL,
             traded_date_utc TEXT NOT NULL,
             forecast_cycle_utc TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            pnl REAL,
+            settled_at TEXT,
+            requested_size REAL,
+            matched_size REAL,
+            spent_usdc REAL,
             market_id TEXT NOT NULL,
             station TEXT,
             recommended_side TEXT NOT NULL,
@@ -209,6 +215,20 @@ def _open_portfolio_db(path: Path) -> sqlite3.Connection:
         conn.execute(
             "ALTER TABLE executed_trades ADD COLUMN forecast_cycle_utc TEXT NOT NULL DEFAULT ''"
         )
+    if "status" not in col_names:
+        conn.execute(
+            "ALTER TABLE executed_trades ADD COLUMN status TEXT NOT NULL DEFAULT 'OPEN'"
+        )
+    if "pnl" not in col_names:
+        conn.execute("ALTER TABLE executed_trades ADD COLUMN pnl REAL")
+    if "settled_at" not in col_names:
+        conn.execute("ALTER TABLE executed_trades ADD COLUMN settled_at TEXT")
+    if "requested_size" not in col_names:
+        conn.execute("ALTER TABLE executed_trades ADD COLUMN requested_size REAL")
+    if "matched_size" not in col_names:
+        conn.execute("ALTER TABLE executed_trades ADD COLUMN matched_size REAL")
+    if "spent_usdc" not in col_names:
+        conn.execute("ALTER TABLE executed_trades ADD COLUMN spent_usdc REAL")
     conn.execute(
         """
         UPDATE executed_trades
@@ -216,11 +236,24 @@ def _open_portfolio_db(path: Path) -> sqlite3.Connection:
         WHERE forecast_cycle_utc IS NULL OR forecast_cycle_utc = ''
         """
     )
+    conn.execute(
+        """
+        UPDATE executed_trades
+        SET status = 'OPEN'
+        WHERE status IS NULL OR TRIM(status) = ''
+        """
+    )
     conn.execute("DROP INDEX IF EXISTS ux_executed_trades_market_day")
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS ux_executed_trades_market_cycle
         ON executed_trades (market_id, forecast_cycle_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_executed_trades_status
+        ON executed_trades (status)
         """
     )
     conn.commit()
@@ -459,6 +492,8 @@ def _record_trade(
     barbell_cond: str,
     token_id: str,
     order_resp: dict[str, Any],
+    requested_size: float,
+    matched_size: float,
 ) -> None:
     now = _utc_now()
     order_id = order_resp.get("orderID") or order_resp.get("order_id")
@@ -472,6 +507,9 @@ def _record_trade(
             traded_at_utc,
             traded_date_utc,
             forecast_cycle_utc,
+            requested_size,
+            matched_size,
+            spent_usdc,
             market_id,
             station,
             recommended_side,
@@ -485,12 +523,15 @@ def _record_trade(
             order_id,
             raw_response_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             now.strftime("%Y-%m-%d"),
             signal.forecast_cycle_utc,
+            requested_size,
+            matched_size,
+            float(matched_size) * float(best_ask),
             signal.market_id,
             signal.station,
             signal.recommended_side,
@@ -609,6 +650,8 @@ def run(order_size_usdc: float = 2.5) -> int:
                 barbell_cond=cond,
                 token_id=token_id,
                 order_resp=resp,
+                requested_size=order_size_usdc,
+                matched_size=matched_size,
             )
             executed += 1
             LOG.info(
