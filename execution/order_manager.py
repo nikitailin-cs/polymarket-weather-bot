@@ -7,7 +7,7 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from core.client import get_client
 from core.models import TradeSignal, Order
 from config.settings import DRY_RUN, FEE_BPS
@@ -20,6 +20,37 @@ def _already_open(condition_id: str) -> bool:
     """Vérifie si une position est déjà ouverte pour ce marché."""
     from monitoring.pnl_tracker import get_open_positions
     return any(p.get("condition_id") == condition_id for p in get_open_positions())
+
+
+def _submit_live_buy_order(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Soumet réellement un ordre au CLOB (create -> post), avec fallback multi-SDK.
+    """
+    signed_order = client.create_order(payload)
+
+    # Voie principale du SDK py_clob_client: post_order(signed_order, order_type=GTC)
+    post_fn = getattr(client, "post_order", None)
+    if callable(post_fn):
+        order_type = None
+        try:
+            from py_clob_client.clob_types import OrderType  # type: ignore
+            order_type = getattr(OrderType, "GTC", None)
+        except Exception:
+            order_type = None
+        if order_type is not None:
+            try:
+                return post_fn(signed_order, order_type=order_type)
+            except TypeError:
+                return post_fn(signed_order, order_type)
+        return post_fn(signed_order)
+
+    # Fallback possible sur certaines versions:
+    create_and_post_fn = getattr(client, "create_and_post_order", None)
+    if callable(create_and_post_fn):
+        return create_and_post_fn(payload)
+
+    # Dernier recours: retourne la réponse de signature seule.
+    return signed_order if isinstance(signed_order, dict) else {"raw_response": signed_order}
 
 
 def place_order(signal: TradeSignal) -> Optional[Order]:
@@ -77,7 +108,7 @@ def place_order(signal: TradeSignal) -> Optional[Order]:
     # ── LIVE ──────────────────────────────────────────────────────────────────
     try:
         client = get_client()
-        resp = client.create_order({
+        resp = _submit_live_buy_order(client, {
             "token_id":     signal.token_id,
             "price":        entry_price,
             "side":         "BUY",

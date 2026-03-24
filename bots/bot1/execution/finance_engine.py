@@ -413,7 +413,7 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
     }
     try:
         # Certaines versions py_clob_client acceptent un dict.
-        resp = client.create_order(order_payload)
+        signed_or_resp = client.create_order(order_payload)
     except AttributeError:
         # Compat versions legacy: create_order attend un objet avec attributs.
         # On préfère le type OrderArgs du SDK quand disponible.
@@ -458,7 +458,39 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
                 expiration=0,
                 salt=0,
             )
-        resp = client.create_order(order_obj)
+        signed_or_resp = client.create_order(order_obj)
+
+    # create_order signe l'ordre; il faut ensuite le poster pour exécution réelle.
+    post_fn = getattr(client, "post_order", None)
+    if callable(post_fn):
+        order_type = None
+        try:
+            from py_clob_client.clob_types import OrderType  # type: ignore
+
+            order_type = getattr(OrderType, "GTC", None)
+        except Exception:
+            order_type = None
+
+        try:
+            if order_type is not None:
+                try:
+                    resp = post_fn(signed_or_resp, order_type=order_type)
+                except TypeError:
+                    resp = post_fn(signed_or_resp, order_type)
+            else:
+                resp = post_fn(signed_or_resp)
+        except Exception:
+            resp = signed_or_resp
+    else:
+        create_and_post = getattr(client, "create_and_post_order", None)
+        if callable(create_and_post):
+            try:
+                resp = create_and_post(order_payload)
+            except Exception:
+                resp = signed_or_resp
+        else:
+            resp = signed_or_resp
+
     if not isinstance(resp, dict):
         return {"raw_response": resp}
     return resp
