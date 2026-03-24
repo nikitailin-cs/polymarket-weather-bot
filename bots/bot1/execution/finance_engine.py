@@ -117,8 +117,8 @@ def _get_clob_client() -> ClobClient:
     funder = resolve_clob_funder()
     if not funder:
         raise ValueError(
-            "Adresse funder manquante: PUBLIC_ADDRESS ou POLYMARKET_PROXY_ADDRESS "
-            "ou POLYMARKET_FUNDER dans le .env"
+            "Adresse funder manquante: POLYMARKET_PROXY_ADDRESS, POLYMARKET_FUNDER, "
+            "FUNDER_ADDRESS ou PUBLIC_ADDRESS dans le .env"
         )
 
     sig_type_raw = os.getenv("POLYMARKET_SIGNATURE_TYPE", "1").strip()

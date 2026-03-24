@@ -15,9 +15,14 @@ _client: Optional[ClobClient] = None
 def resolve_clob_funder() -> Optional[str]:
     """
     Adresse « funder » attendue par py_clob_client (souvent le proxy Polymarket, pas l'EOA).
-    Priorité : POLYMARKET_FUNDER > POLYMARKET_PROXY_ADDRESS > PUBLIC_ADDRESS.
+    Priorité : proxy profil Polymarket d'abord, puis funder explicite, puis PUBLIC_ADDRESS.
     """
-    for key in ("POLYMARKET_FUNDER", "POLYMARKET_PROXY_ADDRESS", "PUBLIC_ADDRESS"):
+    for key in (
+        "POLYMARKET_PROXY_ADDRESS",
+        "POLYMARKET_FUNDER",
+        "FUNDER_ADDRESS",
+        "PUBLIC_ADDRESS",
+    ):
         v = os.getenv(key, "").strip()
         if v:
             return v

@@ -46,6 +46,25 @@ from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_u
 import requests  # noqa: E402
 
 LOG = logging.getLogger("test_clob_signature")
+_PLACEHOLDER_HINT = (
+    "Remplace les exemples de la doc par de vraies valeurs : --token-id est un long nombre "
+    "(clob token id), ou --market-id avec un condition_id hex complet (64 car. après 0x), "
+    "pas la chaîne littérale « <CLOB_TOKEN_ID> » ni « 0x... »."
+)
+
+
+def _docs_placeholder_error(token_or_market: str, which: str) -> Optional[str]:
+    s = token_or_market.strip()
+    if not s:
+        return None
+    if "<" in s or ">" in s:
+        return f"{which} contient <…> : {_PLACEHOLDER_HINT}"
+    low = s.lower()
+    if "clob_token_id" in low or s.strip() == "...":
+        return f"{which} ressemble à un placeholder : {_PLACEHOLDER_HINT}"
+    if which == "market-id" and (s in ("0x...", "0X...") or (s.startswith("0x") and s.endswith("..."))):
+        return f"market-id={s!r} est un exemple tronqué : {_PLACEHOLDER_HINT}"
+    return None
 CLOB_HOST = "https://clob.polymarket.com"
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -115,7 +134,20 @@ def resolve_token_id(market_id: str, side: str) -> Optional[str]:
 
 
 def best_ask_price(token_id: str) -> Optional[float]:
-    data = _http_get_json(f"{CLOB_HOST}/book?token_id={urllib.parse.quote(token_id)}")
+    url = f"{CLOB_HOST}/book?token_id={urllib.parse.quote(token_id)}"
+    try:
+        data = _http_get_json(url)
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else 0
+        if code == 404:
+            LOG.warning(
+                "CLOB /book 404 pour token_id=%r — id invalide ou carnet inexistant. %s",
+                token_id,
+                _PLACEHOLDER_HINT,
+            )
+        else:
+            LOG.warning("CLOB /book erreur HTTP %s: %s", code, exc)
+        return None
     if not isinstance(data, dict):
         return None
     asks = data.get("asks")
@@ -262,7 +294,16 @@ def create_signed_order(client: Any, token_id: str, price: float, size: float) -
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Test signature CLOB Polymarket (dry-run ou --live)")
+    p = argparse.ArgumentParser(
+        description="Test signature CLOB Polymarket (dry-run ou --live)",
+        epilog=(
+            "Exemples (valeurs factices) :\n"
+            "  python temp/test_clob_signature.py --token-id 12345678901234567890 --price 0.05\n"
+            "  python temp/test_clob_signature.py --market-id 0xabc...condition64hex --side YES --price 0.1\n"
+            "Ne pas copier-coller <CLOB_TOKEN_ID> ni 0x... depuis la doc."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("--token-id", default="", help="Token CLOB (outcome)")
     p.add_argument("--market-id", default="", help="condition_id ou id Gamma pour résoudre le token")
     p.add_argument("--side", default="YES", choices=["YES", "NO"])
@@ -286,16 +327,30 @@ def main() -> int:
         mid = args.market_id.strip()
         if not mid:
             p.error("Fournis --token-id ou --market-id")
+        ph = _docs_placeholder_error(mid, "market-id")
+        if ph:
+            p.error(ph)
         token_id = resolve_token_id(mid, args.side) or ""
         if not token_id:
-            p.error(f"Impossible de résoudre le token pour market-id={mid!r} side={args.side}")
+            p.error(
+                f"Impossible de résoudre le token pour market-id={mid!r} side={args.side}. "
+                "Vérifie que l’id est un condition_id Polymarket (hex) connu de l’API Gamma."
+            )
         LOG.info("token_id résolu=%s", token_id)
+    else:
+        ph = _docs_placeholder_error(token_id, "--token-id")
+        if ph:
+            p.error(ph)
 
     price = float(args.price)
     if price <= 0:
         ba = best_ask_price(token_id)
         if ba is None or ba <= 0:
-            p.error("Pas de best ask — fournis --price explicitement")
+            p.error(
+                "Pas de best ask (souvent 404 = mauvais token_id). "
+                "Fournis --price entre 0 et 1 (ex. 0.5) ou un --token-id valide. "
+                + _PLACEHOLDER_HINT
+            )
         price = ba
         LOG.info("prix = best ask = %s", price)
 
