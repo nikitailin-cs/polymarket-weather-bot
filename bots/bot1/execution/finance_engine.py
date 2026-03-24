@@ -382,7 +382,49 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
         resp = client.create_order(order_payload)
     except AttributeError:
         # Compat versions legacy: create_order attend un objet avec attributs.
-        resp = client.create_order(SimpleNamespace(**order_payload))
+        # On préfère le type OrderArgs du SDK quand disponible.
+        order_obj: Any
+        try:
+            from py_clob_client.clob_types import OrderArgs  # type: ignore
+
+            sig = inspect.signature(OrderArgs)
+            defaults: dict[str, Any] = {
+                "token_id": token_id,
+                "price": price,
+                "side": "BUY",
+                "size": size,
+                "fee_rate_bps": FEE_BPS,
+                "taker": "",
+                "maker": "",
+                "nonce": 0,
+                "expiration": 0,
+                "salt": 0,
+            }
+            kwargs: dict[str, Any] = {}
+            for name, param in sig.parameters.items():
+                if name in defaults:
+                    kwargs[name] = defaults[name]
+                elif param.default is not inspect.Parameter.empty:
+                    kwargs[name] = param.default
+                else:
+                    # Valeur neutre pour champ requis inconnu.
+                    kwargs[name] = 0
+            order_obj = OrderArgs(**kwargs)
+        except Exception:
+            # Dernier fallback: namespace attributaire large.
+            order_obj = SimpleNamespace(
+                token_id=token_id,
+                price=price,
+                side="BUY",
+                size=size,
+                fee_rate_bps=FEE_BPS,
+                taker="",
+                maker="",
+                nonce=0,
+                expiration=0,
+                salt=0,
+            )
+        resp = client.create_order(order_obj)
     if not isinstance(resp, dict):
         return {"raw_response": resp}
     return resp
