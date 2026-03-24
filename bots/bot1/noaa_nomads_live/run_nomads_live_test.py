@@ -5,8 +5,9 @@ Test d'intégration **réseau réel** : NOMADS GFS (fichiers du jour sur
 https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/) via :mod:`noaa_engine`.
 
 Usage (depuis la racine du repo ou ce dossier) ::
-    python bots/bot1/noaa_nomads_live/run_nomads_live_test.py
-    python run_nomads_live_test.py --forecast-hours 3 --http-debug
+    python3 bots/bot1/noaa_nomads_live/run_nomads_live_test.py
+    python3 bots/bot1/noaa_nomads_live/run_nomads_live_test.py --lon -73.98 --lat 40.75
+    python3 run_nomads_live_test.py --forecast-hours 3 --http-debug
 """
 from __future__ import annotations
 
@@ -74,7 +75,23 @@ def main() -> int:
         action="store_true",
         help="Ne pas invoquer wgrib2 même si présent.",
     )
+    p.add_argument(
+        "--lon",
+        type=float,
+        default=None,
+        help="Avec --lat : utilise run_wgrib2_scalpel_at_point (1 valeur, pas de CSV grille entière).",
+    )
+    p.add_argument(
+        "--lat",
+        type=float,
+        default=None,
+        help="Avec --lon : extraction au point GPS.",
+    )
     args = p.parse_args()
+
+    if (args.lon is None) ^ (args.lat is None):
+        print("Erreur : fournir --lon et --lat ensemble, ou aucun des deux.", file=sys.stderr)
+        return 2
 
     log = _configure_logging(http_debug=args.http_debug)
     fh = max(0, int(args.forecast_hours))
@@ -178,6 +195,7 @@ def main() -> int:
         noaa_engine.release_bytesio(bio)
         log.debug("BytesIO len après release_bytesio = %s", len(bio.getvalue()))
 
+        wgrib_code: int | None = None
         if args.skip_wgrib2:
             log.info("— wgrib2 ignoré (--skip-wgrib2)")
         else:
@@ -185,23 +203,69 @@ def main() -> int:
             if not wg:
                 log.warning("wgrib2 absent du PATH — étape scalpel ignorée")
             else:
-                log.info("— Étape run_wgrib2_scalpel (stdin) — %s", wg)
                 t4 = time.monotonic()
-                code, out, err = noaa_engine.run_wgrib2_scalpel(
-                    chunk,
-                    match_substring=":TMP:2 m above ground:",
-                    timeout_sec=120.0,
-                )
-                log.info(
-                    "  wgrib2 fin en %.3fs — code=%s stdout=%s stderr=%s",
-                    time.monotonic() - t4,
-                    code,
-                    len(out),
-                    len(err),
-                )
-                log.debug("  stdout (4000 prem. car.)\n%s", out[:4000])
-                if err:
-                    log.debug("  stderr\n%s", err[:4000])
+                if args.lon is not None and args.lat is not None:
+                    log.info(
+                        "— Étape run_wgrib2_scalpel_at_point (stdin) — %s lon=%s lat=%s",
+                        wg,
+                        args.lon,
+                        args.lat,
+                    )
+                    code, val, out, err = noaa_engine.run_wgrib2_scalpel_at_point(
+                        chunk,
+                        lon=args.lon,
+                        lat=args.lat,
+                        match_substring=":TMP:2 m above ground:",
+                        timeout_sec=120.0,
+                    )
+                    wgrib_code = code
+                    log.info(
+                        "  wgrib2 fin en %.3fs — code=%s valeur=%r stdout=%s stderr=%s",
+                        time.monotonic() - t4,
+                        code,
+                        val,
+                        len(out),
+                        len(err),
+                    )
+                    log.debug("  stdout\n%s", out[:8000])
+                    if err:
+                        log.debug("  stderr\n%s", err[:4000])
+                else:
+                    log.info(
+                        "— Étape run_wgrib2_scalpel (stdin, -csv grille entière) — %s",
+                        wg,
+                    )
+                    log.warning(
+                        "Sans --lon/--lat, le CSV peut faire des dizaines de Mo (tous les points). "
+                        "Préfère --lon X --lat Y pour un test léger.",
+                    )
+                    code, out, err = noaa_engine.run_wgrib2_scalpel(
+                        chunk,
+                        match_substring=":TMP:2 m above ground:",
+                        timeout_sec=120.0,
+                    )
+                    wgrib_code = code
+                    log.info(
+                        "  wgrib2 fin en %.3fs — code=%s stdout=%s stderr=%s",
+                        time.monotonic() - t4,
+                        code,
+                        len(out),
+                        len(err),
+                    )
+                    if len(out) > 5_000_000:
+                        log.warning(
+                            "Sortie wgrib2 très volumineuse (%s car.) — RAM / disque : "
+                            "utilise --lon/--lat pour l’extraction au point.",
+                            len(out),
+                        )
+                    log.debug("  stdout (4000 prem. car.)\n%s", out[:4000])
+                    if err:
+                        log.debug("  stderr\n%s", err[:4000])
+
+        if wgrib_code is not None and wgrib_code != 0:
+            log.error("wgrib2 a retourné code=%s — échec", wgrib_code)
+            log.info("========== FIN TEST ÉCHEC wgrib2 en %.2fs ==========", time.monotonic() - t0)
+            return 1
 
         log.info("========== FIN TEST OK en %.2fs ==========", time.monotonic() - t0)
         return 0
