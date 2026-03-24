@@ -57,7 +57,9 @@ def get_client() -> ClobClient:
         # Active le proxy réseau CLOB (SOCKS5) si configuré.
         apply_proxy_env_for_clob()
         if not PRIVATE_KEY:
-            raise ValueError("PRIVATE_KEY manquant (impossible d'initialiser le client CLOB)")
+            raise ValueError(
+                "PRIVATE_KEY ou POLYMARKET_PKEY manquant (impossible d'initialiser le client CLOB)"
+            )
 
         funder = resolve_clob_funder()
         host_rpc = os.getenv("POLYGON_RPC_URL")

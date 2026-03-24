@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import os, time, logging
 from typing import Optional
+
+from config.settings import resolve_trading_private_key
 from enum import Enum
 from dataclasses import dataclass
 
@@ -201,9 +203,9 @@ def _get_wallet_address() -> Optional[str]:
     Dérive l'adresse wallet depuis la clé privée dans settings.
     Utilise py_clob_client si disponible, sinon eth_account directement.
     """
-    private_key = os.getenv("PRIVATE_KEY", "")
+    private_key = resolve_trading_private_key() or ""
     if not private_key:
-        log.error("CTF Manager: PRIVATE_KEY non configurée")
+        log.error("CTF Manager: PRIVATE_KEY ou POLYMARKET_PKEY non configurée")
         return None
     try:
         from eth_account import Account
@@ -376,9 +378,9 @@ def redeem_position_detailed(
     if address is None:
         return RedeemExecution(result=RedeemResult.FAILED, error="wallet unavailable")
 
-    private_key = os.getenv("PRIVATE_KEY", "")
+    private_key = resolve_trading_private_key() or ""
     if not private_key:
-        log.error("CTF redeem: PRIVATE_KEY manquante")
+        log.error("CTF redeem: PRIVATE_KEY ou POLYMARKET_PKEY manquante")
         return RedeemExecution(result=RedeemResult.FAILED, error="missing private key")
 
     try:

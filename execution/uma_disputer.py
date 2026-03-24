@@ -25,6 +25,8 @@ Contrats :
 from __future__ import annotations
 
 import os, time, logging
+
+from config.settings import resolve_trading_private_key
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -176,8 +178,8 @@ def _get_web3():
 
 
 def _get_wallet():
-    """Retourne (address, private_key) depuis PRIVATE_KEY env."""
-    pk = os.getenv("PRIVATE_KEY", "")
+    """Retourne (address, private_key) depuis PRIVATE_KEY ou POLYMARKET_PKEY."""
+    pk = resolve_trading_private_key() or ""
     if not pk:
         return None, None
     try:

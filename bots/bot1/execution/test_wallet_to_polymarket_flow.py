@@ -18,7 +18,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from config.settings import FEE_BPS  # noqa: E402
+from config.settings import FEE_BPS, resolve_trading_private_key  # noqa: E402
 from core.client import invoke_clob_post_order  # noqa: E402
 from execution.ctf_manager import get_pol_balance, get_usdc_balances  # noqa: E402
 from core.polymarket_proxy import (  # noqa: E402
@@ -195,11 +195,11 @@ def _build_client() -> Any:
         raise RuntimeError(
             "py_clob_client introuvable. Active le bon venv ou installe requirements."
         ) from exc
-    private_key = os.getenv("PRIVATE_KEY", "").strip()
+    private_key = resolve_trading_private_key() or ""
     public_address = os.getenv("PUBLIC_ADDRESS", "").strip()
     host_rpc = os.getenv("POLYGON_RPC_URL", "").strip()
     if not private_key:
-        raise ValueError("PRIVATE_KEY manquant dans .env")
+        raise ValueError("PRIVATE_KEY ou POLYMARKET_PKEY manquant dans .env")
     if not public_address:
         raise ValueError("PUBLIC_ADDRESS manquant dans .env")
 
@@ -395,7 +395,7 @@ def run() -> int:
 
     # 1) ENV
     env_presence = {
-        "PRIVATE_KEY": bool(os.getenv("PRIVATE_KEY")),
+        "PRIVATE_KEY": bool(resolve_trading_private_key()),
         "PUBLIC_ADDRESS": bool(os.getenv("PUBLIC_ADDRESS")),
         "POLYGON_RPC_URL": bool(os.getenv("POLYGON_RPC_URL")),
     }

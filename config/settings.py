@@ -13,9 +13,17 @@ except ImportError:
     pass  # python-dotenv optionnel en prod Docker (variables injectées directement)
 
 # ── Polymarket ────────────────────────────────────────────────────────────────
-CLOB_HOST   = "https://clob.polymarket.com"
-CHAIN_ID    = 137           # Polygon mainnet
-PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+CLOB_HOST = "https://clob.polymarket.com"
+CHAIN_ID = 137  # Polygon mainnet
+
+
+def resolve_trading_private_key():
+    """Clé de signature : PRIVATE_KEY prioritaire, sinon POLYMARKET_PKEY (alias .env)."""
+    v = (os.getenv("PRIVATE_KEY") or os.getenv("POLYMARKET_PKEY") or "").strip()
+    return v if v else None
+
+
+PRIVATE_KEY = resolve_trading_private_key()
 
 # ── Scanner ───────────────────────────────────────────────────────────────────
 MAX_MARKETS_RESULTS = int(os.getenv("MAX_RESULTS",     "500"))

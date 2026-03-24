@@ -24,7 +24,7 @@ from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
-from config.settings import FEE_BPS  # noqa: E402
+from config.settings import FEE_BPS, resolve_trading_private_key  # noqa: E402
 from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
 
@@ -111,9 +111,9 @@ def _get_clob_client() -> ClobClient:
     if not poly_rpc_url:
         raise ValueError("POLYGON_RPC_URL manquant dans le .env")
 
-    private_key = os.getenv("PRIVATE_KEY")
+    private_key = resolve_trading_private_key()
     if not private_key:
-        raise ValueError("PRIVATE_KEY manquant dans le .env")
+        raise ValueError("PRIVATE_KEY ou POLYMARKET_PKEY manquant dans le .env")
     funder = resolve_clob_funder()
     if not funder:
         raise ValueError(
@@ -153,7 +153,7 @@ def _get_clob_client() -> ClobClient:
         except Exception:
             signer_addr = None
     LOG.info(
-        "CLOB client: signature_type=%s funder=%s signer(EOA depuis PRIVATE_KEY)=%s",
+        "CLOB client: signature_type=%s funder=%s signer(EOA depuis clé .env)=%s",
         signature_type,
         funder,
         signer_addr or "?",
@@ -161,7 +161,7 @@ def _get_clob_client() -> ClobClient:
     if signature_type == 1 and signer_addr:
         LOG.info(
             "POLY_PROXY(1): maker=funder (proxy), signature EIP-712 par signer=EOA. "
-            "invalid signature => PRIVATE_KEY n'est en général pas l'EOA lié au proxy sur Polymarket."
+            "invalid signature => la clé (.env) n'est en général pas l'EOA lié au proxy sur Polymarket."
         )
 
     if hasattr(client, "create_or_fetch_api_creds"):

@@ -11,7 +11,7 @@ Test diagnostic : même chaîne que finance_engine (funder, signature_type, prox
   # Résoudre le token depuis un condition_id / market id Gamma
   python temp/test_clob_signature.py --market-id 0x... --side YES
 
-Variables .env utiles : PRIVATE_KEY, PUBLIC_ADDRESS ou POLYMARKET_PROXY_ADDRESS,
+Variables .env utiles : PRIVATE_KEY (ou POLYMARKET_PKEY), PUBLIC_ADDRESS ou POLYMARKET_PROXY_ADDRESS,
 POLYMARKET_SIGNATURE_TYPE, POLYGON_RPC_URL, POLYMARKET_PROXY_* pour SOCKS.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ except Exception:
         return False
 
 
-from config.settings import FEE_BPS  # noqa: E402
+from config.settings import FEE_BPS, resolve_trading_private_key  # noqa: E402
 from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
 
@@ -182,9 +182,9 @@ def build_clob_client() -> Any:
     from py_clob_client.client import ClobClient  # type: ignore
     from py_clob_client.constants import POLYGON  # type: ignore
 
-    private_key = os.getenv("PRIVATE_KEY", "").strip()
+    private_key = resolve_trading_private_key()
     if not private_key:
-        raise SystemExit("PRIVATE_KEY manquant (.env ou environnement)")
+        raise SystemExit("PRIVATE_KEY ou POLYMARKET_PKEY manquant (.env ou environnement)")
 
     funder = resolve_clob_funder()
     if not funder:
@@ -215,7 +215,7 @@ def build_clob_client() -> Any:
     derived = _derived_eoa_address(private_key)
     LOG.info("signature_type=%s funder=%s", signature_type, funder)
     if derived:
-        LOG.info("adresse dérivée de PRIVATE_KEY (EOA)=%s", derived)
+        LOG.info("adresse dérivée de la clé .env (EOA)=%s", derived)
         if derived.lower() != funder.lower():
             LOG.info(
                 "funder != EOA de la clé : normal pour un compte proxy Polymarket (signature_type=1)"

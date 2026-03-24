@@ -17,6 +17,7 @@ if str(_ROOT) not in sys.path:
 from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
+from config.settings import resolve_trading_private_key  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -34,7 +35,7 @@ def _fmt(v: Any) -> str:
 def _load_env() -> tuple[str, str, str]:
     load_dotenv(dotenv_path=_ROOT / ".env", override=False)
     rpc = os.getenv("POLYGON_RPC_URL", "").strip()
-    pk = os.getenv("PRIVATE_KEY", "").strip()
+    pk = resolve_trading_private_key() or ""
     addr = os.getenv("PUBLIC_ADDRESS", "").strip()
     return rpc, pk, addr
 
@@ -61,7 +62,7 @@ def _build_client() -> Optional[ClobClient]:
     rpc, pk, addr = _load_env()
     apply_proxy_env_for_clob()
     if not pk or not addr:
-        print("ENV manquant: PRIVATE_KEY/PUBLIC_ADDRESS", flush=True)
+        print("ENV manquant: PRIVATE_KEY ou POLYMARKET_PKEY / PUBLIC_ADDRESS", flush=True)
         return None
     kwargs: dict[str, Any] = {
         "host": CLOB_HOST,
