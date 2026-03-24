@@ -22,8 +22,8 @@ from config.settings import FEE_BPS  # noqa: E402
 from execution.ctf_manager import get_pol_balance, get_usdc_balances  # noqa: E402
 from core.polymarket_proxy import (  # noqa: E402
     apply_proxy_env_for_clob,
+    audit_polymarket_network,
     build_socks5_proxy_url,
-    describe_socks_proxy_env,
 )
 import requests  # noqa: E402
 
@@ -69,6 +69,18 @@ def _setup_logging(verbose: bool) -> Path:
     )
     logging.getLogger().addHandler(file_handler)
     LOG.info("Log file: %s", log_path)
+    if verbose:
+        for name in (
+            "httpcore",
+            "httpcore.connection",
+            "httpcore.http2",
+            "httpcore.http11",
+            "urllib3.connectionpool",
+            "urllib3.util.retry",
+            "httpx",
+            "hpack",
+        ):
+            logging.getLogger(name).setLevel(logging.DEBUG)
     return log_path
 
 
@@ -331,6 +343,11 @@ def run() -> int:
         action="store_true",
         help="Active logs DEBUG massifs",
     )
+    parser.add_argument(
+        "--proxy-audit",
+        action="store_true",
+        help="Sondes IP publique directe vs SOCKS (api.ipify.org) + audit .env (peut aussi utiliser --verbose).",
+    )
     args = parser.parse_args()
 
     if args.market_id.strip() in {"<MARKET_ID>", "MARKET_ID", "<market_id>"}:
@@ -340,15 +357,6 @@ def run() -> int:
     log_path = _setup_logging(args.verbose)
 
     load_dotenv(dotenv_path=_ROOT / ".env", override=False)
-    px = describe_socks_proxy_env()
-    if px.get("clob_routes_via_socks"):
-        LOG.info("Proxy Polymarket: SOCKS5 actif pour CLOB (py_clob_client / httpx)")
-    else:
-        LOG.warning(
-            "Proxy Polymarket: inactif — trafic CLOB direct (logs httpcore: host=clob.polymarket.com). "
-            "Pour SOCKS: POLYMARKET_PROXY_ENABLED=1 et POLYMARKET_SOCKS5_HOST/PORT dans .env"
-        )
-    LOG.debug("Proxy diagnostic: %s", px)
 
     if args.execute_live and not (args.token_id.strip() or args.market_id.strip()):
         LOG.error("Avec --execute-live, fournis --token-id ou --market-id")
@@ -364,6 +372,31 @@ def run() -> int:
         results.append(StepResult(name=name, ok=ok, details=details))
         (LOG.info if ok else LOG.error)("STEP %-32s %s", name, "OK" if ok else "FAIL")
         LOG.debug("STEP_DETAILS %s => %s", name, json.dumps(details, default=str)[:2000])
+
+    run_probes = bool(args.proxy_audit or args.verbose)
+    audit = audit_polymarket_network(_ROOT, LOG, run_egress_probes=run_probes)
+    if audit.get("describe", {}).get("clob_routes_via_socks"):
+        LOG.info("Proxy Polymarket: SOCKS5 actif pour CLOB (py_clob_client / httpx)")
+    else:
+        LOG.warning(
+            "Proxy Polymarket: inactif — trafic CLOB direct (logs httpcore: host=clob.polymarket.com). "
+            "Pour SOCKS: POLYMARKET_PROXY_ENABLED=1 et POLYMARKET_SOCKS5_HOST/PORT dans le .env du serveur"
+        )
+    LOG.debug("Proxy audit complet: %s", json.dumps(audit, default=str)[:8000])
+
+    sns_ok = bool(audit.get("describe", {}).get("clob_routes_via_socks"))
+    if audit.get("socks_probe_same_as_direct"):
+        sns_ok = False
+    step(
+        "proxy_network_audit",
+        sns_ok,
+        clob_routes_via_socks=audit.get("describe", {}).get("clob_routes_via_socks"),
+        dotenv_exists=audit.get("dotenv_exists"),
+        egress_ip_direct=audit.get("egress_ip_direct"),
+        egress_ip_via_socks_probe=audit.get("egress_ip_via_socks_probe"),
+        socks_probe_same_as_direct=audit.get("socks_probe_same_as_direct"),
+        warnings=audit.get("warnings", [])[:20],
+    )
 
     # 1) ENV
     env_presence = {
