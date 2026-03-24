@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,11 @@ from typing import Optional, Dict, Any
 
 # ── Chemin de stockage ────────────────────────────────────────────────────────
 def _get_store_path() -> Path:
+    override = os.getenv("FEATURE_STORE_FILE", "").strip()
+    if override:
+        path = Path(override)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
     try:
         from config.settings import _ROOT
         path = Path(_ROOT) / "data" / "ml" / "feature_store.jsonl"

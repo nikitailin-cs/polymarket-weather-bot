@@ -16,7 +16,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List
 from pathlib import Path
 
-BIAS_FILE = Path(__file__).parent.parent.parent / "data" / "processed" / "model_bias.json"
+_bias_override = os.getenv("MODEL_BIAS_FILE", "").strip()
+BIAS_FILE = (
+    Path(_bias_override)
+    if _bias_override
+    else Path(__file__).parent.parent.parent / "data" / "processed" / "model_bias.json"
+)
 BIAS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # Nombre minimum d'observations pour appliquer la correction

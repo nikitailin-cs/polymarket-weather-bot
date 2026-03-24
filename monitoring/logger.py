@@ -10,8 +10,9 @@ except Exception:
     LOG_LEVEL = "INFO"
 
 def _setup_logger() -> logging.Logger:
-    os.makedirs(LOG_DIR, exist_ok=True)
-    log_file = os.path.join(LOG_DIR, f"bot_{datetime.utcnow().strftime('%Y%m%d')}.log")
+    log_dir = os.getenv("POLYBOT_LOG_DIR", LOG_DIR)
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"bot_{datetime.utcnow().strftime('%Y%m%d')}.log")
     fmt = logging.Formatter("[%(asctime)s] %(levelname)-8s — %(message)s", datefmt="%H:%M:%S")
     logger = logging.getLogger("polybot")
     logger.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
