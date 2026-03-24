@@ -49,19 +49,31 @@ Chaîne de montage (résumé) — fonctions principales :
 
 2. **Sentinelle (ping)** — Boucle **synchrone** : :func:`probe_idx_hybrid`, :func:`poll_until_idx_available`
    (HEAD NOMADS ; pas de corps GRIB). Pour du **async**, envelopper avec
-   ``asyncio.to_thread(probe_idx_hybrid, ...)`` ou ``run_in_executor``.
+   ``asyncio.to_thread(probe_idx_hybrid, ...)`` ou ``run_in_executor`` ; pour le téléchargement
+   .idx / Range avec **aiohttp**, utiliser :func:`async_fetch_idx_text`, :func:`async_get_range_bytes`,
+   :func:`async_head_get_content_length`.
 
 3. **Basculeur (fallback)** — :func:`probe_idx_hybrid` (S3 si 503/404/403… + anti-ban +
    :func:`s3_last_modified_matches_run_day`).
 
 4. **Extracteur d’index** — :func:`fetch_idx_text`, :func:`parse_idx_wgrib2`,
-   :func:`contiguous_byte_range_for_record`, :func:`byte_range_for_idx_line_containing`
-   (recherche ex. ``:TMP:2 m above ground:`` → octets début/fin).
+   :func:`parse_idx_wgrib2_regex` / :func:`parse_idx_line_wgrib2_regex` (regex **N:offset:…**),
+   :func:`contiguous_byte_range_for_record`, :func:`byte_range_for_idx_line_containing`,
+   :func:`byte_range_for_idx_line_descriptor_regex`, :func:`byte_range_for_variable_and_level`
+   (recherche ex. ``:TMP:`` + ``2 m above ground`` → octets début/fin ; fin = dernier octet avant
+   le début du message suivant, ou fin de fichier si dernier message).
 
-5. **Moissonneur** — :func:`get_range_bytes`, :func:`harvest_grib_chunk_by_idx_substring` ;
+5. **Moissonneur** — :func:`get_range_bytes` / :func:`get_range_bytes_io` (segment en RAM,
+   sans fichier GRIB persistant), :func:`harvest_grib_chunk_by_idx_substring`,
+   :func:`harvest_grib_chunks_by_field_substrings`, :func:`fetch_idx_and_harvest_weather_fields` ;
    :func:`head_get_content_length` pour la taille totale du pgrb2 (dernier message).
 
-6. **Scalpel** — :func:`run_wgrib2_scalpel` (binaire **wgrib2** sur le chunk téléchargé).
+6. **Scalpel** — :func:`run_wgrib2_scalpel` (stdin → ``wgrib2 -``), :func:`run_wgrib2_scalpel_at_point`
+   (``-lon`` / ``-inv``), :func:`parse_wgrib2_stdout_scalar` (sortie → ``float``).
+
+7. **Ensemble GEFS (31 membres)** — :func:`iter_gefs_member_batches`, :func:`run_gefs_members_batched`,
+   :func:`release_bytesio` : traitement par **lots** (défaut 5 membres à la fois, jamais 31 en parallèle),
+   option **micro-parallèle** limitée au lot ; vidage des tampons :class:`io.BytesIO` entre membres.
 
 Déroulement du « Ping » à l’analyse (exemple **run 12z**, dispo ~**15:30** UTC) :
 
@@ -75,28 +87,44 @@ Déroulement du « Ping » à l’analyse (exemple **run 12z**, dispo ~**15:30**
 3. **Capture** — Ex. **15:34** : réponse **200 OK** au HEAD → le .idx est utilisable.
 
 4. **Analyse** — :func:`fetch_idx_text` charge le .idx en RAM ; recherche d’une sous-chaîne
-   (ex. ``:TMP:2 m above ground:``) avec :func:`byte_range_for_idx_line_containing` pour obtenir
-   les octets **début / fin** du message GRIB (ex. 154200–198500).
+   ou regex sur le descripteur (ex. ``:TMP:`` + ``2 m above ground``) avec
+   :func:`byte_range_for_idx_line_containing` / :func:`byte_range_for_variable_and_level` /
+   :func:`byte_range_for_idx_line_descriptor_regex` pour obtenir les octets **début / fin** du
+   message GRIB (l’**offset** utile est le **2ᵉ** nombre de la ligne : ``N:offset:…``).
 
-5. **Moisson** — :func:`get_range_bytes` avec ``GET`` et ``Range: bytes=154200-198500``.
+5. **Moisson** — :func:`get_range_bytes` / :func:`get_range_bytes_io` (ou :func:`async_get_range_bytes`
+   / :func:`async_get_range_bytes_io` avec **aiohttp**) : ``GET`` + en-tête
+   ``Range: bytes={start}-{end}`` — uniquement le petit segment (évite de charger le pgrb2 entier).
 
-6. **Scalpel** — :func:`run_wgrib2_scalpel` envoie le petit paquet binaire au programme **wgrib2**
-   (installé sur la machine) et récupère la sortie (ex. CSV / grille).
+6. **Scalpel** — le chunk est envoyé sur **stdin** (``wgrib2 -``). Pour un **point GPS** :
+   :func:`run_wgrib2_scalpel_at_point` avec ``-lon LON LAT`` et ``-inv`` vers le vide (pas d’inventaire
+   inutile) ; :func:`parse_wgrib2_stdout_scalar` extrait la valeur numérique (température, pluie, etc.).
+
+**Byte-Range + .idx (RAM)** : :func:`fetch_idx_and_harvest_weather_fields` enchaîne
+GET du .idx → repères d’octets → GET Range par **message GRIB** (champ météo), résultat en
+``bytes`` ou :class:`io.BytesIO` en mémoire (pas de fichier .grib2 persistant pour le segment).
+Chaque message = une **grille horizontale** pour ce champ (pas une
+découpe « ville » : pour une vraie zone géographique, utiliser **wgrib2** après le chunk,
+ex. ``-small_grib``, ``-ij``, etc.).
 """
 
 from __future__ import annotations
 
+import argparse
 import email.utils
+import io
 import os
 import random
+import re
 import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, Iterator, Literal, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterator, Literal, Optional, Sequence, Tuple, TypeVar
+
+T = TypeVar("T")
 
 # ── Constantes ───────────────────────────────────────────────────────────────
 
@@ -125,6 +153,19 @@ ESTIMATED_HEAD_TRANSFER_BYTES = 200
 
 # Limite de sécurité pour un GET du fichier .idx (texte, bien plus petit que le GRIB).
 MAX_IDX_FETCH_BYTES = 10 * 1024 * 1024
+
+# Motifs typiques dans les lignes .idx GFS (wgrib2) pour cibler température / précipitation.
+# Vérifier sur un .idx réel : les libellés peuvent varier légèrement (niveau, accumulation).
+DEFAULT_FIELD_SUBSTRINGS_TEMP_PRECIP: Tuple[str, ...] = (
+    ":TMP:2 m above ground:",
+    ":APCP:surface:",
+)
+
+# GEFS : typiquement **31** membres (1 contrôle + 30 perturbés) — indices ``0 … 30``.
+# Les URLs / chemins NOMADS-S3 par membre restent à construire côté appelant ; ce module fournit
+# seulement le **cadencement** par lots pour limiter la RAM.
+GEFS_MEMBER_COUNT: int = 31
+GEFS_DEFAULT_MEMBER_BATCH_SIZE: int = 5
 
 # ── Polling e2-micro : le GFS sort 4×/jour — pas de ping inutile hors fenêtre ─
 # Début dispo ~3h30 après le run ; fenêtre « alerte » = [T_dispo − 5 min, T_dispo + 45 min]
@@ -760,6 +801,14 @@ def probe_pgrb2_nomads_then_s3(
     return None
 
 
+def _http_range_get_headers(start: int, end: int, *, user_agent: str) -> dict[str, str]:
+    """En-têtes pour un **GET** avec plage d’octets (RFC 7233) — segment ``[start, end]`` inclusif."""
+    return {
+        "User-Agent": user_agent,
+        "Range": f"bytes={start}-{end}",
+    }
+
+
 def get_range_bytes(
     url: str,
     start: int,
@@ -769,25 +818,42 @@ def get_range_bytes(
     user_agent: str = DEFAULT_USER_AGENT,
 ) -> bytes:
     """
-    **GET** avec en-tête ``Range: bytes=…`` — **pas** pour vérifier la présence du fichier.
+    **GET** avec en-têtes ``{"User-Agent": …, "Range": f"bytes={start}-{end}"}`` — **pas** pour
+    vérifier la présence du fichier.
 
     Réservé au téléchargement d’un **morceau** du GRIB après que le .idx ait fourni
     les offsets (sinon risque de charge réseau / RAM si on oublie le Range).
+    Le corps est entièrement chargé en **mémoire** (objet ``bytes``), **sans** écriture d’un
+    fichier .grib2 persistant sur le disque.
 
     Pour « est-ce que le fichier ? », utiliser uniquement :func:`head_ok`.
+    Pour un tampon fichier virtuel (même données, API type fichier), préférer :func:`get_range_bytes_io`.
     """
     if start < 0 or end < start:
         raise ValueError(f"Range invalide : {start}..{end}")
     req = urllib.request.Request(
         url,
         method="GET",
-        headers={
-            "User-Agent": user_agent,
-            "Range": f"bytes={start}-{end}",
-        },
+        headers=_http_range_get_headers(start, end, user_agent=user_agent),
     )
     with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
         return resp.read()
+
+
+def get_range_bytes_io(
+    url: str,
+    start: int,
+    end: int,
+    *,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> io.BytesIO:
+    """
+    Comme :func:`get_range_bytes`, mais retourne un :class:`io.BytesIO` — **fichier binaire virtuel**
+    en RAM uniquement (pas de sauvegarde SSD du segment). Utile pour enchaîner avec des APIs
+    qui attendent un objet « fichier » sans toucher au disque.
+    """
+    return io.BytesIO(get_range_bytes(url, start, end, timeout_sec=timeout_sec, user_agent=user_agent))
 
 
 def head_get_content_length(
@@ -834,6 +900,119 @@ def fetch_idx_text(
     return data.decode("utf-8", errors="replace")
 
 
+def _import_aiohttp() -> Any:
+    try:
+        import aiohttp
+    except ImportError as e:
+        raise ImportError(
+            "Les fonctions async HTTP nécessitent aiohttp : pip install aiohttp"
+        ) from e
+    return aiohttp
+
+
+async def async_fetch_idx_text(
+    url: str,
+    *,
+    session: Optional[Any] = None,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+    max_bytes: int = MAX_IDX_FETCH_BYTES,
+) -> str:
+    """Version asynchrone de :func:`fetch_idx_text` (nécessite le paquet **aiohttp**)."""
+    aiohttp = _import_aiohttp()
+    close = False
+    if session is None:
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout_sec))
+        close = True
+    try:
+        async with session.get(url, headers={"User-Agent": user_agent}) as resp:
+            resp.raise_for_status()
+            data = await resp.content.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError(
+                f".idx trop volumineux (> {max_bytes} octets) — augmenter max_bytes ou vérifier l’URL"
+            )
+        return data.decode("utf-8", errors="replace")
+    finally:
+        if close:
+            await session.close()
+
+
+async def async_get_range_bytes(
+    url: str,
+    start: int,
+    end: int,
+    *,
+    session: Optional[Any] = None,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> bytes:
+    """Version asynchrone de :func:`get_range_bytes` (nécessite **aiohttp**)."""
+    if start < 0 or end < start:
+        raise ValueError(f"Range invalide : {start}..{end}")
+    aiohttp = _import_aiohttp()
+    close = False
+    if session is None:
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout_sec))
+        close = True
+    try:
+        async with session.get(
+            url,
+            headers=_http_range_get_headers(start, end, user_agent=user_agent),
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.read()
+    finally:
+        if close:
+            await session.close()
+
+
+async def async_get_range_bytes_io(
+    url: str,
+    start: int,
+    end: int,
+    *,
+    session: Optional[Any] = None,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> io.BytesIO:
+    """Version asynchrone de :func:`get_range_bytes_io` (nécessite **aiohttp**)."""
+    return io.BytesIO(
+        await async_get_range_bytes(
+            url,
+            start,
+            end,
+            session=session,
+            timeout_sec=timeout_sec,
+            user_agent=user_agent,
+        )
+    )
+
+
+async def async_head_get_content_length(
+    url: str,
+    *,
+    session: Optional[Any] = None,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> Optional[int]:
+    """Version asynchrone de :func:`head_get_content_length` (nécessite **aiohttp**)."""
+    aiohttp = _import_aiohttp()
+    close = False
+    if session is None:
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout_sec))
+        close = True
+    try:
+        async with session.head(url, headers={"User-Agent": user_agent}) as resp:
+            if resp.status >= 400:
+                return None
+            cl = resp.headers.get("Content-Length")
+            return int(cl) if cl else None
+    finally:
+        if close:
+            await session.close()
+
+
 def parse_idx_wgrib2(idx_text: str) -> list[Tuple[int, int, str]]:
     """
     Parse un .idx style **wgrib2** : lignes ``N:offset:…`` (N = n° d’enregistrement, offset en octets).
@@ -855,6 +1034,42 @@ def parse_idx_wgrib2(idx_text: str) -> list[Tuple[int, int, str]]:
             continue
         rest = parts[2] if len(parts) > 2 else ""
         out.append((rec, off, rest))
+    return out
+
+
+# Ligne wgrib2 : ``N:offset:descripteur`` — **N** = n° d’enregistrement, **offset** = octet de début
+# du message dans le pgrb2 (c’est le nombre après le **deuxième** « : », pas le premier).
+WGIB2_IDX_LINE_RE = re.compile(r"^(\d+):(\d+):(.*)$")
+
+
+def parse_idx_line_wgrib2_regex(raw_line: str) -> Optional[Tuple[int, int, str]]:
+    """
+    Parse **une** ligne .idx wgrib2 par regex : ``(record, offset_octets, descripteur)`` ou ``None``.
+
+    L’octet de **fin** du message (pour construire un Range HTTP) n’est pas sur cette ligne : il faut
+    la ligne **suivante** du fichier trié par offset — voir :func:`contiguous_byte_range_for_record`.
+    """
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        return None
+    m = WGIB2_IDX_LINE_RE.match(line)
+    if not m:
+        return None
+    try:
+        rec = int(m.group(1))
+        off = int(m.group(2))
+    except ValueError:
+        return None
+    return rec, off, m.group(3)
+
+
+def parse_idx_wgrib2_regex(idx_text: str) -> list[Tuple[int, int, str]]:
+    """Même sortie que :func:`parse_idx_wgrib2`, en ne gardant que les lignes reconnues par regex."""
+    out: list[Tuple[int, int, str]] = []
+    for raw in idx_text.splitlines():
+        parsed = parse_idx_line_wgrib2_regex(raw)
+        if parsed is not None:
+            out.append(parsed)
     return out
 
 
@@ -910,6 +1125,46 @@ def byte_range_for_idx_line_containing(
     return None
 
 
+def byte_range_for_idx_line_descriptor_regex(
+    idx_text: str,
+    pattern: str | re.Pattern[str],
+    *,
+    flags: int = 0,
+    pgrb2_total_bytes: Optional[int] = None,
+) -> Optional[Tuple[int, int]]:
+    """
+    **Première** ligne du .idx dont le **descripteur** (partie après ``N:offset:``) correspond à
+    ``pattern`` (regex). Retourne ``(start, end)`` **inclusifs** pour :func:`get_range_bytes`
+    / :func:`async_get_range_bytes` (fin = octet du début du message suivant **moins un**).
+    """
+    pat = re.compile(pattern, flags) if isinstance(pattern, str) else pattern
+    for rec, _off, rest in parse_idx_wgrib2(idx_text):
+        if pat.search(rest):
+            return contiguous_byte_range_for_record(
+                idx_text, rec, pgrb2_total_bytes=pgrb2_total_bytes
+            )
+    return None
+
+
+def byte_range_for_variable_and_level(
+    idx_text: str,
+    *,
+    variable_must_contain: str,
+    level_must_contain: str,
+    pgrb2_total_bytes: Optional[int] = None,
+) -> Optional[Tuple[int, int]]:
+    """
+    **Première** ligne dont le descripteur contient à la fois ``variable_must_contain`` et
+    ``level_must_contain`` (ex. ``:TMP:`` et ``2 m above ground``), puis même plage qu’au‑dessus.
+    """
+    for rec, _off, rest in parse_idx_wgrib2(idx_text):
+        if variable_must_contain in rest and level_must_contain in rest:
+            return contiguous_byte_range_for_record(
+                idx_text, rec, pgrb2_total_bytes=pgrb2_total_bytes
+            )
+    return None
+
+
 def harvest_grib_chunk_by_idx_record(
     pgrb2_url: str,
     idx_text: str,
@@ -952,8 +1207,185 @@ def harvest_grib_chunk_by_idx_substring(
     return get_range_bytes(pgrb2_url, a, b, timeout_sec=timeout_sec, user_agent=user_agent)
 
 
+def iter_grib_message_ranges_matching_substring(
+    idx_text: str,
+    substring: str,
+    *,
+    pgrb2_total_bytes: Optional[int],
+) -> Iterator[Tuple[int, int, int, str]]:
+    """
+    Parcourt toutes les lignes du .idx dont le descripteur contient ``substring`` et
+    calcule la plage d’octets de chaque **message GRIB** correspondant.
+
+    Retourne ``(record, start, end_inclusive, rest)`` par enregistrement.
+    """
+    for rec, _off, rest in parse_idx_wgrib2(idx_text):
+        line = f"{rec}:{_off}:{rest}"
+        if substring not in line:
+            continue
+        span = contiguous_byte_range_for_record(idx_text, rec, pgrb2_total_bytes=pgrb2_total_bytes)
+        if span is None:
+            continue
+        a, b = span
+        yield rec, a, b, rest
+
+
+def harvest_grib_chunks_by_field_substrings(
+    pgrb2_url: str,
+    idx_text: str,
+    field_substrings: Sequence[str],
+    *,
+    first_match_per_pattern: bool = True,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> dict[str, Optional[bytes]]:
+    """
+    Télécharge **uniquement** les messages GRIB utiles (GET **Range**), directement en **RAM**
+    (``bytes``) — pas le fichier pgrb2 complet.
+
+    Pour chaque motif (sous-chaîne présente dans la ligne .idx wgrib2, ex.
+    ``:TMP:2 m above ground:``, ``:APCP:surface:``) :
+
+    - ``first_match_per_pattern=True`` (défaut) : un seul message par motif (le premier trouvé).
+    - ``first_match_per_pattern=False`` : tous les messages dont la ligne contient le motif,
+      concaténés en un seul ``bytes`` (fichier GRIB multi-messages — exploitable par wgrib2).
+
+    **Limite** : un message = une grille **mondiale** (ou domaine du modèle) pour ce champ ;
+    ce n’est pas une « zone ville » au sens géographique fin. Pour découper une région après
+    coup : ``wgrib2`` (ex. ``-small_grib``) sur le chunk déjà en mémoire.
+    """
+    total = head_get_content_length(pgrb2_url, timeout_sec=timeout_sec, user_agent=user_agent)
+    out: dict[str, Optional[bytes]] = {}
+    for i, pat in enumerate(field_substrings):
+        label = pat.strip() if len(pat) <= 96 else f"pattern_{i}"
+        if first_match_per_pattern:
+            span = byte_range_for_idx_line_containing(
+                idx_text, pat, pgrb2_total_bytes=total
+            )
+            if span is None:
+                out[label] = None
+                continue
+            a, b = span
+            out[label] = get_range_bytes(
+                pgrb2_url, a, b, timeout_sec=timeout_sec, user_agent=user_agent
+            )
+            continue
+        chunks: list[bytes] = []
+        for _rec, a, b, _rest in iter_grib_message_ranges_matching_substring(
+            idx_text, pat, pgrb2_total_bytes=total
+        ):
+            chunks.append(
+                get_range_bytes(
+                    pgrb2_url, a, b, timeout_sec=timeout_sec, user_agent=user_agent
+                )
+            )
+        out[label] = b"".join(chunks) if chunks else None
+    return out
+
+
+def fetch_idx_and_harvest_weather_fields(
+    pgrb2_url: str,
+    idx_url: str,
+    field_substrings: Optional[Sequence[str]] = None,
+    *,
+    first_match_per_pattern: bool = True,
+    timeout_sec: float = DEFAULT_HEAD_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+    max_idx_bytes: int = MAX_IDX_FETCH_BYTES,
+) -> dict[str, Optional[bytes]]:
+    """
+    Pipeline complet : **GET** du .idx (texte en RAM) → repères d’octets → **GET Range** sur
+    le pgrb2 pour la température / précipitation (ou autres champs), **sans** télécharger le
+    gros binaire entier.
+
+    - ``field_substrings`` : si ``None``, utilise :data:`DEFAULT_FIELD_SUBSTRINGS_TEMP_PRECIP`.
+    - Retour : dictionnaire ``motif → bytes`` (ou ``None`` si aucune ligne ne matche).
+    """
+    patterns = (
+        tuple(field_substrings)
+        if field_substrings is not None
+        else DEFAULT_FIELD_SUBSTRINGS_TEMP_PRECIP
+    )
+    idx_text = fetch_idx_text(
+        idx_url,
+        timeout_sec=timeout_sec,
+        user_agent=user_agent,
+        max_bytes=max_idx_bytes,
+    )
+    return harvest_grib_chunks_by_field_substrings(
+        pgrb2_url,
+        idx_text,
+        patterns,
+        first_match_per_pattern=first_match_per_pattern,
+        timeout_sec=timeout_sec,
+        user_agent=user_agent,
+    )
+
+
+def _coerce_bytes_or_bytesio(buf: bytes | io.BytesIO) -> bytes:
+    """Normalise ``bytes`` ou :class:`io.BytesIO` en ``bytes`` (sans fichier utilisateur)."""
+    if isinstance(buf, bytes):
+        return buf
+    return buf.getvalue()
+
+
+def _wgrib2_run_bytes(
+    cmd: Sequence[str],
+    raw: bytes,
+    *,
+    timeout_sec: float,
+) -> Tuple[int, str, str]:
+    """Lance wgrib2 avec les données GRIB2 sur **stdin** (binaire)."""
+    p = subprocess.run(
+        list(cmd),
+        input=raw,
+        capture_output=True,
+        timeout=timeout_sec,
+    )
+    out = (p.stdout or b"").decode("utf-8", errors="replace")
+    err = (p.stderr or b"").decode("utf-8", errors="replace")
+    return p.returncode, out, err
+
+
+# Motifs usuels dans la sortie texte wgrib2 (ex. ``-lon``) : ``val=285.12`` ou ``val = 1.2e-3``.
+_WGRIB2_VAL_RE = re.compile(
+    r"val\s*=\s*([-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?)",
+    re.IGNORECASE,
+)
+_FLOAT_TOKEN_RE = re.compile(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?")
+
+
+def parse_wgrib2_stdout_scalar(stdout: str) -> Optional[float]:
+    """
+    Interprète la **sortie texte** de wgrib2 (température, précip accumulée, etc.) en un seul
+    ``float``.
+
+    Stratégie : d’abord une forme ``val=…`` (typique de ``-lon``), sinon le **dernier** nombre
+    plausible sur la dernière ligne non vide (secours pour CSV ou autres formats).
+    """
+    if not (stdout and stdout.strip()):
+        return None
+    m = _WGRIB2_VAL_RE.search(stdout)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        found = _FLOAT_TOKEN_RE.findall(line)
+        if found:
+            try:
+                return float(found[-1])
+            except ValueError:
+                continue
+    return None
+
+
 def run_wgrib2_scalpel(
-    grib_chunk: bytes,
+    grib_chunk: bytes | io.BytesIO,
     *,
     match_substring: str = ":TMP:2 m above ground:",
     wgrib2_bin: str = "wgrib2",
@@ -961,36 +1393,138 @@ def run_wgrib2_scalpel(
     extra_args: Optional[Sequence[str]] = None,
 ) -> Tuple[int, str, str]:
     """
-    **Scalpel** : écrit le morceau GRIB2 dans un fichier temporaire et exécute **wgrib2**
-    (doit être dans le ``PATH`` ou chemin complet vers ``wgrib2.exe``).
+    **Scalpel** : envoie le morceau GRIB2 sur **stdin** (``wgrib2 -``), sans fichier temporaire.
 
     Par défaut : ``-match <sous-chaîne> -csv`` pour une sortie tabulaire exploitable.
 
-    Retourne ``(code_retour, stdout, stderr)``. Interpréter la température selon la sortie CSV
-    wgrib2 (dépend des options).
+    Retourne ``(code_retour, stdout, stderr)``. Interpréter les valeurs selon le champ (unités GRIB).
     """
     extra = list(extra_args) if extra_args else ["-csv"]
-    fd, path = tempfile.mkstemp(suffix=".grib2")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(grib_chunk)
-        cmd = [wgrib2_bin, path, "-match", match_substring, *extra]
-        p = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=timeout_sec,
-            text=True,
-        )
-        return p.returncode, p.stdout or "", p.stderr or ""
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    raw = _coerce_bytes_or_bytesio(grib_chunk)
+    cmd = (wgrib2_bin, "-", "-match", match_substring, *extra)
+    return _wgrib2_run_bytes(cmd, raw, timeout_sec=timeout_sec)
+
+
+def run_wgrib2_scalpel_at_point(
+    grib_chunk: bytes | io.BytesIO,
+    *,
+    lon: float,
+    lat: float,
+    match_substring: str = ":TMP:2 m above ground:",
+    wgrib2_bin: str = "wgrib2",
+    timeout_sec: float = 120.0,
+    inv_path: Optional[str] = None,
+    extra_args: Optional[Sequence[str]] = None,
+) -> Tuple[int, Optional[float], str, str]:
+    """
+    **Scalpel + point GPS** : stdin → ``wgrib2 -``, ``-match``, ``-inv`` (par défaut :attr:`os.devnull`
+    pour ne pas écrire d’inventaire — sur Linux équivalent à ``/dev/null``), ``-lon LON LAT``
+    (longitude puis latitude, degrés).
+
+    Retourne ``(code_retour, valeur_float_ou_None, stdout, stderr)``. La valeur est dérivée de
+    ``stdout`` via :func:`parse_wgrib2_stdout_scalar` (ex. ``val=…``). Vérifier ``code_retour``
+    avant d’utiliser la valeur (en cas d’erreur wgrib2, ``stderr`` est explicite).
+    """
+    raw = _coerce_bytes_or_bytesio(grib_chunk)
+    inv = inv_path if inv_path is not None else os.devnull
+    cmd = [wgrib2_bin, "-", "-match", match_substring, "-inv", inv, "-lon", str(lon), str(lat)]
+    if extra_args:
+        cmd.extend(extra_args)
+    code, out, err = _wgrib2_run_bytes(cmd, raw, timeout_sec=timeout_sec)
+    val = parse_wgrib2_stdout_scalar(out)
+    return code, val, out, err
+
+
+def release_bytesio(buf: io.BytesIO) -> None:
+    """
+    Réinitialise un :class:`io.BytesIO` (``seek(0)`` + ``truncate(0)``) pour libérer le tampon
+    entre deux membres d’ensemble (GEFS, etc.) sans attendre le ramasse-miettes.
+    Les objets ``bytes`` n’ont pas besoin de cette étape : il suffit de ne plus y référencer.
+    """
+    buf.seek(0)
+    buf.truncate(0)
+
+
+def iter_gefs_member_batches(
+    *,
+    member_indices: Optional[Sequence[int]] = None,
+    batch_size: int = GEFS_DEFAULT_MEMBER_BATCH_SIZE,
+) -> Iterator[Tuple[int, ...]]:
+    """
+    Itère les **paquets** d’indices de membres (ex. probabilités sur les 31 sorties GEFS).
+
+    Par défaut : ``0 … 30`` (:data:`GEFS_MEMBER_COUNT` membres), découpés en tuples d’au plus
+    ``batch_size`` indices — utile pour ne jamais lancer 31 requêtes ou 31 gros buffers à la fois.
+    """
+    if member_indices is None:
+        seq = list(range(GEFS_MEMBER_COUNT))
+    else:
+        seq = list(member_indices)
+    if batch_size < 1:
+        raise ValueError("batch_size doit être >= 1")
+    for i in range(0, len(seq), batch_size):
+        yield tuple(seq[i : i + batch_size])
+
+
+def run_gefs_members_batched(
+    process_member: Callable[[int], T],
+    *,
+    member_indices: Optional[Sequence[int]] = None,
+    batch_size: int = GEFS_DEFAULT_MEMBER_BATCH_SIZE,
+    parallel_in_batch: bool = False,
+) -> list[T]:
+    """
+    Appelle ``process_member(member_index)`` pour chaque membre, **par lots** de ``batch_size``
+    (défaut **5**) : on ne charge jamais les 31 segments en parallèle (évite le pic RAM).
+
+    - ``parallel_in_batch=False`` (**défaut**) : séquentiel à l’intérieur du lot — RAM minimale.
+    - ``parallel_in_batch=True`` : jusqu’à ``len(lot)`` threads **dans** le lot uniquement
+      (micro-parallèle adapté au réseau / I/O ; toujours au plus ``batch_size`` membres actifs).
+
+    Dans ``process_member``, après usage d’un :class:`io.BytesIO`, appeler :func:`release_bytesio`
+    (ou laisser tomber la référence) **avant** de retourner, pour libérer le tampon avant le membre suivant.
+    """
+    results: list[T] = []
+    for batch in iter_gefs_member_batches(
+        member_indices=member_indices,
+        batch_size=batch_size,
+    ):
+        if parallel_in_batch:
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = min(len(batch), batch_size)
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                batch_results = list(ex.map(process_member, batch))
+        else:
+            batch_results = [process_member(m) for m in batch]
+        results.extend(batch_results)
+    return results
 
 
 # Alias explicite « usine » (même implémentation que :func:`get_range_bytes`).
 harvest_binary_chunk = get_range_bytes
+harvest_binary_chunk_io = get_range_bytes_io
+
+
+def read_local_grib_file(
+    path: str | os.PathLike[str],
+    *,
+    max_bytes: int = 512 * 1024 * 1024,
+) -> bytes:
+    """
+    Lit un fichier GRIB2 **local** (binaire) — même flux qu’un segment téléchargé par Range,
+    mais sans réseau (tests / fichiers déjà sur disque).
+
+    ``max_bytes`` évite de charger par erreur un pgrb2 entier multi‑Go ; augmenter si besoin.
+    """
+    p = os.fspath(path)
+    with open(p, "rb") as f:
+        data = f.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(
+            f"fichier plus grand que {max_bytes} octets — tronquer ou augmenter max_bytes"
+        )
+    return data
 
 
 def poll_until_idx_available(
@@ -1103,8 +1637,102 @@ def list_urls_for_radar(
     return out
 
 
-if __name__ == "__main__":
-    # Smoke test : affiche quelques URLs pour l’instant courant (pas de gros téléchargement).
+def run_watch_loop(
+    forecast_hours: int = 3,
+    *,
+    quiet: bool = False,
+) -> None:
+    """
+    Boucle **infinie** : ping .idx sur le run le plus récent plausible (HEAD uniquement),
+    avec intervalle sommeil/alerte + jitter + anti-ban (même logique que la prod).
+
+    Pour arrêter : Ctrl+C. Pour lancer au boot : systemd ou cron (le script ne se « réveille »
+    pas tout seul sans service OS).
+    """
+    gov = AntiBanGovernor()
+    print(
+        "Mode watch — boucle infinie (Ctrl+C pour arrêter). "
+        "Intervalle ~300 s hors fenêtre, ~10 s en fenêtre intensive (+ jitter).",
+        flush=True,
+    )
+    while True:
+        now = datetime.now(timezone.utc)
+        cand = list(iter_candidate_runs(now_utc=now, max_runs=1))
+        if not cand:
+            if not quiet:
+                print(f"[{now.isoformat()}] Aucun run candidat — sleep 60s", flush=True)
+            time.sleep(60.0)
+            continue
+        target = cand[0]
+        r = probe_idx_hybrid(target, forecast_hours, anti_ban=gov)
+        if gov.consume_cooldown_sleep():
+            if not quiet:
+                print(f"[{now.isoformat()}] Anti-ban cooldown {gov.cooldown_sec}s", flush=True)
+            time.sleep(gov.cooldown_sec)
+        if r:
+            if not quiet:
+                print(
+                    f"[{now.isoformat()}] IDX OK {r.url} ({r.source}) run={target}",
+                    flush=True,
+                )
+        elif not quiet:
+            print(f"[{now.isoformat()}] Pas d'idx encore — run={target}", flush=True)
+        time.sleep(gfs_poll_sleep_duration_sec(now, use_jitter=True))
+
+
+def _main_local_wgrib(args: argparse.Namespace) -> None:
+    """
+    Test **conditions réelles** sur un fichier GRIB2 déjà présent : stdin → wgrib2
+    (:func:`run_wgrib2_scalpel` ou :func:`run_wgrib2_scalpel_at_point`), sans HTTP.
+    """
+    path = args.grib_path
+    if not path:
+        raise SystemExit("mode local-wgrib : --grib-path /chemin/vers/fichier.grib2 est requis.")
+    if not os.path.isfile(path):
+        raise SystemExit(f"fichier introuvable : {path}")
+
+    data = read_local_grib_file(path, max_bytes=args.max_grib_bytes)
+    print(f"Lu {len(data):,} octets depuis {path!r}", flush=True)
+
+    lon, lat = args.lon, args.lat
+    if (lon is None) ^ (lat is None):
+        raise SystemExit("fournir --lon et --lat ensemble, ou aucun des deux (mode -csv).")
+
+    if lon is not None and lat is not None:
+        code, val, out, err = run_wgrib2_scalpel_at_point(
+            data,
+            lon=float(lon),
+            lat=float(lat),
+            match_substring=args.match,
+            timeout_sec=args.wgrib2_timeout,
+        )
+        print(f"\ncode retour wgrib2 : {code}", flush=True)
+        print(f"valeur scalaire (parse) : {val!r}", flush=True)
+        lim = args.stdout_max_chars
+        if out:
+            o = out if len(out) <= lim else out[:lim] + f"\n... [{len(out)} caractères au total]"
+            print(f"\n--- stdout ---\n{o}", flush=True)
+        if err:
+            e = err if len(err) <= lim else err[:lim] + f"\n... [{len(err)} caractères au total]"
+            print(f"\n--- stderr ---\n{e}", flush=True)
+    else:
+        code, out, err = run_wgrib2_scalpel(
+            data,
+            match_substring=args.match,
+            timeout_sec=args.wgrib2_timeout,
+        )
+        print(f"\ncode retour wgrib2 : {code}", flush=True)
+        lim = args.stdout_max_chars
+        if out:
+            o = out if len(out) <= lim else out[:lim] + f"\n... [{len(out)} caractères au total]"
+            print(f"\n--- stdout (extrait) ---\n{o}", flush=True)
+        if err:
+            e = err if len(err) <= lim else err[:lim] + f"\n... [{len(err)} caractères au total]"
+            print(f"\n--- stderr ---\n{e}", flush=True)
+
+
+def _main_smoke() -> None:
+    """Test unique (comportement historique) : affiche URLs + un HEAD puis quitte."""
     now = datetime.now(timezone.utc)
     print(f"UTC maintenant : {now.isoformat()}")
     for fh in (3, 24):
@@ -1119,7 +1747,6 @@ if __name__ == "__main__":
     else:
         print("\nAucun HEAD OK pour f003 sur les derniers runs (réseau ou délai NOAA).")
 
-    # Exemple heure de publication (12z + 3h30)
     ex = GfsRun(day=now.date(), cycle_utc="12")
     print(f"\nEx. publication attendue (12z run, lag 3h30) : {run_publication_time_utc(ex).isoformat()}")
 
@@ -1128,3 +1755,78 @@ if __name__ == "__main__":
 
     st = gfs_poll_status()
     print(f"\nStatut polling GFS : {st}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Radar GFS NOAA (NOMADS / S3).")
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        default="smoke",
+        choices=("smoke", "watch", "local-wgrib"),
+        help=(
+            "smoke = test unique puis fin ; watch = boucle infinie (ping .idx) ; "
+            "local-wgrib = tester wgrib2 sur un fichier GRIB2 local (--grib-path)."
+        ),
+    )
+    parser.add_argument(
+        "--forecast-hours",
+        type=int,
+        default=3,
+        help="Échéance fXXX (heures), ex. 3 pour f003 (mode watch uniquement).",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Mode watch : moins de logs (erreurs / cooldown toujours utiles).",
+    )
+    parser.add_argument(
+        "--grib-path",
+        type=str,
+        default=None,
+        help="Mode local-wgrib : chemin vers un .grib2 / extrait GRIB déjà sur disque.",
+    )
+    parser.add_argument(
+        "--lon",
+        type=float,
+        default=None,
+        help="Mode local-wgrib : longitude (degrés), avec --lat → run_wgrib2_scalpel_at_point.",
+    )
+    parser.add_argument(
+        "--lat",
+        type=float,
+        default=None,
+        help="Mode local-wgrib : latitude (degrés), avec --lon.",
+    )
+    parser.add_argument(
+        "--match",
+        type=str,
+        default=":TMP:2 m above ground:",
+        help="Mode local-wgrib : sous-chaîne -match wgrib2 (défaut température 2 m).",
+    )
+    parser.add_argument(
+        "--max-grib-bytes",
+        type=int,
+        default=512 * 1024 * 1024,
+        help="Mode local-wgrib : taille max lue depuis le disque (défaut 512 Mo).",
+    )
+    parser.add_argument(
+        "--wgrib2-timeout",
+        type=float,
+        default=120.0,
+        help="Mode local-wgrib : timeout secondes pour le sous-processus wgrib2.",
+    )
+    parser.add_argument(
+        "--stdout-max-chars",
+        type=int,
+        default=12000,
+        help="Mode local-wgrib : tronquer stdout/stderr au-delà de ce nombre de caractères.",
+    )
+    args = parser.parse_args()
+    if args.mode == "watch":
+        run_watch_loop(forecast_hours=args.forecast_hours, quiet=args.quiet)
+    elif args.mode == "local-wgrib":
+        _main_local_wgrib(args)
+    else:
+        _main_smoke()
