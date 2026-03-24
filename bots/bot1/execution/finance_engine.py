@@ -124,7 +124,14 @@ def _get_clob_client() -> ClobClient:
         )
 
     client = ClobClient(**base_kwargs)
-    creds = client.create_or_fetch_api_creds()
+    if hasattr(client, "create_or_fetch_api_creds"):
+        creds = client.create_or_fetch_api_creds()
+    elif hasattr(client, "create_or_derive_api_creds"):
+        creds = client.create_or_derive_api_creds()
+    else:
+        raise AttributeError(
+            "ClobClient ne supporte ni create_or_fetch_api_creds ni create_or_derive_api_creds"
+        )
     if hasattr(client, "set_creds"):
         client.set_creds(creds)
     elif hasattr(client, "set_api_creds"):
