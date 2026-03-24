@@ -117,6 +117,7 @@ import os
 import random
 import re
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -1393,16 +1394,41 @@ def run_wgrib2_scalpel(
     extra_args: Optional[Sequence[str]] = None,
 ) -> Tuple[int, str, str]:
     """
-    **Scalpel** : envoie le morceau GRIB2 sur **stdin** (``wgrib2 -``), sans fichier temporaire.
+    **Scalpel** : envoie le morceau GRIB2 sur **stdin** (``wgrib2 -``).
 
-    Par défaut : ``-match <sous-chaîne> -csv`` pour une sortie tabulaire exploitable.
+    Par défaut : ``-match`` + ``-csv <fichier>``. Beaucoup de binaires wgrib2 exigent **un chemin**
+    après ``-csv`` (sinon erreur « missing arguments option=csv ») ; dans ce cas un **.csv**
+    temporaire est créé, lu puis supprimé — le contenu est renvoyé comme chaîne ``stdout``
+    (les messages éventuels de wgrib2 restent dans le flux processus si présents).
+
+    Si ``extra_args`` est fourni, il est passé tel quel (à vous de fournir ``-csv`` + chemin si besoin).
 
     Retourne ``(code_retour, stdout, stderr)``. Interpréter les valeurs selon le champ (unités GRIB).
     """
-    extra = list(extra_args) if extra_args else ["-csv"]
     raw = _coerce_bytes_or_bytesio(grib_chunk)
-    cmd = (wgrib2_bin, "-", "-match", match_substring, *extra)
-    return _wgrib2_run_bytes(cmd, raw, timeout_sec=timeout_sec)
+    # Comme avant : ``None`` ou liste vide → sortie CSV par défaut.
+    if extra_args is not None and len(extra_args) > 0:
+        cmd = (wgrib2_bin, "-", "-match", match_substring, *list(extra_args))
+        return _wgrib2_run_bytes(cmd, raw, timeout_sec=timeout_sec)
+
+    fd, csv_path = tempfile.mkstemp(suffix=".wgrib2_out.csv")
+    os.close(fd)
+    try:
+        cmd = [wgrib2_bin, "-", "-match", match_substring, "-csv", csv_path]
+        code, proc_out, stderr = _wgrib2_run_bytes(cmd, raw, timeout_sec=timeout_sec)
+        try:
+            with open(csv_path, encoding="utf-8", errors="replace") as f:
+                csv_text = f.read()
+        except OSError:
+            csv_text = ""
+        # Sortie utile : souvent uniquement dans le fichier ; on préfère le CSV fichier, sinon stdout.
+        out = csv_text if csv_text.strip() else proc_out
+        return code, out, stderr
+    finally:
+        try:
+            os.unlink(csv_path)
+        except OSError:
+            pass
 
 
 def run_wgrib2_scalpel_at_point(
