@@ -462,6 +462,10 @@ def _record_trade(
 ) -> None:
     now = _utc_now()
     order_id = order_resp.get("orderID") or order_resp.get("order_id")
+    try:
+        raw_response_json = json.dumps(order_resp, ensure_ascii=False, default=str)
+    except Exception:
+        raw_response_json = json.dumps({"raw_response": str(order_resp)}, ensure_ascii=False)
     conn.execute(
         """
         INSERT INTO executed_trades (
@@ -498,7 +502,7 @@ def _record_trade(
             barbell_cond,
             token_id,
             str(order_id) if order_id is not None else None,
-            json.dumps(order_resp, ensure_ascii=False),
+            raw_response_json,
         ),
     )
     conn.commit()
