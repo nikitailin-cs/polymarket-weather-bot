@@ -43,6 +43,7 @@ hf-xet==1.4.2
 hpack==4.1.0
 httpcore==1.0.9
 httpx==0.28.1
+socksio>=1.0.0
 huggingface_hub==1.7.2
 hyperframe==6.1.0
 idna==3.11
