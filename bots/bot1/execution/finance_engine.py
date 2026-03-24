@@ -407,6 +407,32 @@ def _barbell_condition(p_win_side: float, best_ask: float) -> Optional[str]:
     return None
 
 
+def _clob_order_accepted(resp: dict[str, Any]) -> tuple[bool, str]:
+    """
+    True si le CLOB a bien enregistré un ordre (présence d'un id côté API).
+    Évite de loguer EXECUTED quand post_order a échoué ou n'a renvoyé que la signature locale.
+    """
+    if not isinstance(resp, dict):
+        return False, "réponse non dict"
+    if resp.get("status") == "failed":
+        return False, str(resp.get("errorMsg") or resp.get("error") or "status failed")
+    err = resp.get("errorMsg") or resp.get("error") or resp.get("message")
+    if err and str(err).lower() not in ("", "none", "null"):
+        return False, str(err)
+    if resp.get("success") is False:
+        return False, str(resp.get("message") or "success false")
+    oid = resp.get("orderID") or resp.get("order_id") or resp.get("id")
+    if not oid:
+        if "raw_response" in resp:
+            return (
+                False,
+                "pas d'orderID (souvent: post_order non exécuté ou exception avalée — "
+                "vérifier allowance USDC CLOB, tick size, logs au-dessus)",
+            )
+        return False, "pas d'orderID dans la réponse CLOB"
+    return True, ""
+
+
 def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]:
     if size <= 0:
         raise ValueError("size doit être > 0")
@@ -489,17 +515,24 @@ def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]
                     resp = post_fn(signed_or_resp, order_type)
             else:
                 resp = post_fn(signed_or_resp)
-        except Exception:
-            resp = signed_or_resp
+        except Exception as exc:
+            LOG.exception("post_order CLOB a échoué (ordre non soumis au carnet): %s", exc)
+            return {"status": "failed", "errorMsg": str(exc)}
     else:
         create_and_post = getattr(client, "create_and_post_order", None)
         if callable(create_and_post):
             try:
                 resp = create_and_post(order_payload)
-            except Exception:
-                resp = signed_or_resp
+            except Exception as exc:
+                LOG.exception("create_and_post_order a échoué: %s", exc)
+                return {"status": "failed", "errorMsg": str(exc)}
         else:
-            resp = signed_or_resp
+            LOG.error("Client CLOB sans post_order ni create_and_post_order — ordre non envoyé")
+            return {
+                "status": "failed",
+                "errorMsg": "SDK sans post_order",
+                "raw_response": signed_or_resp,
+            }
 
     if not isinstance(resp, dict):
         return {"raw_response": resp}
@@ -666,6 +699,18 @@ def run(order_size_usdc: float = 2.5) -> int:
                 continue
 
             resp = _place_limit_buy(token_id=token_id, price=best_ask, size=order_size_usdc)
+            ok_post, reject_reason = _clob_order_accepted(resp)
+            if not ok_post:
+                LOG.error(
+                    "ORDER REJECTED OR NON SOUMIS market_id=%s side=%s raison=%s réponse=%s",
+                    sig.market_id,
+                    sig.recommended_side,
+                    reject_reason,
+                    str(resp)[:1200],
+                )
+                skipped += 1
+                continue
+
             matched_size, fill_status = _extract_fill_info(resp, order_size_usdc)
             if fill_status == "partial":
                 LOG.warning(

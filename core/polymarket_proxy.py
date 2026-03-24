@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Any, Optional
@@ -10,6 +11,37 @@ LOG = logging.getLogger(__name__)
 
 # Dernière URL pour laquelle le client httpx de py_clob_client a été remplacé.
 _last_clob_proxy_url: Optional[str] = None
+_socks_auth_log_filter_installed = False
+
+
+class _RedactHttpcoreSocksAuthFilter(logging.Filter):
+    """
+    httpcore DEBUG peut journaliser auth=(user, password) en clair — on masque pour éviter les fuites dans les logs.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not record.name.startswith("httpcore.socks"):
+            return True
+        try:
+            text = record.getMessage()
+        except Exception:
+            return True
+        if "auth=" not in text or "redacted" in text:
+            return True
+        new = re.sub(r"auth=\([^)]+\)", "auth=(redacted)", text, count=1)
+        if new == text:
+            return True
+        record.msg = new
+        record.args = ()
+        return True
+
+
+def _install_socks_auth_log_filter() -> None:
+    global _socks_auth_log_filter_installed
+    if _socks_auth_log_filter_installed:
+        return
+    logging.getLogger("httpcore.socks").addFilter(_RedactHttpcoreSocksAuthFilter())
+    _socks_auth_log_filter_installed = True
 
 
 def _is_enabled() -> bool:
@@ -222,6 +254,7 @@ def patch_py_clob_httpx_client(proxy_url: str) -> None:
         trust_env=False,
     )
     _last_clob_proxy_url = proxy_url
+    _install_socks_auth_log_filter()
     LOG.info("Client httpx py_clob_client configuré pour SOCKS5 (proxy explicite)")
 
 
