@@ -13,23 +13,20 @@ Sortie:
 from __future__ import annotations
 
 import json
+import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-# WMO -> ICAO (best-effort) pour quelques hubs courants.
-# Si absent, on garde le code tel quel et la jointure SQL lèvera une alerte.
-WMO_TO_ICAO: dict[str, str] = {
-    "07156": "LFPG",  # Paris
-    "03772": "EGLL",  # London
-    "10384": "EDDB",  # Berlin
-    "08221": "LEMD",  # Madrid
-    "16240": "LIRF",  # Rome
-    "47772": "RJOO",  # Osaka
-    "47662": "RJTT",  # Tokyo
-    "47108": "RKSS",  # Seoul
-    "48698": "WSSS",  # Singapore
+# Règles de cohérence géographique minimales (sanity check).
+SANITY_HINT_BBOXES: dict[str, tuple[float, float, float, float]] = {
+    # (lat_min, lat_max, lon_min, lon_max)
+    "hong kong": (21.5, 23.0, 113.5, 114.6),
+    "paris": (48.0, 49.3, 1.5, 3.5),
+    "london": (51.0, 52.0, -1.0, 1.0),
+    "new york": (40.2, 41.2, -74.5, -72.5),
 }
 
 
@@ -37,6 +34,8 @@ WMO_TO_ICAO: dict[str, str] = {
 class ActiveMarket:
     market_id: str
     station_code: str
+    oracle_source: str
+    question: str
     operator: str
     variable: str
     unit: str
@@ -57,6 +56,8 @@ class StationInfo:
 class EnrichedMarket:
     market_id: str
     station_code: str
+    oracle_source: str
+    question: str
     operator: str
     variable: str
     unit: str
@@ -72,6 +73,8 @@ class MarketTarget:
 
     market_id: str
     station_code: str
+    oracle_source: str
+    question: str
     operator: str
     variable: str
     unit: str
@@ -101,14 +104,23 @@ def _require_dict(obj: Any, ctx: str) -> dict[str, Any]:
     return obj
 
 
-def _normalize_station_code(raw_station: str) -> str:
-    s = (raw_station or "").strip().upper()
-    if not s:
-        return s
-    mapped = WMO_TO_ICAO.get(s)
-    if mapped:
-        return mapped
-    return s
+def _looks_like_icao(code: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z]{4}", code))
+
+
+def _normalize_wmo_id(code: str) -> Optional[str]:
+    digits = "".join(ch for ch in (code or "") if ch.isdigit())
+    if 1 <= len(digits) <= 5:
+        return digits.zfill(5)
+    return None
+
+
+def _passes_sanity_check(question: str, lat: float, lon: float) -> bool:
+    q = (question or "").lower()
+    for hint, (la0, la1, lo0, lo1) in SANITY_HINT_BBOXES.items():
+        if hint in q:
+            return la0 <= lat <= la1 and lo0 <= lon <= lo1
+    return True
 
 
 def load_active_markets(json_path: Path) -> list[ActiveMarket]:
@@ -124,6 +136,8 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
     for i, raw in enumerate(items):
         obj = _require_dict(raw, f"markets[{i}]")
         market_id = str(obj.get("market_id", "")).strip()
+        oracle_source = str(obj.get("oracle_source", "unknown")).strip().lower()
+        question = str(obj.get("question", "")).strip()
         # Nomenclature ContractSpec: operator=gt/gte/lt/lte/eq/between, variable normalisée.
         operator = str(obj.get("operator", "")).strip()
         variable = str(obj.get("variable", "")).strip()
@@ -140,7 +154,7 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
         except (TypeError, ValueError):
             oracle_rounding = 1
         # Compat: accepte "station" (nouveau) ou "icao" (historique).
-        station = _normalize_station_code(str(obj.get("station") or obj.get("icao") or ""))
+        station = str(obj.get("station") or obj.get("icao") or "").strip().upper()
         thr_raw = obj.get("threshold")
         try:
             threshold = float(thr_raw)
@@ -160,6 +174,8 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
             ActiveMarket(
                 market_id=market_id,
                 station_code=station,
+                oracle_source=oracle_source,
+                question=question,
                 operator=operator,
                 variable=variable,
                 unit=unit,
@@ -204,6 +220,68 @@ def get_station_lat_lon_by_icao(conn: sqlite3.Connection, icao: str) -> Optional
     return float(row[0]), float(row[1])
 
 
+def get_station_lat_lon_by_wmo(conn: sqlite3.Connection, wmo_id: str) -> Optional[tuple[float, float]]:
+    wmo_norm = _normalize_wmo_id(wmo_id)
+    if not wmo_norm:
+        return None
+    row = conn.execute(
+        "SELECT latitude, longitude FROM stations_wmo WHERE wmo_id = ?",
+        (wmo_norm,),
+    ).fetchone()
+    if row is None:
+        return None
+    return float(row[0]), float(row[1])
+
+
+def _is_icao_source(source: str) -> bool:
+    s = (source or "").lower()
+    return ("icao" in s) or ("adds" in s) or ("aviation" in s)
+
+
+def _is_wmo_source(source: str) -> bool:
+    s = (source or "").lower()
+    return "wmo" in s
+
+
+def _is_ghcnd_source(source: str) -> bool:
+    s = (source or "").lower()
+    return "ghcnd" in s
+
+
+def resolve_station_lat_lon_strict(
+    conn: sqlite3.Connection,
+    market: ActiveMarket,
+) -> tuple[Optional[tuple[float, float]], str]:
+    """
+    Strict resolver:
+      - CAS A ICAO: source contient icao/adds/aviation -> table stations
+      - CAS B WMO: source contient wmo -> table stations_wmo
+      - CAS C GHCND/non géré: rejet immédiat
+      - aucun fallback croisé autorisé
+    """
+    src = (market.oracle_source or "unknown").lower()
+    code = market.station_code
+
+    if _is_icao_source(src):
+        if not _looks_like_icao(code):
+            return None, f"id ICAO invalide: {code}"
+        ll = get_station_lat_lon_by_icao(conn, code)
+        if ll is None:
+            return None, f"id ICAO introuvable: {code}"
+        return ll, "ok_icao"
+
+    if _is_wmo_source(src):
+        ll = get_station_lat_lon_by_wmo(conn, code)
+        if ll is None:
+            return None, f"id WMO introuvable: {code}"
+        return ll, "ok_wmo"
+
+    if _is_ghcnd_source(src):
+        return None, f"source ghcnd non supportée sans table dédiée: {src}"
+
+    return None, f"source non gérée: {src}"
+
+
 def enrich_markets_with_station(
     markets: Iterable[ActiveMarket],
     master_stations_db_path: Path,
@@ -220,6 +298,8 @@ def enrich_markets_with_station(
                 EnrichedMarket(
                     market_id=m.market_id,
                     station_code=m.station_code,
+                    oracle_source=m.oracle_source,
+                    question=m.question,
                     operator=m.operator,
                     variable=m.variable,
                     unit=m.unit,
@@ -262,18 +342,29 @@ def build_market_targets(
     conn = sqlite3.connect(str(db))
     try:
         for m in markets:
-            lat_lon = get_station_lat_lon_by_icao(conn, m.station_code)
+            lat_lon, reason = resolve_station_lat_lon_strict(conn, m)
             if lat_lon is None:
-                print(
-                    f"[ALERTE] station ICAO introuvable en SQLite: {m.station_code} (market_id={m.market_id})",
-                    flush=True,
+                logging.warning(
+                    "Marché %s ignoré : Source %s ou ID %s introuvable. (%s)",
+                    m.market_id,
+                    m.oracle_source,
+                    m.station_code,
+                    reason,
                 )
                 continue
             lat, lon = lat_lon
+            if not _passes_sanity_check(m.question, lat, lon):
+                print(
+                    f"[ALERTE] sanity check géographique échoué: market_id={m.market_id} station={m.station_code} lat={lat:.4f} lon={lon:.4f}",
+                    flush=True,
+                )
+                continue
             targets.append(
                 MarketTarget(
                     market_id=m.market_id,
                     station_code=m.station_code,
+                    oracle_source=m.oracle_source,
+                    question=m.question,
                     operator=m.operator,
                     variable=m.variable,
                     unit=m.unit,

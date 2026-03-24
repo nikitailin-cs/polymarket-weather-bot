@@ -37,6 +37,7 @@ DEFAULT_OUTPUT_JSON = ROOT / "data" / "active_markets.json"
 
 
 def _to_market_record(market: Any, spec: Any) -> dict[str, Any]:
+    oracle_source = str(getattr(spec, "oracle_source", "") or "unknown").strip().lower()
     return {
         # Identifiants
         "market_id": market.condition_id,
@@ -52,7 +53,7 @@ def _to_market_record(market: Any, spec: Any) -> dict[str, Any]:
         "unit": spec.threshold_unit,
         "oracle_rounding": spec.oracle_rounding,
         # Métadonnées utiles audit/debug
-        "oracle_source": spec.oracle_source,
+        "oracle_source": oracle_source,
         "oracle_alignment_score": spec.oracle_alignment_score,
         "question": market.question,
     }
