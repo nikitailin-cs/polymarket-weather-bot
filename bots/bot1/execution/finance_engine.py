@@ -513,6 +513,10 @@ def run(order_size_usdc: float = 5.0) -> int:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
+    # Réduction du bruit HTTP: on garde uniquement warnings/erreurs transport.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    LOG.info("Démarrage du moteur financier - mode silencieux HTTP activé")
     signals = _load_signals(_signals_path())
     if not signals:
         LOG.info("Aucun signal disponible.")
