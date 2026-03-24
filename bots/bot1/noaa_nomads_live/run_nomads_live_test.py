@@ -14,6 +14,7 @@ import argparse
 import io
 import json
 import logging
+import math
 import shutil
 import sys
 import time
@@ -38,6 +39,19 @@ import market_manager  # noqa: E402
 from core.models import ContractSpec  # noqa: E402
 
 T = TypeVar("T")
+
+
+def calculate_probability(delta: float, sigma: float = 1.5) -> float:
+    """
+    Convertit un delta (écart au seuil) en probabilité de victoire [0, 1]
+    en supposant une erreur de prévision gaussienne de moyenne 0.
+    """
+    if sigma <= 0:
+        raise ValueError("sigma doit être strictement positif")
+    z = delta / (sigma * math.sqrt(2.0))
+    p = 0.5 * (1.0 + math.erf(z))
+    # Clamp défensif pour éviter des artefacts flottants hors [0, 1].
+    return max(0.0, min(1.0, p))
 
 
 def _match_substring_for_variable(variable: str) -> Optional[str]:
@@ -192,6 +206,35 @@ def _save_watchdog_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
+def _trading_signals_path() -> Path:
+    p = _ROOT / "data" / "trading_signals.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _save_trading_signals(path: Path, payload: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _format_forecast_cycle_utc(day: object, cycle_utc: object) -> str:
+    """
+    Formate le cycle GFS en timestamp UTC stable pour downstream.
+    Ex: day=20260324, cycle_utc=6 -> 2026-03-24T06:00:00Z
+    """
+    day_raw = str(day).strip()
+    if len(day_raw) == 8 and day_raw.isdigit():
+        day_fmt = f"{day_raw[0:4]}-{day_raw[4:6]}-{day_raw[6:8]}"
+    else:
+        day_fmt = day_raw
+    try:
+        cyc = int(cycle_utc)
+    except (TypeError, ValueError):
+        cyc = 0
+    return f"{day_fmt}T{cyc:02d}:00:00Z"
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Test NOMADS live + noaa_engine (logs massifs).")
     p.add_argument("--forecast-hours", type=int, default=3, help="Échéance fXXX (ex. 3 → f003).")
@@ -287,9 +330,10 @@ def main() -> int:
         )
         for t in targets[:10]:
             log.debug(
-                "  target market=%s station=%s var=%s unit=%s op=%s thr=%s lat=%.5f lon=%.5f",
+                "  target market=%s station=%s source=%s var=%s unit=%s op=%s thr=%s lat=%.5f lon=%.5f",
                 t.market_id,
                 t.station_code,
+                t.oracle_source,
                 t.variable,
                 t.unit,
                 t.operator,
@@ -420,6 +464,7 @@ def main() -> int:
                 )
                 failed_targets = 0
                 compared_targets = 0
+                trading_signals: list[dict] = []
                 for target in targets:
                     match_sub = _match_substring_for_variable(target.variable)
                     if not match_sub:
@@ -522,10 +567,22 @@ def main() -> int:
                         continue
                     decision = "BET_WIN" if passed else "BET_LOSE"
                     delta = val_converted - target.threshold
+                    pwin = calculate_probability(delta)
+                    recommended_side = "YES" if pwin >= 0.5 else "NO"
+                    trading_signals.append(
+                        {
+                            "market_id": target.market_id,
+                            "station": target.station_code,
+                            "p_win": round(pwin, 3),
+                            "delta": round(delta, 2),
+                            "recommended_side": recommended_side,
+                        }
+                    )
                     log.info(
-                        "  decision market_id=%s station=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f result=%s (%.3fs)",
+                        "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f result=%s (%.3fs)",
                         target.market_id,
                         target.station_code,
+                        target.oracle_source,
                         target.variable,
                         target.unit,
                         target.operator,
@@ -536,6 +593,7 @@ def main() -> int:
                         val_converted,
                         target.threshold,
                         delta,
+                        pwin,
                         decision,
                         time.monotonic() - t4,
                     )
@@ -544,6 +602,20 @@ def main() -> int:
                     len(targets),
                     compared_targets,
                     failed_targets,
+                )
+                signals_payload = {
+                    "last_run_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "forecast_cycle_utc": _format_forecast_cycle_utc(
+                        chosen_run.day, chosen_run.cycle_utc
+                    ),
+                    "signals": trading_signals,
+                }
+                signals_path = _trading_signals_path()
+                _save_trading_signals(signals_path, signals_payload)
+                log.info(
+                    "  trading signals écrits: path=%s signaux=%s",
+                    signals_path,
+                    len(trading_signals),
                 )
 
         if wgrib_code is not None and wgrib_code != 0:
