@@ -44,6 +44,8 @@ class ActiveMarket:
     threshold_range: Optional[list[float]]
     oracle_rounding: int
     threshold: float
+    target_date: Optional[str] = None  # YYYY-MM-DD (jour du contrat Polymarket, fuseau ci-dessous)
+    locality_tz: Optional[str] = None  # IANA (ex. America/New_York) — jour cible en heure locale
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,8 @@ class EnrichedMarket:
     oracle_rounding: int
     threshold: float
     station_info: Optional[StationInfo]
+    target_date: Optional[str] = None
+    locality_tz: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,8 @@ class MarketTarget:
     latitude: float
     longitude: float
     threshold: float
+    target_date: Optional[str] = None
+    locality_tz: Optional[str] = None
 
 
 def repo_root_from_this_file() -> Path:
@@ -176,6 +182,8 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
             oracle_rounding = int(obj.get("oracle_rounding", 1))
         except (TypeError, ValueError):
             oracle_rounding = 1
+        target_date = str(obj.get("target_date") or "").strip() or None
+        locality_tz = str(obj.get("timezone") or obj.get("locality_tz") or "").strip() or None
         # Compat: accepte "station" (nouveau) ou "icao" (historique).
         station = str(obj.get("station") or obj.get("icao") or "").strip().upper()
         thr_raw = obj.get("threshold")
@@ -199,6 +207,8 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
                 threshold_range=threshold_range,
                 oracle_rounding=oracle_rounding,
                 threshold=threshold,
+                target_date=target_date,
+                locality_tz=locality_tz,
             )
         )
     return out
@@ -340,6 +350,8 @@ def enrich_markets_with_station(
                     oracle_rounding=m.oracle_rounding,
                     threshold=m.threshold,
                     station_info=st,
+                    target_date=m.target_date,
+                    locality_tz=m.locality_tz,
                 )
             )
         return enriched
@@ -406,6 +418,8 @@ def build_market_targets(
                     latitude=lat,
                     longitude=lon,
                     threshold=m.threshold,
+                    target_date=m.target_date,
+                    locality_tz=m.locality_tz,
                 )
             )
     finally:

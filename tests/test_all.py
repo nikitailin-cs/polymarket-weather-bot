@@ -37,6 +37,7 @@
 """
 from __future__ import annotations
 import json, os, sys, time, tempfile, threading, unittest
+from datetime import date
 from pathlib import Path
 
 # Force DRY_RUN avant tout import du bot — jamais d'ordre réel depuis les tests
@@ -1096,6 +1097,84 @@ class TestIntegration(unittest.TestCase):
             self.assertEqual(spec.effective_edge_multiplier, 0.0, f"failed for {status}")
 
 
+class TestProduceRtDayGuard(unittest.TestCase):
+    """Garde jour J (target_date vs date locale) — bot2 RT produce_rt_signals."""
+
+    def test_classify_empty_string_invalid(self):
+        """Chaîne vide → invalid (défensif ; le producteur skip avant METAR si target_date absent)."""
+        from bots.bot2_realtime.metar_live.produce_rt_signals import classify_rt_market_day
+
+        self.assertEqual(classify_rt_market_day(date(2026, 3, 24), ""), "invalid")
+        self.assertEqual(classify_rt_market_day(date(2026, 3, 24), "   "), "invalid")
+
+    def test_classify_premature_past_jour_j(self):
+        from bots.bot2_realtime.metar_live.produce_rt_signals import classify_rt_market_day
+
+        self.assertEqual(classify_rt_market_day(date(2026, 3, 24), "2026-03-26"), "premature")
+        self.assertEqual(classify_rt_market_day(date(2026, 3, 27), "2026-03-26"), "past_target")
+        self.assertEqual(classify_rt_market_day(date(2026, 3, 26), "2026-03-26"), "jour_j")
+
+    def test_classify_invalid_date(self):
+        from bots.bot2_realtime.metar_live.produce_rt_signals import classify_rt_market_day
+
+        self.assertEqual(classify_rt_market_day(date(2026, 3, 26), "not-a-date"), "invalid")
+
+
+class TestGfsHorizons(unittest.TestCase):
+    """Bot1 — calculate_gfs_horizons (grille fXXX pour target_date locale)."""
+
+    @staticmethod
+    def _gfs_mod():
+        import importlib.util
+        p = Path(__file__).resolve().parent.parent / "bots/bot1/noaa_nomads_live/gfs_horizons.py"
+        spec = importlib.util.spec_from_file_location("gfs_horizons", p)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_run_start_from_cycle(self):
+        m = self._gfs_mod()
+        from datetime import date, datetime, timezone
+
+        t = m.gfs_run_start_utc_from_parts(date(2026, 3, 24), "12")
+        self.assertEqual(t, datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc))
+        with self.assertRaises(ValueError):
+            m.gfs_run_start_utc_from_parts(date(2026, 3, 24), "99")
+
+    def test_grid_utc_run_24_mar_12z_target_27_mar(self):
+        """Run 24 mars 12Z, jour cible 27 mars en UTC → fh 60..81 pas 3."""
+        m = self._gfs_mod()
+        from datetime import date, datetime, timezone
+
+        run = datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+        fh = m.calculate_gfs_horizons(run, date(2026, 3, 27), "UTC")
+        self.assertEqual(fh, (60, 63, 66, 69, 72, 75, 78, 81))
+
+    def test_max_fh_truncates(self):
+        m = self._gfs_mod()
+        from datetime import date, datetime, timezone
+
+        run = datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+        fh = m.calculate_gfs_horizons(run, date(2026, 3, 27), "UTC", max_fh=70)
+        self.assertEqual(fh, (60, 63, 66, 69))
+
+    def test_invalid_tz(self):
+        m = self._gfs_mod()
+        from datetime import date, datetime, timezone
+
+        run = datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            m.calculate_gfs_horizons(run, date(2026, 3, 27), "Nowhere/Invalid")
+
+    def test_sigma_horizon_multiplier_defaults(self):
+        """f024 → 1 ; f120 → ×3 (ref=24, slope=0.5) — garde-fou incertitude GFS."""
+        m = self._gfs_mod()
+        self.assertAlmostEqual(m.sigma_horizon_multiplier(24.0), 1.0)
+        self.assertAlmostEqual(m.sigma_horizon_multiplier(23.0), 1.0)
+        self.assertAlmostEqual(m.sigma_horizon_multiplier(120.0), 3.0)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SECTION 2 — TESTS LIVE (réseau, DRY_RUN=1 forcé)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1437,7 +1516,7 @@ if __name__ == "__main__":
                     TestUMAOracle, TestUMADisputer, TestCTFManager,
                     TestFeatureStore, TestModelInterface, TestModelRegistry,
                     TestPnLBankroll, TestOnchainLogger,
-                    TestIntegration):
+                    TestIntegration, TestProduceRtDayGuard, TestGfsHorizons):
             suite.addTests(loader.loadTestsFromTestCase(cls))
         runner  = unittest.TextTestRunner(verbosity=2)
         result  = runner.run(suite)

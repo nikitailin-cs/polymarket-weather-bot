@@ -37,6 +37,7 @@ import os
 import shutil
 import sys
 import time
+from datetime import date as date_cls
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar
@@ -52,7 +53,11 @@ if str(_LONG_TERM_SCRIPTS) not in sys.path:
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+_NOMADS_DIR = Path(__file__).resolve().parent
+if str(_NOMADS_DIR) not in sys.path:
+    sys.path.insert(0, str(_NOMADS_DIR))
 
+import gfs_horizons  # noqa: E402
 import noaa_engine  # noqa: E402
 import market_manager  # noqa: E402
 
@@ -85,11 +90,9 @@ def calculate_probability(delta: float, sigma: float = 1.5) -> float:
     return max(0.0, min(1.0, p))
 
 
-def _resolve_sigma_for_target(target: market_manager.MarketTarget) -> float:
+def _sigma_base_for_target(target: market_manager.MarketTarget) -> float:
     """
-    Écart-type pour ``calculate_probability`` : env global, puis hint calibrateur
-    (même clé que ``model_bias.json`` : souvent ville ; peut être ICAO si rempli à la main),
-    puis défauts par variable (°C vs mm).
+    σ de base (sans ajustement horizon) : env global, hint calibrateur, défauts par variable.
     """
     g = os.getenv("BOT1_PROB_SIGMA", "").strip()
     if g:
@@ -101,9 +104,41 @@ def _resolve_sigma_for_target(target: market_manager.MarketTarget) -> float:
                 return max(1e-6, float(hint))
     v = (target.variable or "").lower()
     if v == "precip":
-        # Défaut identique à l’historique (1.5) ; à ajuster en mm via BOT1_PROB_SIGMA_PRECIP.
         return max(1e-6, float(os.getenv("BOT1_PROB_SIGMA_PRECIP", "1.5")))
     return max(1e-6, float(os.getenv("BOT1_PROB_SIGMA_TEMPS", "1.5")))
+
+
+def _sigma_horizon_multiplier(horizon_hours: float) -> float:
+    """
+    Augmente σ quand l’échéance GFS (heures depuis la run) est grande — courbe p_win plus plate.
+
+    Délègue à :func:`gfs_horizons.sigma_horizon_multiplier` avec env :
+    ``BOT1_SIGMA_HORIZON_REF_H`` (défaut 24), ``BOT1_SIGMA_HORIZON_SLOPE`` (défaut 0,5).
+
+    Désactiver : ``BOT1_DISABLE_SIGMA_HORIZON=1``.
+    """
+    if os.getenv("BOT1_DISABLE_SIGMA_HORIZON", "").strip().lower() in ("1", "true", "yes", "on"):
+        return 1.0
+    return gfs_horizons.sigma_horizon_multiplier(
+        horizon_hours,
+        ref_hours=float(os.getenv("BOT1_SIGMA_HORIZON_REF_H", "24")),
+        slope=float(os.getenv("BOT1_SIGMA_HORIZON_SLOPE", "0.5")),
+    )
+
+
+def _resolve_sigma_for_target(
+    target: market_manager.MarketTarget,
+    *,
+    horizon_hours: float,
+) -> tuple[float, float, float]:
+    """
+    Retourne ``(sigma_effectif, sigma_base, mult_horizon)`` pour ``calculate_probability``.
+
+    ``horizon_hours`` : en pratique ``max(fh)`` des tranches GFS utilisées pour ce marché.
+    """
+    base = _sigma_base_for_target(target)
+    mult = _sigma_horizon_multiplier(horizon_hours)
+    return max(1e-6, base * mult), base, mult
 
 
 def _match_substring_for_variable(variable: str) -> Optional[str]:
@@ -115,17 +150,85 @@ def _match_substring_for_variable(variable: str) -> Optional[str]:
     return None
 
 
-def _forecast_hours_for_target(fallback_fh: int, target: market_manager.MarketTarget) -> tuple[int, ...]:
+def _forecast_hours_for_target(
+    fallback_fh: int,
+    target: market_manager.MarketTarget,
+    *,
+    run_start_utc: datetime,
+) -> tuple[int, ...]:
     """
-    Approximation métier pour mieux coller au contrat:
-    - temp_max/min: on sonde plusieurs échéances sur la journée plutôt qu'un seul point.
-    - sinon: fallback à l'échéance demandée.
+    Échéances GFS (fXXX) à télécharger pour ce marché.
+
+    - **temp_max / temp_min / temp_avg** : si ``target_date`` + ``timezone`` (IANA) sont
+      renseignés dans ``active_markets.json``, utilise :func:`gfs_horizons.calculate_gfs_horizons`
+      (jour calendaire du contrat en heure locale) — ex. f060–f081 au lieu de f000–f024.
+    - Sinon : grille historique **f000–f024** (premier jour depuis la run).
+    - **precip** et autres variables : ``fallback_fh`` seul (inchangé).
     """
+    log = logging.getLogger(__name__)
     v = (target.variable or "").lower()
-    if v in ("temp_max", "temp_min", "temp_avg"):
-        # 0h..24h, pas de 3h
-        return (0, 3, 6, 9, 12, 15, 18, 21, 24)
-    return (fallback_fh,)
+    if v == "precip":
+        return (fallback_fh,)
+    if v not in ("temp_max", "temp_min", "temp_avg"):
+        return (fallback_fh,)
+
+    legacy_day0 = (0, 3, 6, 9, 12, 15, 18, 21, 24)
+    td_raw = (getattr(target, "target_date", None) or "").strip()
+    tz_name = (getattr(target, "locality_tz", None) or "").strip()
+
+    if not td_raw or not tz_name:
+        log.warning(
+            "market=%s variable=%s — target_date ou timezone absent — grille GFS legacy f000–f024",
+            target.market_id,
+            v,
+        )
+        return legacy_day0
+
+    try:
+        y, m, d = map(int, td_raw.split("-"))
+        td = date_cls(y, m, d)
+    except (TypeError, ValueError):
+        log.warning(
+            "market=%s target_date invalide %r — grille legacy f000–f024",
+            target.market_id,
+            td_raw,
+        )
+        return legacy_day0
+
+    try:
+        fh_grid = gfs_horizons.calculate_gfs_horizons(
+            run_start_utc,
+            td,
+            tz_name,
+        )
+    except ValueError as e:
+        log.warning(
+            "market=%s calculate_gfs_horizons: %s — grille legacy",
+            target.market_id,
+            e,
+        )
+        return legacy_day0
+
+    if not fh_grid:
+        log.warning(
+            "market=%s grille GFS vide pour target_date=%s tz=%s run=%s — legacy f000–f024",
+            target.market_id,
+            td_raw,
+            tz_name,
+            run_start_utc.isoformat(),
+        )
+        return legacy_day0
+
+    log.info(
+        "market=%s GFS jour cible %s (%s): f%03d → f%03d (%s tranche(s))",
+        target.market_id,
+        td_raw,
+        tz_name,
+        fh_grid[0],
+        fh_grid[-1],
+        len(fh_grid),
+    )
+    return fh_grid
 
 
 def _retry(name: str, fn: Callable[[], T], *, tries: int = 3, base_sleep: float = 0.8) -> T:
@@ -729,7 +832,12 @@ def main() -> int:
                 )
                 continue
             t4 = time.monotonic()
-            fh_series = _forecast_hours_for_target(fh, target)
+            run_start_utc = gfs_horizons.gfs_run_start_utc_from_parts(
+                chosen_run.day, chosen_run.cycle_utc
+            )
+            fh_series = _forecast_hours_for_target(
+                fh, target, run_start_utc=run_start_utc
+            )
             raw_samples: list[float] = []
             for fh_i in fh_series:
                 try:
@@ -806,7 +914,11 @@ def main() -> int:
                 continue
             decision = "BET_WIN" if passed else "BET_LOSE"
             delta = val_converted - target.threshold
-            pwin = calculate_probability(delta, sigma=_resolve_sigma_for_target(target))
+            fh_horizon = float(max(fh_series))
+            sigma_eff, sigma_base, sigma_mult = _resolve_sigma_for_target(
+                target, horizon_hours=fh_horizon
+            )
+            pwin = calculate_probability(delta, sigma=sigma_eff)
             recommended_side = "YES" if pwin >= 0.5 else "NO"
             trading_signals.append(
                 {
@@ -818,7 +930,7 @@ def main() -> int:
                 }
             )
             log.info(
-                "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f result=%s (%.3fs)",
+                "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f sigma=%.3f (base=%.3f mult=%.3f fh_max=%.0f) result=%s (%.3fs)",
                 target.market_id,
                 target.station_code,
                 target.oracle_source,
@@ -833,6 +945,10 @@ def main() -> int:
                 target.threshold,
                 delta,
                 pwin,
+                sigma_eff,
+                sigma_base,
+                sigma_mult,
+                fh_horizon,
                 decision,
                 time.monotonic() - t4,
             )

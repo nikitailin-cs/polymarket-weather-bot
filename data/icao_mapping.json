@@ -1,4 +1,8 @@
 {
+  "_rt_note": {
+    "target_date": "Un jour = une date cible (timezone lieu). Garde jour J : met/dead seulement ce jour-là.",
+    "multi_day": "Marchés « entre le X et le Y » : non supportés — prévoir target_date_start/end + règles métier (hors scope actuel)."
+  },
   "0xda9a5fd8e64899ea9fadab03cb0aaf8671dd9e99f92abc1f8a7c6b8d36fe6bb1": {
     "name": "Chicago Max Temp >= 80°F",
     "icao": "KORD",
@@ -7,7 +11,8 @@
     "yes_if_above": true,
     "timezone": "America/Chicago",
     "deadline_local_hhmm": "23:59",
-    "dead_min_gap": 15
+    "dead_min_gap": 15,
+    "target_date": "2026-03-26"
   },
   "0x8e1d1693af44c67b837cf7ae88f0e13548a8f40c71a7eca241518ae255874283": {
     "name": "New York JFK Max Temp >= 70°F",
@@ -17,6 +22,7 @@
     "yes_if_above": true,
     "timezone": "America/New_York",
     "deadline_local_hhmm": "23:59",
-    "dead_min_gap": 15
+    "dead_min_gap": 15,
+    "target_date": "2026-03-26"
   }
 }

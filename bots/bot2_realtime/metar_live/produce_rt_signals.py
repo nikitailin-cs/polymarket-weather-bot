@@ -3,6 +3,14 @@
 Bot 2 — Générateur de signaux temps réel : carte ``icao_mapping.json`` × METAR NOAA.
 
 Science binaire : ``p_win`` 1.0 / 0.0 / 0.5, fuseaux via **pytz** (aligné demande projet).
+
+Chaque marché doit avoir un ``target_date`` (YYYY-MM-DD) : sans ce champ, le marché est **ignoré**
+(erreur log, pas de signal) — pas de fallback « legacy ».
+
+**Portée (contrats journaliers)** : la garde jour J suppose **un seul jour** de résolution (ex. « max le 26 mars »).
+Les marchés du type « entre le 25 et le 31 mars » ne sont **pas** modélisés : il faudrait un refactor
+``target_date_start`` / ``target_date_end`` (et une définition claire de « mort » sur une plage).
+Tant qu’on ne trade que des contrats **un jour = une date cible**, le schéma actuel suffit.
 """
 from __future__ import annotations
 
@@ -10,9 +18,9 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytz
 
@@ -28,6 +36,35 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 logger = logging.getLogger("produce_rt_signals")
+
+
+RtDayKind = Literal["invalid", "premature", "past_target", "jour_j"]
+
+
+def classify_rt_market_day(local_d: date, target_date_raw: str) -> RtDayKind:
+    """
+    Compare la date locale (lieu METAR / ``timezone``) à **un seul** ``target_date`` (YYYY-MM-DD).
+
+    Ne couvre pas les plages multi-jours (voir doc module).
+
+    - **jour_j** : même jour calendaire que la cible → logique met / dead autorisée.
+    - **premature** / **past_target** : hors fenêtre → pas de scalp RT (p_win neutre).
+    - **invalid** : chaîne vide ou date illisible (le flux normal exige ``target_date`` avant METAR).
+
+    Appel avec chaîne vide : retourne ``invalid`` (défensif ; la boucle principale skip avant METAR).
+    """
+    raw = (target_date_raw or "").strip()
+    if not raw:
+        return "invalid"
+    try:
+        td = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return "invalid"
+    if local_d < td:
+        return "premature"
+    if local_d > td:
+        return "past_target"
+    return "jour_j"
 
 
 def check_if_dead(
@@ -109,6 +146,14 @@ def run_realtime_signals() -> None:
             logger.warning("Config invalide pour %s : %s", market_id, e)
             continue
 
+        target_date_raw = str(config.get("target_date") or "").strip()
+        if not target_date_raw:
+            logger.error(
+                "Missing target_date pour marché RT %s — SKIP (champ obligatoire).",
+                market_id[:18] + "…" if len(market_id) > 20 else market_id,
+            )
+            continue
+
         metar_data = registry.fetch_latest_metar(icao)
         if not metar_data:
             logger.warning("Ignoré: %s (Pas de donnée METAR pour %s)", market_id, icao)
@@ -125,32 +170,65 @@ def run_realtime_signals() -> None:
             logger.warning("Timezone invalide %r pour %s — UTC", tz_name, market_id)
             local_tz = pytz.UTC
         current_local_time = datetime.now(local_tz)
+        local_d = current_local_time.date()
+        day_kind = classify_rt_market_day(local_d, target_date_raw)
 
         p_win = 0.5
         binary_state = "open"
+        rec_side = "NONE"
+        rt_day_guard: str
 
-        if is_above and current_temp >= threshold:
-            p_win = 1.0
-            binary_state = "met"
-        elif not is_above and current_temp < threshold:
-            p_win = 1.0
-            binary_state = "met"
-        elif check_if_dead(
-            current_local_time,
-            deadline_str,
-            current_temp,
-            threshold,
-            dead_gap,
-        ):
-            p_win = 0.0
-            binary_state = "dead"
+        if day_kind == "invalid":
+            logger.error("target_date invalide pour %s : %r", market_id, target_date_raw)
+            binary_state = "invalid_target"
+            rt_day_guard = "invalid"
 
-        if p_win > 0.5:
-            rec_side = "YES"
-        elif p_win < 0.5:
-            rec_side = "NO"
+        elif day_kind == "premature":
+            binary_state = "premature"
+            rt_day_guard = "premature"
+            logger.info(
+                "Signal %s (%s) | garde jour J: prématuré (local=%s, target=%s) — pas de scalp RT",
+                market_id[:20] + "…" if len(market_id) > 22 else market_id,
+                icao,
+                local_d.isoformat(),
+                target_date_raw or "?",
+            )
+
+        elif day_kind == "past_target":
+            binary_state = "past_target"
+            rt_day_guard = "past_target"
+            logger.info(
+                "Signal %s (%s) | garde jour J: date locale après target (%s) — pas de scalp RT",
+                market_id[:20] + "…" if len(market_id) > 22 else market_id,
+                icao,
+                target_date_raw or "?",
+            )
+
         else:
-            rec_side = "NONE"
+            # jour_j : même jour calendaire que le contrat (timezone lieu)
+            rt_day_guard = "jour_j"
+            if is_above and current_temp >= threshold:
+                p_win = 1.0
+                binary_state = "met"
+            elif not is_above and current_temp < threshold:
+                p_win = 1.0
+                binary_state = "met"
+            elif check_if_dead(
+                current_local_time,
+                deadline_str,
+                current_temp,
+                threshold,
+                dead_gap,
+            ):
+                p_win = 0.0
+                binary_state = "dead"
+
+            if p_win > 0.5:
+                rec_side = "YES"
+            elif p_win < 0.5:
+                rec_side = "NO"
+            else:
+                rec_side = "NONE"
 
         signals[market_id] = {
             "p_win": p_win,
@@ -159,6 +237,9 @@ def run_realtime_signals() -> None:
             "current_obs_temp": current_temp,
             "raw_metar": metar_data.get("rawOb"),
             "obs_time_local": current_local_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "target_date": target_date_raw,
+            "local_date": local_d.isoformat(),
+            "rt_day_guard": rt_day_guard,
         }
         success_count += 1
 

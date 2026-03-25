@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://polymarket.local/schemas/icao_mapping.schema.json",
   "title": "icao_mapping",
-  "description": "Objet racine : clés = condition_id Polymarket ; valeurs = liaison OACI, seuil, fuseau.",
+  "description": "Objet racine : clés = condition_id Polymarket ; valeurs = liaison OACI, seuil, fuseau. Le RT bot2 suppose des contrats à une journée cible (target_date). Plages multi-jours : évolution future target_date_start/end (non câblée dans produce_rt_signals).",
   "type": "object",
   "$defs": {
     "marketSpec": {
       "type": "object",
-      "required": ["icao", "threshold", "timezone"],
+      "required": ["icao", "threshold", "timezone", "target_date"],
       "additionalProperties": true,
       "properties": {
         "icao": {
@@ -40,6 +40,21 @@
           "type": "number",
           "minimum": 0,
           "description": "Écart minimal (degrés) après deadline pour p_win=0."
+        },
+        "target_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Jour calendaire unique du contrat (YYYY-MM-DD), comparé à la date locale (timezone lieu). Contrats « une journée » uniquement avec le code actuel."
+        },
+        "target_date_start": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Réservé évolution plages multi-jours (ex. 25–31 mars) — non lu par produce_rt_signals ; à combiner avec target_date_end si implémenté."
+        },
+        "target_date_end": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Réservé évolution plages multi-jours — non lu par produce_rt_signals."
         }
       }
     }
