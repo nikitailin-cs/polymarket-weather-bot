@@ -743,9 +743,14 @@ class TestCTFManager(unittest.TestCase):
         self.assertEqual(result, RedeemResult.DRY_RUN)
 
     def test_get_usdc_balance_no_rpc(self):
+        from unittest.mock import patch
+
         from execution.ctf_manager import get_usdc_balance
-        # Sans RPC → 0.0 (pas d'exception)
-        balance = get_usdc_balance("0x0000000000000000000000000000000000000001")
+
+        # Forcer l’absence de Web3 : sinon sur une machine avec RPC réel la balance
+        # on-chain n’est pas 0 (test d’intégration involontaire).
+        with patch("execution.ctf_manager._get_web3", return_value=None):
+            balance = get_usdc_balance("0x0000000000000000000000000000000000000001")
         self.assertEqual(balance, 0.0)
 
 
