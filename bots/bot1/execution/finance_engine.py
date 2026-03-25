@@ -24,7 +24,7 @@ from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
-from config.settings import FEE_BPS, resolve_trading_private_key  # noqa: E402
+from config.settings import FEE_BPS, MAX_BET_USD, resolve_trading_private_key  # noqa: E402
 from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
 
@@ -37,6 +37,8 @@ CLOB_URL = "https://clob.polymarket.com"
 ORDER_TIMEOUT_SEC = 20
 _clob_client: Optional[ClobClient] = None
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+# Notionnel minimum côté Polymarket CLOB (ordres trop petits rejetés).
+MIN_ORDER_NOTIONAL_USDC = 1.0
 
 
 @dataclass(frozen=True)
@@ -462,6 +464,10 @@ def _clob_order_accepted(resp: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _place_limit_buy(token_id: str, price: float, size: float) -> dict[str, Any]:
+    """
+    size : quantité de tokens outcome à acheter (côté taker pour un BUY CLOB),
+    pas un montant USDC — le SDK calcule le notionnel ~ size * price.
+    """
     if size <= 0:
         raise ValueError("size doit être > 0")
     if not (0 < price <= 1):
@@ -646,7 +652,7 @@ def _record_trade(
     conn.commit()
 
 
-def run(order_size_usdc: float = 2.5) -> int:
+def run(order_size_usdc: Optional[float] = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
@@ -655,6 +661,14 @@ def run(order_size_usdc: float = 2.5) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     LOG.info("Démarrage du moteur financier - mode silencieux HTTP activé")
+    if order_size_usdc is None:
+        order_size_usdc = float(os.getenv("ORDER_SIZE_USDC", "2.5"))
+    budget_usdc = max(0.0, min(float(order_size_usdc), float(MAX_BET_USD)))
+    LOG.info(
+        "Budget notionnel par ordre: %.2f USDC (ORDER_SIZE_USDC plafonné par MAX_BET_USD=%.2f)",
+        budget_usdc,
+        float(MAX_BET_USD),
+    )
     signals = _load_signals(_signals_path())
     if not signals:
         LOG.info("Aucun signal disponible.")
@@ -720,7 +734,24 @@ def run(order_size_usdc: float = 2.5) -> int:
                 skipped += 1
                 continue
 
-            resp = _place_limit_buy(token_id=token_id, price=best_ask, size=order_size_usdc)
+            # Budget USDC -> nombre de tokens (shares) : le SDK BUY attend size en tokens, pas en $.
+            size_shares = budget_usdc / best_ask
+            if book_top.best_ask_size > 0:
+                size_shares = min(size_shares, book_top.best_ask_size)
+            notional_usdc = size_shares * best_ask
+            if notional_usdc + 1e-9 < MIN_ORDER_NOTIONAL_USDC:
+                skipped += 1
+                LOG.warning(
+                    "SKIP notionnel %.4f USDC < min %.2f (budget=%.4f ask=%.4f) market_id=%s",
+                    notional_usdc,
+                    MIN_ORDER_NOTIONAL_USDC,
+                    budget_usdc,
+                    best_ask,
+                    sig.market_id,
+                )
+                continue
+
+            resp = _place_limit_buy(token_id=token_id, price=best_ask, size=size_shares)
             ok_post, reject_reason = _clob_order_accepted(resp)
             if not ok_post:
                 LOG.error(
@@ -733,15 +764,16 @@ def run(order_size_usdc: float = 2.5) -> int:
                 skipped += 1
                 continue
 
-            matched_size, fill_status = _extract_fill_info(resp, order_size_usdc)
+            matched_size, fill_status = _extract_fill_info(resp, size_shares)
             if fill_status == "partial":
                 LOG.warning(
-                    "PARTIAL FILL market_id=%s side=%s matched=%.3f/%.3f at %.3f",
+                    "PARTIAL FILL market_id=%s side=%s matched=%.3f/%.3f shares at %.3f (~$%.2f)",
                     sig.market_id,
                     sig.recommended_side,
                     matched_size,
-                    order_size_usdc,
+                    size_shares,
                     best_ask,
+                    matched_size * best_ask,
                 )
             elif fill_status == "pending":
                 LOG.info(
@@ -759,7 +791,7 @@ def run(order_size_usdc: float = 2.5) -> int:
                 barbell_cond=cond,
                 token_id=token_id,
                 order_resp=resp,
-                requested_size=order_size_usdc,
+                requested_size=size_shares,
                 matched_size=matched_size,
             )
             executed += 1
