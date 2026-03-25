@@ -374,8 +374,7 @@ def _extract_best_ask_from_book(book: dict[str, Any]) -> Optional[BookTop]:
     asks = book.get("asks") or book.get("sell") or book.get("ask")
     if not isinstance(asks, list) or not asks:
         return None
-    top_price: Optional[float] = None
-    top_size: float = 0.0
+    levels: list[tuple[float, float]] = []
     for level in asks:
         price = 0.0
         size = 0.0
@@ -388,11 +387,13 @@ def _extract_best_ask_from_book(book: dict[str, Any]) -> Optional[BookTop]:
                 size = _safe_float(level[1], 0.0)
         if price <= 0:
             continue
-        if top_price is None or price < top_price:
-            top_price = price
-            top_size = max(0.0, size)
-    if top_price is None:
+        levels.append((price, max(0.0, size)))
+    if not levels:
         return None
+    top_price = min(p for p, _ in levels)
+    # Plusieurs niveaux peuvent partager le même meilleur prix : sommer la taille (shares).
+    tol = max(1e-12, abs(top_price) * 1e-9)
+    top_size = sum(sz for p, sz in levels if abs(p - top_price) <= tol)
     tick_size = _safe_float(book.get("tick_size") or book.get("tickSize"), 0.0)
     return BookTop(
         best_ask=top_price,

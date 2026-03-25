@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+
+_LOG = logging.getLogger(__name__)
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -145,12 +147,24 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
     for i, raw in enumerate(items):
         obj = _require_dict(raw, f"markets[{i}]")
         market_id = str(obj.get("market_id", "")).strip()
-        oracle_source = str(obj.get("oracle_source", "unknown")).strip().lower()
-        question = str(obj.get("question", "")).strip()
+        oracle_source = str(obj.get("oracle_source", "") or "noaa").strip().lower()
+        question = str(obj.get("question", "") or "").strip()
         # Nomenclature ContractSpec: operator=gt/gte/lt/lte/eq/between, variable normalisée.
         operator = str(obj.get("operator", "")).strip()
         variable = str(obj.get("variable", "")).strip()
         unit = str(obj.get("unit", "")).strip().lower()
+        # Rétrocompat : entrées minimales (market_id + station + threshold) sans métadonnées oracle.
+        if not operator:
+            operator = "gte"
+            _LOG.warning("markets[%s] operator absent — défaut gte pour market_id=%s", i, market_id)
+        if not variable:
+            variable = "temp_max"
+            _LOG.warning("markets[%s] variable absente — défaut temp_max pour market_id=%s", i, market_id)
+        if not unit:
+            unit = "c"
+            _LOG.warning("markets[%s] unit absente — défaut c pour market_id=%s", i, market_id)
+        if not question:
+            question = market_id or f"market_{i}"
         threshold_range_raw = obj.get("threshold_range")
         threshold_range: Optional[list[float]] = None
         if isinstance(threshold_range_raw, list) and len(threshold_range_raw) == 2:
@@ -173,12 +187,6 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
             raise ValueError(f"markets[{i}].market_id vide")
         if not station:
             raise ValueError(f"markets[{i}].station/icao vide")
-        if not operator:
-            raise ValueError(f"markets[{i}].operator vide")
-        if not variable:
-            raise ValueError(f"markets[{i}].variable vide")
-        if not unit:
-            raise ValueError(f"markets[{i}].unit vide")
         out.append(
             ActiveMarket(
                 market_id=market_id,
