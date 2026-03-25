@@ -7,6 +7,9 @@ Met à jour ``data/icao_mapping.json`` à partir de ``data/active_markets.json``
 - Fusion : les entrées existantes dont l’id n’est pas dans le registre actif sont conservées.
   Les marchés présents dans ``active_markets`` **écrasent** la clé correspondante.
 
+Écriture de la sortie : **atomique** (fichier temporaire puis ``os.replace``) pour que les lecteurs
+concurrents (ex. Bot2 RT lisant ``icao_mapping.json``) ne voient jamais un JSON tronqué.
+
 Usage ::
 
     python bots/bot1/Long\\ Term/scripts/sync_rt_mapping_from_active_markets.py
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -133,9 +137,11 @@ def main() -> int:
         return 0
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Même répertoire que la cible : rename atomique (POSIX) ; lecteurs voient l’ancienne ou la nouvelle version entière.
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=4), encoding="utf-8")
-    tmp.replace(out_path)
+    payload = json.dumps(merged, ensure_ascii=False, indent=4)
+    tmp.write_text(payload + "\n", encoding="utf-8")
+    os.replace(tmp, out_path)
     print(f"Écrit: {out_path}", flush=True)
     return 0
 

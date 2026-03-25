@@ -127,41 +127,216 @@ def _systemd_is_active(unit: str) -> str:
         return f"err: {exc}"
 
 
-def _tail_file(path: Path, n: int = 25) -> str:
-    if not path.is_file():
-        return f"(absent) {path}"
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return "\n".join(lines[-n:])
-    except OSError as exc:
-        return f"(lecture impossible: {exc})"
+def _short(s: Any, mx: int) -> str:
+    t = "" if s is None else str(s).strip()
+    if len(t) > mx:
+        return t[: mx - 1] + "…"
+    return t
 
 
-def _json_snippet(path: Path, max_chars: int = 2800) -> str:
-    if not path.is_file():
-        return f"(absent) {path}"
+def _load_active_markets_map(root: Path) -> dict[str, dict[str, Any]]:
+    """market_id → enregistrement brut depuis data/active_markets.json (enrichissement Telegram)."""
+    p = root / "data" / "active_markets.json"
+    if not p.is_file():
+        return {}
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-        data = json.loads(raw)
-        pretty = json.dumps(data, indent=2, ensure_ascii=False)
-        if len(pretty) > max_chars:
-            return pretty[: max_chars - 40] + "\n… (tronqué)"
-        return pretty
+        data = json.loads(p.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for m in data.get("markets") or []:
+        mid = (m.get("market_id") or "").strip()
+        if mid:
+            out[mid] = m if isinstance(m, dict) else {}
+    return out
+
+
+def _contract_dates_line(m: dict[str, Any]) -> str:
+    """Résumé dates : jour contrat, plage, ou clôture marché si présent."""
+    tds = (m.get("target_date_start") or "").strip()
+    tde = (m.get("target_date_end") or "").strip()
+    td = (m.get("target_date") or "").strip()
+    end_u = (m.get("end_date_utc_iso") or m.get("end_date_iso") or "").strip()
+    if tds and tde:
+        return f"Plage: {tds} → {tde}"
+    if td:
+        return f"Jour cible: {td}"
+    if end_u:
+        return f"Clôture: {_short(end_u, 36)}"
+    return "Dates: —"
+
+
+def _oracle_station_line(m: dict[str, Any]) -> tuple[str, str]:
+    """(source oracle, station/ICAO) pour affichage court."""
+    src = _short((m.get("oracle_source") or "?"), 20).upper()
+    st = (
+        m.get("icao")
+        or m.get("station")
+        or m.get("station_code")
+        or "—"
+    )
+    return (_esc(src, 24), _esc(_short(str(st), 16), 20))
+
+
+def _bot1_notional_usdc(spent: Any, matched: Any, best_ask: Any) -> float:
+    try:
+        if spent is not None and float(spent) > 0:
+            return float(spent)
+    except (TypeError, ValueError):
+        pass
+    try:
+        ms = float(matched or 0)
+        ba = float(best_ask or 0)
+        if ms > 0 and ba > 0:
+            return ms * ba
+    except (TypeError, ValueError):
+        pass
+    return 0.0
+
+
+def _format_bot1_meta_summary(path: Path) -> str:
+    """Résumé lisible du manifeste NOAA (pas de JSON brut)."""
+    if not path.is_file():
+        return f"<b>Bot1 — NOAA</b>\n• Fichier absent: <code>{_esc(path.name, 80)}</code>"
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        return f"(parse error: {exc})"
+        return f"<b>Bot1 — NOAA</b>\n• Erreur JSON: {_esc(str(exc), 200)}"
+    st = _short(d.get("status"), 24)
+    emoji = "✅" if st == "ok" else ("⚠️" if "skip" in st.lower() else "❌")
+    lines: list[str] = [
+        f"<b>Bot1 — NOAA</b> {emoji}",
+        f"• Statut: <b>{_esc(st, 24)}</b>",
+    ]
+    reason = _short(d.get("reason"), 220)
+    if reason:
+        lines.append(f"• Motif: {_esc(reason, 400)}")
+    for label, key in (
+        ("Généré (UTC)", "generated_at_utc"),
+        ("Cycle GFS", "forecast_cycle_utc"),
+        ("Signaux écrits", "signals_written"),
+        ("Cibles attendues", "targets_expected"),
+        ("wgrib2", "wgrib2_available"),
+        ("Code pipeline", "pipeline_exit_code"),
+    ):
+        if key in d and d[key] is not None:
+            lines.append(f"• {label}: <code>{_esc(str(d[key]), 120)}</code>")
+    return "\n".join(lines)
+
+
+def _format_bot2_meta_summary(path: Path) -> str:
+    """Résumé manifeste RT bot2 (santé sans dump JSON)."""
+    if not path.is_file():
+        return f"<b>Bot2 RT — manifeste</b>\n• Absent: <code>{_esc(path.name, 80)}</code>"
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return f"<b>Bot2 RT — manifeste</b>\n• Erreur JSON: {_esc(str(exc), 200)}"
+    st = _short(d.get("status"), 24)
+    emoji = "✅" if st == "ok" else "❌"
+    lines: list[str] = [
+        f"<b>Bot2 RT — manifeste</b> {emoji}",
+        f"• Statut: <b>{_esc(st, 24)}</b>",
+        f"• Marchés traités: <b>{d.get('markets_processed', '?')}</b>",
+        f"• TTL signaux: {d.get('signals_ttl_sec', '?')}s",
+    ]
+    if d.get("generated_at_utc"):
+        lines.append(f"• Généré (UTC): <code>{_esc(str(d['generated_at_utc']), 40)}</code>")
+    sh = d.get("signals_health") if isinstance(d.get("signals_health"), dict) else {}
+    if sh:
+        hs = _short(sh.get("health_status"), 16)
+        lines.append(f"• Santé agrégée: <b>{_esc(hs, 16)}</b>")
+        ntot = sh.get("markets_total")
+        if ntot is not None:
+            lines.append(f"• Total marchés (santé): {ntot}")
+        ready = sh.get("scalp_ready_met_or_dead")
+        if ready is not None:
+            lines.append(f"• Prêts scalp (met+dead): {ready}")
+        counts = sh.get("counts_by_binary_state")
+        if isinstance(counts, dict) and counts:
+            parts = [f"{_esc(k, 20)}:{v}" for k, v in sorted(counts.items())[:12]]
+            lines.append("• États: " + ", ".join(parts))
+    return "\n".join(lines)
+
+
+def _format_last_cycle_line(path: Path) -> str:
+    """Dernière entrée JSON de update_bot_cycle.log, formatée."""
+    if not path.is_file():
+        return f"<b>Dernier cycle</b>\n• Journal absent: <code>{_esc(path.name, 60)}</code>"
+    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    last = ""
+    for line in reversed(raw_lines):
+        if line.strip():
+            last = line.strip()
+            break
+    if not last:
+        return "<b>Dernier cycle</b>\n• (journal vide)"
+    try:
+        j = json.loads(last)
+    except json.JSONDecodeError:
+        return (
+            "<b>Dernier cycle</b>\n"
+            f"• <code>{_esc(_short(last, 500), 520)}</code>"
+        )
+    ts = _short(j.get("ts"), 32)
+    agg = j.get("aggregated_exit_code")
+    parts: list[str] = ["<b>Dernier cycle</b>", f"• Horodatage: <code>{_esc(ts, 40)}</code>"]
+    parts.append(f"• Code agrégé: <b>{agg}</b>")
+    ec = j.get("step_exit_codes")
+    if isinstance(ec, dict):
+        labels = {
+            "market_scan": "Scan marchés",
+            "market_scan_skipped": "Scan ignoré",
+            "noaa": "NOAA",
+            "finance": "Finance",
+            "finance_skipped": "Finance ignorée",
+            "settlement_watcher": "Settlement",
+            "exit_engine": "Exit",
+        }
+        parts.append("• Étapes:")
+        for k, v in ec.items():
+            label = labels.get(k, k)
+            parts.append(f"  ◦ {label}: <code>{v}</code>")
+    diff = j.get("bot1_market_diff")
+    if isinstance(diff, dict) and diff:
+        parts.append(
+            f"• Δ marchés Bot1: +{diff.get('added_count', '?')} "
+            f"(bootstrap={diff.get('bootstrap', '?')})"
+        )
+    return "\n".join(parts)
+
+
+def _format_log_tail_compact(path: Path, n: int, title: str) -> str:
+    """Fin de journal en lignes courtes (pas un gros bloc monospace)."""
+    if not path.is_file():
+        return f"<b>{_esc(title, 40)}</b>\n• Absent: <code>{_esc(path.name, 60)}</code>"
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail = lines[-max(1, n) :] if lines else []
+    out: list[str] = [
+        f"<b>{_esc(title, 40)}</b>",
+        f"<i>{_esc(path.name, 50)}</i> — {len(tail)} ligne(s)",
+    ]
+    for line in tail:
+        s = line.strip()
+        if not s:
+            continue
+        out.append(f"• <code>{_esc(_short(s, 140), 160)}</code>")
+    return "\n".join(out)
 
 
 def _bot1_trades(limit: int = 12) -> str:
     from core.bot1_data_paths import portfolio_sqlite_path
 
+    mmap = _load_active_markets_map(_ROOT)
     db = portfolio_sqlite_path()
     if not db.is_file():
-        return f"SQLite absent: {db}"
+        return f"📭 <b>Bot1 — trades</b>\nSQLite absent: <code>{_esc(db.name, 80)}</code>"
     conn = sqlite3.connect(str(db))
     try:
         rows = conn.execute(
             """
-            SELECT traded_at_utc, market_id, recommended_side, effective_p_win, best_ask, ev
+            SELECT traded_at_utc, market_id, recommended_side, effective_p_win, best_ask, ev,
+                   status, spent_usdc, matched_size, station
             FROM executed_trades
             ORDER BY id DESC
             LIMIT ?
@@ -169,29 +344,50 @@ def _bot1_trades(limit: int = 12) -> str:
             (max(1, limit),),
         ).fetchall()
     except sqlite3.Error as exc:
-        return f"SQLite: {exc}"
+        return f"📭 <b>Bot1 — trades</b>\nSQLite: {_esc(str(exc), 400)}"
     finally:
         conn.close()
     if not rows:
-        return "(aucune ligne executed_trades)"
-    lines = ["<b>Bot1 — derniers trades</b> (portfolio batch/RT selon env)"]
+        return "📭 <b>Bot1 — derniers trades</b>\n<i>Aucune ligne dans executed_trades.</i>"
+    lines: list[str] = [
+        "📈 <b>Bot1 — derniers trades</b>",
+        "<i>Registre actif = data/active_markets.json (si marché retiré, détail réduit).</i>",
+        "",
+    ]
     for r in rows:
-        ts, mid, side, pw, ask, ev = r[:6]
-        mshort = str(mid)[:14] + "…" if len(str(mid)) > 16 else str(mid)
+        ts, mid, side, pw, ask, ev, status, spent, matched, station = r
+        meta = mmap.get(str(mid).strip())
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta:
+            q = _esc(_short(meta.get("question") or mid, 200), 220)
+            dline = _esc(_contract_dates_line(meta), 120)
+            src, stn = _oracle_station_line(meta)
+        else:
+            q = f"<code>{_esc(_short(mid, 36), 40)}</code> <i>(hors registre actif)</i>"
+            dline = "—"
+            src, stn = "—", _esc(_short(station, 12), 16)
+        nom = _bot1_notional_usdc(spent, matched, ask)
+        st_emoji = "🟢" if str(status).upper() == "OPEN" else "⚪"
+        lines.append(f"{st_emoji} <b>{q}</b>")
+        lines.append(f"   🎯 {dline}")
+        lines.append(f"   📡 {src} · 📍 {stn}")
         lines.append(
-            f"• <code>{_esc(str(ts), 24)}</code> {mshort} "
-            f"<b>{_esc(str(side), 4)}</b> p={float(pw):.3f} ask={float(ask):.3f} "
-            f"ev={float(ev):.3f}"
+            f"   💵 ~{_esc(f'{nom:.2f}', 12)} USDC · <b>{_esc(str(side), 4)}</b> "
+            f"p={float(pw):.3f} ask={float(ask):.3f} EV={float(ev):.3f}"
         )
-    return "\n".join(lines)
+        lines.append(f"   🏷 {_esc(str(status), 12)} · 🕐 <code>{_esc(str(ts), 28)}</code>")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def _bot2_positions(limit: int = 15) -> str:
     from core.bot2_data_paths import BOT2_PORTFOLIO_SQLITE_PATH
 
+    mmap = _load_active_markets_map(_ROOT)
     db = BOT2_PORTFOLIO_SQLITE_PATH
     if not db.is_file():
-        return f"SQLite bot2 absent: {db}"
+        return f"📭 <b>Bot2 RT — positions</b>\nSQLite absent: <code>{_esc(db.name, 80)}</code>"
     conn = sqlite3.connect(str(db))
     try:
         rows = conn.execute(
@@ -204,20 +400,161 @@ def _bot2_positions(limit: int = 15) -> str:
             (max(1, limit),),
         ).fetchall()
     except sqlite3.Error as exc:
-        return f"SQLite bot2: {exc}"
+        return f"📭 <b>Bot2 RT — positions</b>\nSQLite: {_esc(str(exc), 400)}"
     finally:
         conn.close()
     if not rows:
-        return "(aucune ligne positions bot2)"
-    lines = ["<b>Bot2 RT — positions (dernières lignes)</b>"]
-    for r in rows:
+        return "📭 <b>Bot2 RT — positions</b>\n<i>Aucune ligne.</i>"
+    lines: list[str] = [
+        "⚡ <b>Bot2 RT — positions récentes</b>",
+        "<i>Ouvertes en priorité visuelle ; détail marché via active_markets.</i>",
+        "",
+    ]
+    open_first = [r for r in rows if str(r[5]).upper() == "OPEN"]
+    other = [r for r in rows if str(r[5]).upper() != "OPEN"]
+    ordered = open_first + other
+    for r in ordered[:limit]:
         mid, side, price, size, ts, status, pnl, sat = r
-        mshort = str(mid)[:16] + "…" if len(str(mid)) > 18 else str(mid)
+        meta = mmap.get(str(mid).strip())
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta:
+            q = _esc(_short(meta.get("question") or mid, 200), 220)
+            dline = _esc(_contract_dates_line(meta), 120)
+            src, stn = _oracle_station_line(meta)
+        else:
+            q = f"<code>{_esc(_short(mid, 36), 40)}</code> <i>(hors registre)</i>"
+            dline = "—"
+            src, stn = "—", "—"
+        notional = float(price or 0) * float(size or 0)
+        st_emoji = "🟢" if str(status).upper() == "OPEN" else "⚪"
+        pnl_tail = ""
+        if str(pnl).strip() not in ("", "None"):
+            try:
+                pnl_tail = f" · PnL {float(pnl):.2f}"
+            except (TypeError, ValueError):
+                pass
+        lines.append(f"{st_emoji} <b>{q}</b>")
+        lines.append(f"   🎯 {dline}")
+        lines.append(f"   📡 {src} · 📍 {stn}")
         lines.append(
-            f"• {mshort} <b>{_esc(str(side), 4)}</b> @ {float(price):.4f} size={float(size):.4f} "
-            f"<i>{_esc(str(status), 14)}</i> {_esc(str(ts), 24)}"
+            f"   💵 ~{notional:.2f} USDC · <b>{_esc(str(side), 4)}</b> @ {float(price):.4f} "
+            f"× {float(size):.4f}"
         )
-    return "\n".join(lines)
+        lines.append(
+            f"   🏷 {_esc(str(status), 14)} · 🕐 <code>{_esc(str(ts), 28)}</code>{pnl_tail}"
+        )
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _open_positions_combined() -> str:
+    """Positions OPEN Bot1 + Bot2 avec cartes enrichies."""
+    from core.bot1_data_paths import portfolio_sqlite_path
+    from core.bot2_data_paths import BOT2_PORTFOLIO_SQLITE_PATH
+
+    mmap = _load_active_markets_map(_ROOT)
+    parts: list[str] = ["🔓 <b>Positions ouvertes</b> (OPEN seulement)", ""]
+
+    db1 = portfolio_sqlite_path()
+    r1: list[tuple[Any, ...]] = []
+    if db1.is_file():
+        conn = sqlite3.connect(str(db1))
+        try:
+            r1 = conn.execute(
+                """
+                SELECT traded_at_utc, market_id, recommended_side, effective_p_win, best_ask, ev,
+                       spent_usdc, matched_size, station
+                FROM executed_trades
+                WHERE UPPER(IFNULL(status,'')) = 'OPEN'
+                ORDER BY id DESC
+                LIMIT 20
+                """
+            ).fetchall()
+        except sqlite3.Error as exc:
+            parts.append(f"⚠️ Bot1 SQLite: {_esc(str(exc), 200)}")
+            r1 = []
+        finally:
+            conn.close()
+
+    parts.append("━━ <b>Bot1 (batch / RT)</b> ━━")
+    if not db1.is_file():
+        parts.append("<i>Base portfolio absente.</i>")
+    elif not r1:
+        parts.append("<i>Aucune position OPEN dans executed_trades.</i>")
+    for r in r1:
+        ts, mid, side, pw, ask, ev, spent, matched, station = r
+        meta = mmap.get(str(mid).strip())
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta:
+            q = _esc(_short(meta.get("question") or mid, 200), 220)
+            dline = _esc(_contract_dates_line(meta), 120)
+            src, stn = _oracle_station_line(meta)
+        else:
+            q = f"<code>{_esc(_short(mid, 36), 40)}</code> <i>(hors registre)</i>"
+            dline = "—"
+            src, stn = "—", _esc(_short(station, 12), 16)
+        nom = _bot1_notional_usdc(spent, matched, ask)
+        parts.append(f"🟢 <b>{q}</b>")
+        parts.append(f"   🎯 {dline}")
+        parts.append(f"   📡 {src} · 📍 {stn}")
+        parts.append(
+            f"   💵 engagé ~<b>{nom:.2f}</b> USDC · {_esc(str(side), 4)} · p={float(pw):.3f}"
+        )
+        parts.append(f"   🕐 <code>{_esc(str(ts), 28)}</code>")
+        parts.append("")
+
+    parts.append("━━ <b>Bot2 RT</b> ━━")
+    db2 = BOT2_PORTFOLIO_SQLITE_PATH
+    r2: list[tuple[Any, ...]] = []
+    if db2.is_file():
+        conn = sqlite3.connect(str(db2))
+        try:
+            r2 = conn.execute(
+                """
+                SELECT market_id, side, price, size, timestamp, status
+                FROM positions
+                WHERE UPPER(IFNULL(status,'')) = 'OPEN'
+                ORDER BY rowid DESC
+                LIMIT 20
+                """
+            ).fetchall()
+        except sqlite3.Error as exc:
+            parts.append(f"⚠️ Bot2 SQLite: {_esc(str(exc), 200)}")
+            r2 = []
+        finally:
+            conn.close()
+
+    if not db2.is_file():
+        parts.append("<i>Base portfolio bot2 absente.</i>")
+    elif not r2:
+        parts.append("<i>Aucune position OPEN.</i>")
+    for r in r2:
+        mid, side, price, size, ts, _st = r
+        meta = mmap.get(str(mid).strip())
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta:
+            q = _esc(_short(meta.get("question") or mid, 200), 220)
+            dline = _esc(_contract_dates_line(meta), 120)
+            src, stn = _oracle_station_line(meta)
+        else:
+            q = f"<code>{_esc(_short(mid, 36), 40)}</code> <i>(hors registre)</i>"
+            dline = "—"
+            src, stn = "—", "—"
+        notional = float(price or 0) * float(size or 0)
+        parts.append(f"🟢 <b>{q}</b>")
+        parts.append(f"   🎯 {dline}")
+        parts.append(f"   📡 {src} · 📍 {stn}")
+        parts.append(
+            f"   💵 engagé ~<b>{notional:.2f}</b> USDC · {_esc(str(side), 4)} @ {float(price):.4f} "
+            f"× {float(size):.4f}"
+        )
+        parts.append(f"   🕐 <code>{_esc(str(ts), 28)}</code>")
+        parts.append("")
+
+    return "\n".join(parts).rstrip()
 
 
 def _rt_health_text() -> str:
@@ -228,21 +565,23 @@ def _rt_health_text() -> str:
         paths = get_rt_paths()
         meta = paths["meta"]
         if not meta.is_file():
-            return f"meta absent: {meta}"
+            return f"<b>Bot2 RT — santé</b>\n• Fichier meta absent: <code>{_esc(meta.name, 48)}</code>"
         raw = json.loads(meta.read_text(encoding="utf-8"))
         ts = int(raw.get("generated_at_unix") or raw.get("timestamp") or 0)
         age = int(tmod.time()) - ts
         health = raw.get("signals_health") or {}
         hstat = str(health.get("health_status", "?"))
+        stale = age > int(REALTIME_SIGNALS_MAX_AGE_SEC)
+        age_emoji = "⚠️" if stale else "✅"
         return (
             f"<b>Bot2 RT — santé</b>\n"
-            f"meta: <code>{_esc(str(meta), 120)}</code>\n"
-            f"âge: <b>{age}s</b> (max {REALTIME_SIGNALS_MAX_AGE_SEC}s)\n"
-            f"health: <b>{_esc(hstat, 16)}</b>\n"
-            f"marchés traités: {raw.get('markets_processed', '?')}"
+            f"• Manifeste: <code>{_esc(meta.name, 40)}</code>\n"
+            f"• Âge signaux {age_emoji}: <b>{age}s</b> / max {REALTIME_SIGNALS_MAX_AGE_SEC}s\n"
+            f"• Santé: <b>{_esc(hstat, 16)}</b>\n"
+            f"• Marchés traités: {raw.get('markets_processed', '?')}"
         )
     except Exception as exc:
-        return f"rt_health err: {exc}"
+        return f"<b>Bot2 RT — santé</b>\n• Erreur: {_esc(str(exc), 300)}"
 
 
 def _markets_scan() -> str:
@@ -266,17 +605,21 @@ def _markets_scan() -> str:
 
     err_log = buf.getvalue().strip()
     lines = [
-        f"<b>Marchés météo (scan)</b> — {len(mkts)} marché(s) filtré(s)",
-        f"<pre>{_esc(err_log[-500:], 500)}</pre>" if err_log else "",
+        f"<b>Marchés météo (Gamma)</b>",
+        f"• Trouvés: <b>{len(mkts)}</b> marché(s) météo",
     ]
-    for m in mkts[:18]:
+    if err_log:
+        err_short = _short(err_log[-400:], 400)
+        lines.append(f"• Log scan: <code>{_esc(err_short, 420)}</code>")
+    for m in mkts[:10]:
         q = getattr(m, "question", None) or str(m)
         cid = getattr(m, "condition_id", "") or ""
-        lines.append(f"• {_esc(str(q)[:140], 140)}")
+        q1 = _short(q, 100)
+        lines.append(f"• {_esc(q1, 120)}")
         if cid:
-            lines.append(f"  <code>{_esc(str(cid)[:66], 66)}</code>")
-    if len(mkts) > 18:
-        lines.append(f"… +{len(mkts) - 18} autre(s)")
+            lines.append(f"  <code>{_esc(_short(cid, 42), 48)}</code>")
+    if len(mkts) > 10:
+        lines.append(f"… +{len(mkts) - 10} autre(s)")
     return "\n".join(lines)
 
 
@@ -297,8 +640,9 @@ def _help_text() -> str:
         "/daemon — fin de bot1_adaptive_daemon.log\n"
         "/bot1meta — contenu trading_signals_meta.json\n"
         "/bot2meta — contenu realtime_signals_meta.json\n"
-        "/positions — derniers trades portfolio bot1 (SQLite)\n"
-        "/positions2 — dernières lignes positions bot2 RT\n"
+        "/positions — derniers trades Bot1 (cartes : question, dates, oracle, USDC)\n"
+        "/open — positions OPEN Bot1 + Bot2 (détail marché)\n"
+        "/positions2 — positions Bot2 récentes (OPEN en premier)\n"
         "/rt — santé signaux temps réel (meta + âge)\n"
         "/markets — scan Gamma météo (peut prendre ~10–30s)\n"
         "/status — alias /health"
@@ -325,55 +669,46 @@ def handle_command(token: str, chat_id: str, text: str) -> None:
         ut = _systemd_is_active("polymarket-bot-rt.timer")
         parts = [
             "<b>État services</b>",
-            f"polymarket-bot1-adaptive: <b>{_esc(u1, 32)}</b>",
-            f"polymarket-bot-rt.timer: <b>{_esc(ut, 32)}</b>",
+            f"• bot1-adaptive: <b>{_esc(u1, 32)}</b>",
+            f"• bot-rt.timer: <b>{_esc(ut, 32)}</b>",
             "",
             _rt_health_text(),
             "",
-            "<b>Meta NOAA (extrait)</b>",
-            f"<pre>{_esc(_json_snippet(trading_signals_meta_path(), 1500), 3500)}</pre>",
+            _format_bot1_meta_summary(trading_signals_meta_path()),
         ]
         send_message_html(token, chat_id, "\n".join(parts))
         return
 
     if cmd == "/lastcycle":
-        send_message_html(
-            token,
-            chat_id,
-            f"<b>Dernier cycle (update_bot_cycle)</b>\n<pre>{_esc(_tail_file(log_cycle, 12), 3500)}</pre>",
-        )
+        send_message_html(token, chat_id, _format_last_cycle_line(log_cycle))
         return
 
     if cmd == "/daemon":
         send_message_html(
             token,
             chat_id,
-            f"<b>bot1_adaptive_daemon</b>\n<pre>{_esc(_tail_file(log_daemon, 22), 3500)}</pre>",
+            _format_log_tail_compact(log_daemon, 10, "Daemon bot1 (fin de journal)"),
         )
         return
 
     if cmd == "/bot1meta":
         from core.bot1_data_paths import trading_signals_meta_path
 
-        send_message_html(
-            token,
-            chat_id,
-            f"<b>trading_signals_meta</b>\n<pre>{_esc(_json_snippet(trading_signals_meta_path()), 3500)}</pre>",
-        )
+        send_message_html(token, chat_id, _format_bot1_meta_summary(trading_signals_meta_path()))
         return
 
     if cmd == "/bot2meta":
         from core.bot2_data_paths import REALTIME_SIGNALS_META_FILE
 
-        send_message_html(
-            token,
-            chat_id,
-            f"<b>realtime_signals_meta</b>\n<pre>{_esc(_json_snippet(REALTIME_SIGNALS_META_FILE), 3500)}</pre>",
-        )
+        send_message_html(token, chat_id, _format_bot2_meta_summary(REALTIME_SIGNALS_META_FILE))
         return
 
     if cmd == "/positions":
         send_message_html(token, chat_id, _bot1_trades(14))
+        return
+
+    if cmd in ("/open", "/ouvert", "/positions_open"):
+        send_message_html(token, chat_id, _open_positions_combined())
         return
 
     if cmd in ("/positions2", "/pos2"):

@@ -2,6 +2,50 @@
 
 Chemins type : `~/polymarket-weather-bot`. Préfixer par `cd` + activer le venv si besoin.
 
+## Bloc unique (prod) — long terme + real time + logs
+
+Copie/colle ce bloc tel quel après un `git pull` pour relancer et vérifier immédiatement :
+
+```bash
+cd ~/polymarket-weather-bot
+source .venv/bin/activate
+git pull
+
+# restart bots
+sudo systemctl daemon-reload
+sudo systemctl restart polymarket-bot1-adaptive.service
+sudo systemctl restart polymarket-bot-rt.timer
+
+# statut immédiat
+echo "=== STATUS SERVICES ==="
+systemctl is-active polymarket-bot1-adaptive.service
+systemctl is-active polymarket-bot-rt.timer
+systemctl status polymarket-bot1-adaptive.service --no-pager -l | head -n 20
+systemctl status polymarket-bot-rt.timer --no-pager -l | head -n 20
+
+# logs fiables immédiats
+echo "=== LOG BOT LONG TERME (Bot1) ==="
+tail -n 40 logs/bot1_adaptive_daemon.log
+tail -n 10 logs/update_bot_cycle.log
+
+echo "=== LOG BOT REAL TIME (Bot2 RT) ==="
+journalctl -u polymarket-bot-rt.service -n 60 --no-pager
+test -f logs/update_bot_rt.log && tail -n 40 logs/update_bot_rt.log || echo "(pas de logs/update_bot_rt.log: journalctl fait foi)"
+
+# health real time
+echo "=== HEALTH RT ==="
+python bots/bot2_realtime/scripts/rt_health_check.py
+
+# sanity wallet / clob
+echo "=== STATUS LIVE CLOB ==="
+python bots/bot1/execution/status_live.py
+```
+
+Lecture rapide du résultat :
+- `is-active` doit afficher `active` pour `polymarket-bot1-adaptive.service` et `polymarket-bot-rt.timer`.
+- Dans les logs bot1: lignes récentes `cycle start` / `cycle end` sans `ModuleNotFoundError`.
+- `rt_health_check.py` ne doit pas afficher `ERROR` et l'âge du meta doit rester sous le TTL.
+
 | Commande | Rôle (bref) |
 |----------|----------------|
 | `cd ~/polymarket-weather-bot` | Va dossier projet |

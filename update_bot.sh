@@ -4,7 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-mkdir -p "logs"
+mkdir -p "logs" "data/logs"
+LOCKFILE="${ROOT_DIR}/data/logs/update_bot.lock"
+exec 200>"${LOCKFILE}"
+if ! flock -n 200; then
+  echo "[update_bot] déjà en cours (${LOCKFILE}), skip" >&2
+  exit 0
+fi
 
 # Export chemins bot1 (absolus) pour tous les Python du cycle — voir core/bot1_data_paths.py
 _export_bot1_path() {
@@ -29,13 +35,8 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="python3"
 fi
 
-NOMADS_EXTRA=()
-if [[ "${NOMADS_ALLOW_OUTSIDE_WINDOW:-0}" == "1" ]]; then
-  NOMADS_EXTRA+=(--allow-outside-window)
-fi
-if [[ "${NOMADS_FORCE:-0}" == "1" ]]; then
-  NOMADS_EXTRA+=(--force)
-fi
+BOT1_ACTIVE_MARKETS_IDS_STATE="${ROOT_DIR}/data/logs/bot1_active_markets_ids.json"
+BOT1_ACTIVE_MARKETS_JSON="${ROOT_DIR}/data/active_markets.json"
 
 exit_code=0
 scan_ec="skipped"
@@ -61,6 +62,49 @@ if [[ "${BOT1_REFRESH_ACTIVE_MARKETS_FROM_GAMMA:-1}" == "1" ]]; then
   fi
 fi
 
+NOMADS_EXTRA=()
+if [[ "${NOMADS_ALLOW_OUTSIDE_WINDOW:-0}" == "1" ]]; then
+  NOMADS_EXTRA+=(--allow-outside-window)
+fi
+if [[ "${NOMADS_FORCE:-0}" == "1" ]]; then
+  NOMADS_EXTRA+=(--force)
+fi
+
+BOT1_ADDED_MARKETS_COUNT=0
+BOT1_BOOTSTRAP=0
+_diff_ok=0
+if [[ "${scan_skipped}" == "false" && "${scan_ec}" -eq 0 ]]; then
+  set +e
+  _diff_out=$("${PYTHON_BIN}" "monitoring/bot1_active_markets_state.py" compute \
+    --active "${BOT1_ACTIVE_MARKETS_JSON}" \
+    --state "${BOT1_ACTIVE_MARKETS_IDS_STATE}")
+  _diff_ec=$?
+  set -e
+  if [[ "${_diff_ec}" -eq 0 ]]; then
+    eval "${_diff_out}"
+    _diff_ok=1
+  else
+    echo "[update_bot] bot1_active_markets_state compute échoué (code=${_diff_ec})" >&2
+  fi
+  if [[ "${BOT1_ADDED_MARKETS_COUNT}" -gt 0 && "${BOT1_BOOTSTRAP}" -eq 0 ]]; then
+    set +e
+    "${PYTHON_BIN}" "bots/bot1/Long Term/scripts/sync_rt_mapping_from_active_markets.py" >> "logs/sync_rt_mapping.log" 2>&1
+    set -e
+    _min_iv="${BOT1_NEW_MARKETS_MIN_RUN_INTERVAL_SEC:-60}"
+    _has_allow_outside=0
+    for _x in "${NOMADS_EXTRA[@]}"; do
+      if [[ "${_x}" == "--allow-outside-window" ]]; then
+        _has_allow_outside=1
+        break
+      fi
+    done
+    if [[ "${_has_allow_outside}" -eq 0 ]]; then
+      NOMADS_EXTRA+=(--allow-outside-window)
+    fi
+    NOMADS_EXTRA+=(--min-run-interval-sec "${_min_iv}")
+  fi
+fi
+
 set +e
 "${PYTHON_BIN}" "bots/bot1/noaa_nomads_live/produce_trading_signals.py" "${NOMADS_EXTRA[@]}"
 noaa_ec=$?
@@ -68,6 +112,29 @@ set -e
 if [[ "${noaa_ec}" -ne 0 ]]; then
   exit_code="${noaa_ec}"
   echo "[update_bot] NOAA terminé avec code ${noaa_ec} — finance_engine ignoré (pas de trade sur échec NOAA)" >&2
+fi
+
+# Persistance de l'ensemble courant : bootstrap, pas de nouveaux marchés, ou NOAA OK après nouveaux marchés.
+if [[ "${scan_skipped}" == "false" && "${scan_ec}" -eq 0 && "${_diff_ok}" -eq 1 ]]; then
+  _persist=0
+  if [[ "${BOT1_BOOTSTRAP}" -eq 1 ]]; then
+    _persist=1
+  elif [[ "${BOT1_ADDED_MARKETS_COUNT}" -eq 0 ]]; then
+    _persist=1
+  elif [[ "${noaa_ec}" -eq 0 ]]; then
+    _persist=1
+  fi
+  if [[ "${_persist}" -eq 1 ]]; then
+    set +e
+    "${PYTHON_BIN}" "monitoring/bot1_active_markets_state.py" persist \
+      --active "${BOT1_ACTIVE_MARKETS_JSON}" \
+      --state "${BOT1_ACTIVE_MARKETS_IDS_STATE}"
+    _persist_ec=$?
+    set -e
+    if [[ "${_persist_ec}" -ne 0 ]]; then
+      echo "[update_bot] avertissement: persistance ${BOT1_ACTIVE_MARKETS_IDS_STATE} échouée (code=${_persist_ec})" >&2
+    fi
+  fi
 fi
 
 run_finance=0
@@ -139,7 +206,7 @@ if [[ "${scan_skipped}" == "true" ]]; then
 else
   _scan_json="${scan_ec}"
 fi
-_line="{\"ts\":\"${_ts}\",\"step_exit_codes\":{\"market_scan\":${_scan_json},\"market_scan_skipped\":${scan_skipped},\"noaa\":${noaa_ec},\"finance\":${_fin_json},\"finance_skipped\":${_fin_skipped},\"settlement_watcher\":${watch_ec},\"exit_engine\":${exit_ec}},\"aggregated_exit_code\":${exit_code}}"
+_line="{\"ts\":\"${_ts}\",\"step_exit_codes\":{\"market_scan\":${_scan_json},\"market_scan_skipped\":${scan_skipped},\"noaa\":${noaa_ec},\"finance\":${_fin_json},\"finance_skipped\":${_fin_skipped},\"settlement_watcher\":${watch_ec},\"exit_engine\":${exit_ec}},\"aggregated_exit_code\":${exit_code},\"bot1_market_diff\":{\"added_count\":${BOT1_ADDED_MARKETS_COUNT:-0},\"bootstrap\":${BOT1_BOOTSTRAP:-0}}}"
 echo "${_line}" >> "${SUMMARY_LOG}"
 echo "[update_bot] cycle_summary ${_line}" >&2
 
