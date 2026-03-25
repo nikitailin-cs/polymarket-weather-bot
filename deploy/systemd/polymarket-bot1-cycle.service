@@ -1,0 +1,18 @@
+[Unit]
+Description=Polymarket bot1 — un seul cycle (update_bot.sh)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__RUN_AS_USER__
+Group=__RUN_AS_USER__
+WorkingDirectory=__REPO_ROOT__
+
+Environment=NOMADS_ALLOW_OUTSIDE_WINDOW=1
+Environment=NOMADS_FORCE=0
+
+ExecStart=/bin/bash __REPO_ROOT__/update_bot.sh
+StandardOutput=journal
+StandardError=journal

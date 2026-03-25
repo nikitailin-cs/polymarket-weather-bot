@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer — lance polymarket-bot1-cycle.service à intervalle régulier
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+
+[Timer]
+# Premier lancement 2 min après boot, puis toutes les 15 min après la fin du cycle précédent
+OnBootSec=2min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

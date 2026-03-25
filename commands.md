@@ -29,6 +29,7 @@ Sauvegarde sous **nano** : `Ctrl+O`, Entrée, puis `Ctrl+X` pour quitter.
 | `python main.py` | Lance boucle trading continue |
 | `python signals/edge_detector.py` | Affiche opportunités ponctuelles |
 | `bash update_bot.sh` | Enchaîne NOAA test + moteur finance |
+| Voir `deploy/systemd/README.md` | Service systemd bot1 en boucle (NOAA + finance) ou timer |
 
 ## Diagnostics / Polymarket
 
