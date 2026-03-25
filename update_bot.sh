@@ -38,6 +38,29 @@ if [[ "${NOMADS_FORCE:-0}" == "1" ]]; then
 fi
 
 exit_code=0
+scan_ec="skipped"
+scan_skipped=true
+if [[ "${BOT1_REFRESH_ACTIVE_MARKETS_FROM_GAMMA:-1}" == "1" ]]; then
+  scan_skipped=false
+  SCAN_LIMIT="${BOT1_MARKET_SCAN_LIMIT:-500}"
+  set +e
+  "${PYTHON_BIN}" "bots/bot1/Long Term/scripts/generate_markets.py" --limit "${SCAN_LIMIT}" >> "logs/gamma_scan.log" 2>&1
+  scan_ec=$?
+  set -e
+  if [[ "${scan_ec}" -ne 0 ]]; then
+    echo "[update_bot] génération active_markets depuis scanner live échouée (code=${scan_ec})" >&2
+    if [[ "${BOT1_FAIL_ON_MARKET_SCAN_ERROR:-0}" == "1" ]]; then
+      exit_code="${scan_ec}"
+      _ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      SUMMARY_LOG="${UPDATE_BOT_CYCLE_SUMMARY_LOG:-${ROOT_DIR}/logs/update_bot_cycle.log}"
+      _line="{\"ts\":\"${_ts}\",\"step_exit_codes\":{\"market_scan\":${scan_ec},\"market_scan_skipped\":false,\"noaa\":null,\"finance\":null,\"finance_skipped\":true,\"settlement_watcher\":null,\"exit_engine\":null},\"aggregated_exit_code\":${exit_code},\"reason\":\"market_scan_failed_and_fail_on_error\"}"
+      echo "${_line}" >> "${SUMMARY_LOG}"
+      echo "[update_bot] cycle_summary ${_line}" >&2
+      exit "${exit_code}"
+    fi
+  fi
+fi
+
 set +e
 "${PYTHON_BIN}" "bots/bot1/noaa_nomads_live/produce_trading_signals.py" "${NOMADS_EXTRA[@]}"
 noaa_ec=$?
@@ -111,7 +134,12 @@ else
   _fin_json="${fin_ec}"
   _fin_skipped="false"
 fi
-_line="{\"ts\":\"${_ts}\",\"step_exit_codes\":{\"noaa\":${noaa_ec},\"finance\":${_fin_json},\"finance_skipped\":${_fin_skipped},\"settlement_watcher\":${watch_ec},\"exit_engine\":${exit_ec}},\"aggregated_exit_code\":${exit_code}}"
+if [[ "${scan_skipped}" == "true" ]]; then
+  _scan_json="null"
+else
+  _scan_json="${scan_ec}"
+fi
+_line="{\"ts\":\"${_ts}\",\"step_exit_codes\":{\"market_scan\":${_scan_json},\"market_scan_skipped\":${scan_skipped},\"noaa\":${noaa_ec},\"finance\":${_fin_json},\"finance_skipped\":${_fin_skipped},\"settlement_watcher\":${watch_ec},\"exit_engine\":${exit_ec}},\"aggregated_exit_code\":${exit_code}}"
 echo "${_line}" >> "${SUMMARY_LOG}"
 echo "[update_bot] cycle_summary ${_line}" >&2
 

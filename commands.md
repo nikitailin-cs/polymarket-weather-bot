@@ -38,6 +38,7 @@ Pour le pipeline **NOAA → signaux → finance → settlement** (bot1), la comm
 | `bash update_bot.sh` | **Bot1 — cycle à lancer** : NOAA (`produce_trading_signals.py`) → `finance_engine` → `settlement_watcher` (OPEN→RESOLVED) → `exit_engine` (redeem, SETTLED, Telegram) ; résumé JSON par cycle dans `logs/update_bot_cycle.log` |
 | `sudo systemctl enable --now polymarket-bot1-adaptive.service` | **Bot1 adaptatif** : cadence lente hors fenêtre GFS, cadence rapide en `alert` |
 | `python bots/bot1/noaa_nomads_live/produce_trading_signals.py` | **Producteur de signaux** bot1 (GFS/NOMADS) — équivalent historique : `run_nomads_live_test.py` |
+| `python "bots/bot1/Long Term/scripts/generate_markets.py" --limit 500` | Régénère `data/active_markets.json` depuis scan live Gamma |
 | Voir `bots/bot1/MODEL_SCIENCE.md` | σ / `p_win`, lien calibrateur, feuille de route GEFS |
 | Voir `deploy/systemd/README.md` | Planifier des exécutions répétées de `update_bot.sh` (service ou timer systemd) |
 

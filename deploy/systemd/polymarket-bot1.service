@@ -14,6 +14,9 @@ WorkingDirectory=__REPO_ROOT__
 Environment=BOT1_CYCLE_INTERVAL_SEC=900
 Environment=NOMADS_ALLOW_OUTSIDE_WINDOW=1
 Environment=NOMADS_FORCE=0
+Environment=BOT1_REFRESH_ACTIVE_MARKETS_FROM_GAMMA=1
+Environment=BOT1_MARKET_SCAN_LIMIT=500
+Environment=BOT1_FAIL_ON_MARKET_SCAN_ERROR=0
 
 ExecStart=__REPO_ROOT__/deploy/bot1_daemon.sh
 

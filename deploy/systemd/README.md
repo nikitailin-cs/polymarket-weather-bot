@@ -133,6 +133,9 @@ journalctl -u polymarket-bot1-adaptive.service -f
 | `BOT1_CYCLE_INTERVAL_JITTER_SEC` | Jitter aléatoire ajouté à chaque pause adaptative (défaut 3). |
 | `NOMADS_ALLOW_OUTSIDE_WINDOW=1` | Passe `--allow-outside-window` au script NOAA (voir `update_bot.sh`). |
 | `NOMADS_FORCE=1` | Passe aussi `--force` au NOAA (ignore l’intervalle min entre runs ; à utiliser avec prudence). |
+| `BOT1_REFRESH_ACTIVE_MARKETS_FROM_GAMMA=1` | Avant NOAA, régénère `data/active_markets.json` via scanner live (`generate_markets.py`). |
+| `BOT1_MARKET_SCAN_LIMIT` | Limite Gamma API pour la régénération (défaut 500). |
+| `BOT1_FAIL_ON_MARKET_SCAN_ERROR=1` | Si le scan live échoue, stoppe le cycle complet (sinon continue avec registre précédent). |
 | `BOT1_DAEMON_LOG` | Chemin absolu du log daemon (défaut : `logs/bot1_daemon.log` dans le repo). |
 | `UPDATE_BOT_CYCLE_SUMMARY_LOG` | Fichier du résumé JSON par cycle (défaut : `logs/update_bot_cycle.log`). |
 
@@ -175,6 +178,7 @@ Après modification : `sudo systemctl daemon-reload && sudo systemctl restart po
 - `logs/settlement_watcher.log` — `settlement_watcher` (chaîne OPEN → RESOLVED)
 - `logs/exit_engine.log` — `exit_engine` (redeem, RESOLVED → SETTLED)
 - `logs/update_bot_cycle.log` — une ligne JSON par cycle (`step_exit_codes`, `aggregated_exit_code`)
+- `logs/gamma_scan.log` — sortie de la régénération scanner live -> `active_markets.json`
 - `logs/update_bot_rt_cycle.log` — sortie agrégée du script `update_bot_rt.sh` (Phase 6, bot RT)
 
 ## Bot 1 temps réel (METAR, `update_bot_rt.sh`)
