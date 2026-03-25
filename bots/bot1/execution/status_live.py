@@ -124,6 +124,23 @@ def _call_first(client: ClobClient, method_names: list[str]) -> tuple[str, Any]:
     return "-", "UNSUPPORTED"
 
 
+def _fetch_clob_balance(client: ClobClient) -> tuple[str, Any]:
+    """
+    py_clob_client 0.34 : pas de get_balance() ; get_balance_allowance(None) plante
+    (accès à params.signature_type). Il faut BalanceAllowanceParams(COLLATERAL).
+    """
+    fn = getattr(client, "get_balance_allowance", None)
+    if not callable(fn):
+        return "-", "UNSUPPORTED"
+    try:
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams  # type: ignore
+
+        params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        return "get_balance_allowance(COLLATERAL)", fn(params)
+    except Exception as exc:
+        return "get_balance_allowance", f"ERROR: {exc}"
+
+
 def main() -> int:
     rpc, _, addr = _load_env()
     print("=== POLYMETEO LIVE STATUS ===")
@@ -166,10 +183,10 @@ def main() -> int:
     else:
         print("orders_payload   :", _fmt(orders_data))
 
-    # Certaines versions de py_clob_client exigent des paramètres additionnels
-    # pour get_balance_allowance; on évite de polluer l'état avec des erreurs.
-    balance_method, balance_data = _call_first(client, ["get_balance"])
+    balance_method, balance_data = _fetch_clob_balance(client)
     print("balance_method   :", balance_method)
+    if balance_method == "-" and balance_data == "UNSUPPORTED":
+        balance_method, balance_data = _call_first(client, ["get_balance"])
     if balance_method == "-":
         print("balance_payload  : unsupported on this SDK version")
     elif isinstance(balance_data, (dict, list)):

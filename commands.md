@@ -35,6 +35,8 @@ Sauvegarde sous **nano** : `Ctrl+O`, Entrée, puis `Ctrl+X` pour quitter.
 
 | Commande | Rôle (bref) |
 |----------|----------------|
+| `.venv/bin/python status.py` | JSON pnl_tracker + derniers trades `portfolio.sqlite` (finance_engine) ; pas l’état CLOB brut |
+| `.venv/bin/python bots/bot1/execution/status_live.py` | Wallet, ordres CLOB, balances — plus proche du site Polymarket |
 | `python bots/bot1/execution/test_wallet_to_polymarket_flow.py --verbose --proxy-audit` | Test wallet + proxy + CLOB |
 | `… --market-id 0x…` | Résout marché précis |
 | `… --token-id …` | Cible token CLOB direct |
