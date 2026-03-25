@@ -897,6 +897,20 @@ def run(order_size_usdc: Optional[float] = None) -> int:
             ev = effective_p_win - best_ask
             myp, net_edge = _noaa_barbell_inputs(side_u, sig.p_win, best_ask)
 
+            try:
+                min_ev = float(os.getenv("FINANCE_NOAA_MIN_EV", "0.0"))
+            except ValueError:
+                min_ev = 0.0
+            if ev <= min_ev:
+                skipped += 1
+                LOG.info(
+                    "SKIP NOAA: ev=%.4f <= FINANCE_NOAA_MIN_EV=%.4f market_id=%s",
+                    ev,
+                    min_ev,
+                    sig.market_id,
+                )
+                continue
+
             barbell_tag: str
             budget_for_order: float
             if barbell_enabled():
@@ -926,19 +940,6 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                     continue
                 barbell_tag = leg
             else:
-                try:
-                    min_ev = float(os.getenv("FINANCE_NOAA_MIN_EV", "0.0"))
-                except ValueError:
-                    min_ev = 0.0
-                if ev <= min_ev:
-                    skipped += 1
-                    LOG.info(
-                        "SKIP NOAA: ev=%.4f <= FINANCE_NOAA_MIN_EV=%.4f market_id=%s",
-                        ev,
-                        min_ev,
-                        sig.market_id,
-                    )
-                    continue
                 budget_for_order = budget_usdc
                 barbell_tag = "off"
 

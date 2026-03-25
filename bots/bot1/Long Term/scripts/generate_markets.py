@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +39,7 @@ from config.settings import CONTRACT_SPECS_FILE  # noqa: E402
 from core.contract_dates import infer_target_date_yyyy_mm_dd  # noqa: E402
 from core.models import ContractSpecCache  # noqa: E402
 from core.station_timezone import resolve_iana_timezone  # noqa: E402
-from scanners.market_scanner import scan_weather_markets  # noqa: E402
+from scanners.market_scanner import fetch_gamma_active_markets_full, scan_weather_markets  # noqa: E402
 
 
 DEFAULT_OUTPUT_JSON = ROOT / "data" / "active_markets.json"
@@ -106,11 +107,31 @@ def _to_market_record(market: Any, spec: Any) -> dict[str, Any]:
         rec.pop("slug", None)
     if rec.get("gamma_id") in (None, ""):
         rec.pop("gamma_id", None)
+    # Score opérationnel cross-market (préfiltre): liquidité + volume, bonus échéance proche.
+    try:
+        liq = float(rec.get("liquidity_usd", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        liq = 0.0
+    try:
+        vol = float(rec.get("volume", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        vol = 0.0
+    days_to_expiry = 0.0
+    if getattr(market, "end_date", None) is not None:
+        try:
+            days_to_expiry = max(0.0, float(market.days_to_expiry or 0.0))
+        except Exception:
+            days_to_expiry = 0.0
+    # Plus proche = plus actionnable.
+    expiry_boost = 1.0 / (1.0 + days_to_expiry)
+    rec["scanner_rank_score"] = round((liq * 0.60) + (vol * 0.30) + (1000.0 * expiry_boost * 0.10), 3)
     return rec
 
 
 def generate_active_markets_json(output_json: Path, limit: int) -> tuple[int, int, int]:
     spec_cache = ContractSpecCache(CONTRACT_SPECS_FILE)
+    max_pages = int(os.getenv("GAMMA_MAX_PAGES", "20") or "20")
+    raw_snapshot = fetch_gamma_active_markets_full(page_limit=limit, max_pages=max_pages)
     markets = scan_weather_markets(limit=limit, spec_cache=spec_cache)
 
     kept: list[dict[str, Any]] = []
@@ -132,10 +153,13 @@ def generate_active_markets_json(output_json: Path, limit: int) -> tuple[int, in
             continue
         kept.append(_to_market_record(m, spec))
 
+    kept.sort(key=lambda r: float(r.get("scanner_rank_score", 0.0) or 0.0), reverse=True)
     payload = {
         "markets": kept,
         "meta": {
             "scanner_limit": limit,
+            "scanner_max_pages": max_pages,
+            "raw_gamma_active_open_markets": len(raw_snapshot),
             "total_scanned_weather_markets": len(markets),
             "kept_markets": len(kept),
             "skipped_missing_spec": missing_spec,
@@ -143,6 +167,27 @@ def generate_active_markets_json(output_json: Path, limit: int) -> tuple[int, in
             "contract_specs_file": CONTRACT_SPECS_FILE,
         },
     }
+
+    # Snapshot brut optionnel pour audit exhaustif.
+    if os.getenv("BOT1_SAVE_GAMMA_RAW_SNAPSHOT", "").strip().lower() in ("1", "true", "yes", "on"):
+        snap_path = ROOT / "logs" / "gamma_markets_snapshot.json"
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
+        snap_tmp = snap_path.with_suffix(".tmp")
+        snap_tmp.write_text(
+            json.dumps(
+                {
+                    "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "page_limit": limit,
+                    "max_pages": max_pages,
+                    "total_rows": len(raw_snapshot),
+                    "markets": raw_snapshot,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        snap_tmp.replace(snap_path)
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_json.with_suffix(".tmp")

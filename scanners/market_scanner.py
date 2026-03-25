@@ -1,9 +1,9 @@
 """
 Scanner marchés météo via Gamma API Polymarket.
-- 1 seule requête HTTP (pas de pagination infinie)
-- Filtre météo par regex word-boundary
-- Retourne des WeatherMarket typés
-- v2 : parse ContractSpec sur chaque nouveau marché (1 fois, mis en cache)
+- Pagination complète Gamma (offset/limit) avec garde-fou ``GAMMA_MAX_PAGES``.
+- Filtre météo par regex word-boundary.
+- Retourne des WeatherMarket typés.
+- v2 : parse ContractSpec sur chaque nouveau marché (1 fois, mis en cache).
 """
 from __future__ import annotations
 import re, sys, os, json, urllib.request
@@ -15,6 +15,7 @@ from config.keywords import WEATHER_KEYWORDS
 
 GAMMA_URL   = "https://gamma-api.polymarket.com/markets"
 GAMMA_LIMIT = int(os.getenv("GAMMA_LIMIT", "500"))
+GAMMA_MAX_PAGES = int(os.getenv("GAMMA_MAX_PAGES", "20"))
 
 def _match_keyword(text: str) -> Optional[str]:
     s = (text or "").lower()
@@ -28,11 +29,53 @@ def _parse_dt(v: Any) -> Optional[datetime]:
     try: return datetime.strptime(str(v)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError: return None
 
-def _fetch_gamma(limit: int = GAMMA_LIMIT) -> List[dict]:
-    url = f"{GAMMA_URL}?active=true&closed=false&limit={limit}&order=volume&ascending=false"
+def _fetch_gamma_page(limit: int = GAMMA_LIMIT, offset: int = 0) -> List[dict]:
+    url = (
+        f"{GAMMA_URL}?active=true&closed=false&limit={limit}&offset={offset}"
+        "&order=volume&ascending=false"
+    )
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
+
+
+def fetch_gamma_active_markets_full(
+    *,
+    page_limit: int = GAMMA_LIMIT,
+    max_pages: int = GAMMA_MAX_PAGES,
+) -> List[dict]:
+    """
+    Récupère les marchés actifs/ouverts via pagination.
+    Dédup sur ``conditionId`` (fallback ``id``) pour éviter doublons inter-pages.
+    """
+    out: List[dict] = []
+    seen: set[str] = set()
+    limit = max(1, int(page_limit))
+    pages = max(1, int(max_pages))
+    for page in range(pages):
+        offset = page * limit
+        rows = _fetch_gamma_page(limit=limit, offset=offset)
+        if not rows:
+            break
+        new_in_page = 0
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            key = str(raw.get("conditionId") or raw.get("id") or "").strip()
+            if not key:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(raw)
+            new_in_page += 1
+        # Si page partielle, fin de pagination classique.
+        if len(rows) < limit:
+            break
+        # Si page pleine mais zéro nouveau (API instable), stop défensif.
+        if new_in_page == 0:
+            break
+    return out
 
 
 def _gamma_sidecar_from_raw(raw: dict) -> dict[str, Any]:
@@ -159,9 +202,10 @@ def scan_weather_markets(
     Les marchés dont le score d'alignement est trop faible sont éliminés
     UNIQUEMENT si spec_cache est actif — rétrocompatibilité garantie sinon.
     """
-    print(f"🔍 Gamma API scan | limit={limit}")
-    raw_markets = _fetch_gamma(limit)
-    print(f"   Reçus : {len(raw_markets)} marchés")
+    max_pages = int(os.getenv("GAMMA_MAX_PAGES", str(GAMMA_MAX_PAGES)) or str(GAMMA_MAX_PAGES))
+    print(f"🔍 Gamma API scan | page_limit={limit} max_pages={max_pages}")
+    raw_markets = fetch_gamma_active_markets_full(page_limit=limit, max_pages=max_pages)
+    print(f"   Reçus (dédupliqués) : {len(raw_markets)} marchés")
 
     results: List[WeatherMarket] = []
 
@@ -236,7 +280,7 @@ def print_markets(markets: List[WeatherMarket]) -> None:
 
 
 def debug_lost(limit: int = GAMMA_LIMIT) -> None:
-    raw_markets = _fetch_gamma(limit)
+    raw_markets = fetch_gamma_active_markets_full(page_limit=limit, max_pages=1)
     for raw in raw_markets:
         if not raw.get("enableOrderBook"): continue
         if not raw.get("acceptingOrders"): continue
