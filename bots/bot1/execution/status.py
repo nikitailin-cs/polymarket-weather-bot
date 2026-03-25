@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
+# .../POLYMARKET/bots/bot1/execution/status.py -> .../POLYMARKET
+_REPO = Path(__file__).resolve().parents[3]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
-def _repo_root() -> Path:
-    # .../POLYMARKET/bots/bot1/execution/status.py -> .../POLYMARKET
-    return Path(__file__).resolve().parents[3]
+from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
 
 
 def _db_path() -> Path:
-    return _repo_root() / "data" / "portfolio.sqlite"
+    return portfolio_sqlite_path()
 
 
 def _fetch_last_trades(limit: int = 10) -> list[tuple]:
@@ -49,7 +52,7 @@ def _fmt_market_id(market_id: str) -> str:
 
 def _print_plain(rows: list[tuple]) -> None:
     if not rows:
-        print("Aucune position/trade trouvé dans data/portfolio.sqlite.")
+        print(f"Aucune position/trade trouvé dans {_db_path()}.")
         return
     print("POLYMETEO - LAST TRADES")
     print("-" * 90)
@@ -72,7 +75,7 @@ def _print_rich(rows: list[tuple]) -> None:
 
     console = Console()
     if not rows:
-        console.print("[yellow]Aucune position/trade trouvé dans data/portfolio.sqlite.[/yellow]")
+        console.print(f"[yellow]Aucune position/trade trouvé dans {_db_path()}.[/yellow]")
         return
 
     table = Table(title="POLYMETEO - LIVE STATUS (Last Trades)")

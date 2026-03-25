@@ -18,6 +18,7 @@ from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 from config.settings import resolve_trading_private_key  # noqa: E402
+from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -92,7 +93,7 @@ def _build_client() -> Optional[ClobClient]:
 
 
 def _portfolio_snapshot(limit: int = 10) -> list[tuple]:
-    db = _ROOT / "data" / "portfolio.sqlite"
+    db = portfolio_sqlite_path()
     if not db.is_file():
         return []
     conn = sqlite3.connect(str(db))

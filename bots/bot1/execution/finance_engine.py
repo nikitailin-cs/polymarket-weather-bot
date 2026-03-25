@@ -10,7 +10,7 @@ import sys
 import urllib.parse
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -24,11 +24,21 @@ from dotenv import load_dotenv  # noqa: E402
 from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 
-from config.settings import FEE_BPS, MAX_BET_USD, resolve_trading_private_key  # noqa: E402
+from config.settings import (  # noqa: E402
+    FEE_BPS,
+    MAX_BET_USD,
+    finance_engine_is_dry_run,
+    resolve_trading_private_key,
+)
 from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
-from core.polymarket_proxy import apply_proxy_env_for_clob, build_socks5_proxy_url  # noqa: E402
-
-import requests  # noqa: E402
+from core.bot1_data_paths import (  # noqa: E402
+    portfolio_sqlite_path,
+    trading_signals_meta_path,
+    trading_signals_path,
+)
+from core.bot1_http import bot1_http_get_json  # noqa: E402
+from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
+from monitoring.telegram_alert import alert_bot1_position_open  # noqa: E402
 
 
 LOG = logging.getLogger("finance_engine")
@@ -65,11 +75,100 @@ class BookTop:
 
 
 def _signals_path() -> Path:
-    return _ROOT / "data" / "trading_signals.json"
+    return trading_signals_path()
+
+
+def _signals_meta_path() -> Path:
+    return trading_signals_meta_path()
+
+
+def _parse_iso_utc(raw: Any) -> Optional[datetime]:
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _meta_freshness_allows_trading(meta: dict[str, Any]) -> bool:
+    """
+    Même avec status ok, refuse les signaux trop vieux (évite un meta ok figé + JSON ancien).
+    TRADING_SIGNALS_MAX_AGE_SEC défaut 21600 (6 h). Option TRADING_SIGNALS_REQUIRE_SAME_UTC_DATE=1.
+    """
+    raw_gen = meta.get("generated_at_utc")
+    gen_at = _parse_iso_utc(raw_gen)
+    if gen_at is None:
+        LOG.error(
+            "Trading bloqué — manifeste ok mais generated_at_utc invalide ou absent (%r)",
+            raw_gen,
+        )
+        return False
+    now = datetime.now(timezone.utc)
+    try:
+        max_age = float(os.getenv("TRADING_SIGNALS_MAX_AGE_SEC", "21600"))
+    except ValueError:
+        max_age = 21600.0
+    if max_age >= 0 and (now - gen_at) > timedelta(seconds=max_age):
+        LOG.error(
+            "Trading bloqué — signaux trop vieux: generated_at_utc=%s (limite %ss)",
+            raw_gen,
+            int(max_age),
+        )
+        return False
+    same_day = os.getenv("TRADING_SIGNALS_REQUIRE_SAME_UTC_DATE", "").strip().lower()
+    if same_day in ("1", "true", "yes", "on"):
+        if gen_at.date() != now.date():
+            LOG.error(
+                "Trading bloqué — TRADING_SIGNALS_REQUIRE_SAME_UTC_DATE: "
+                "generated_at date %s ≠ jour UTC courant %s",
+                gen_at.date(),
+                now.date(),
+            )
+            return False
+    return True
+
+
+def _manifest_allows_trading(signals_path: Path) -> bool:
+    """
+    Si le manifeste (TRADING_SIGNALS_META_FILE / défaut data/) existe, seul status == ok + fraîcheur autorise le trading.
+    Manifeste absent = compatibilité anciens déploiements (avertissement).
+    """
+    meta_path = _signals_meta_path()
+    if not meta_path.is_file():
+        LOG.warning(
+            "Manifeste signaux absent (%s) — validation NOAA désactivée (legacy)",
+            meta_path,
+        )
+        return True
+    try:
+        meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOG.error("Manifeste signaux illisible (%s): %s", meta_path, exc)
+        return False
+    status = str(meta.get("status", "")).strip()
+    if status != "ok":
+        LOG.error(
+            "Trading bloqué — dernier run NOAA: status=%r raison=%s",
+            status,
+            meta.get("reason", ""),
+        )
+        return False
+    if not _meta_freshness_allows_trading(meta):
+        return False
+    return True
 
 
 def _portfolio_db_path() -> Path:
-    p = _ROOT / "data" / "portfolio.sqlite"
+    p = portfolio_sqlite_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -83,16 +182,7 @@ def _today_utc() -> str:
 
 
 def _http_get_json(url: str, timeout: int = ORDER_TIMEOUT_SEC) -> Any:
-    proxy_url = build_socks5_proxy_url()
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    resp = requests.get(
-        url,
-        timeout=timeout,
-        headers={"User-Agent": "finance-engine/1.0"},
-        proxies=proxies,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return bot1_http_get_json(url, timeout=float(timeout))
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -368,6 +458,22 @@ def _resolve_tokens_for_market(market_id: str) -> Optional[TokenPair]:
     except Exception:
         pass
     return None
+
+
+def _fetch_market_question(market_id: str) -> str:
+    for q in (
+        urllib.parse.urlencode({"id": market_id, "limit": 1}),
+        urllib.parse.urlencode({"condition_ids": market_id, "limit": 1}),
+    ):
+        try:
+            data = _http_get_json(f"{GAMMA_URL}?{q}")
+            if isinstance(data, list) and data:
+                raw = data[0]
+                text = raw.get("question") or raw.get("title") or ""
+                return str(text).strip()
+        except Exception:
+            continue
+    return ""
 
 
 def _extract_best_ask_from_book(book: dict[str, Any]) -> Optional[BookTop]:
@@ -662,6 +768,12 @@ def run(order_size_usdc: Optional[float] = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     LOG.info("Démarrage du moteur financier - mode silencieux HTTP activé")
+    dry = finance_engine_is_dry_run()
+    if dry:
+        LOG.info(
+            "Mode DRY-RUN (finance) — FINANCE_ENGINE_DRY_RUN ou DRY_RUN : "
+            "aucun ordre CLOB, aucune ligne SQLite, pas d'alerte Telegram d'ouverture"
+        )
     if order_size_usdc is None:
         order_size_usdc = float(os.getenv("ORDER_SIZE_USDC", "2.5"))
     budget_usdc = max(0.0, min(float(order_size_usdc), float(MAX_BET_USD)))
@@ -670,13 +782,19 @@ def run(order_size_usdc: Optional[float] = None) -> int:
         budget_usdc,
         float(MAX_BET_USD),
     )
-    signals = _load_signals(_signals_path())
+    signals_path = _signals_path()
+    if not _manifest_allows_trading(signals_path):
+        LOG.info("Arrêt: manifeste NOAA non valide (pas de chargement des signaux).")
+        return 0
+
+    signals = _load_signals(signals_path)
     if not signals:
         LOG.info("Aucun signal disponible.")
         return 0
 
     conn = _open_portfolio_db(_portfolio_db_path())
     executed = 0
+    dry_simulated = 0
     skipped = 0
     try:
         for sig in signals:
@@ -752,6 +870,28 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                 )
                 continue
 
+            if dry:
+                qtext = _fetch_market_question(sig.market_id)
+                if not qtext:
+                    qtext = f"(marché {sig.market_id[:16]}…)"
+                LOG.info(
+                    "[DRY-RUN] aurait passé LIMIT BUY — market_id=%s question=%r side=%s "
+                    "station=%s shares=%.6f price=%.6f notionnel~%.4f USDC barbell=%s ev=%.4f "
+                    "token=%s…",
+                    sig.market_id,
+                    qtext[:120] + ("…" if len(qtext) > 120 else ""),
+                    sig.recommended_side,
+                    sig.station,
+                    size_shares,
+                    best_ask,
+                    notional_usdc,
+                    cond,
+                    ev,
+                    token_id[:18],
+                )
+                dry_simulated += 1
+                continue
+
             resp = _place_limit_buy(token_id=token_id, price=best_ask, size=size_shares)
             ok_post, reject_reason = _clob_order_accepted(resp)
             if not ok_post:
@@ -803,10 +943,41 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                 token_id[:18] + "...",
                 best_ask,
             )
+            stake_usdc = float(matched_size) * float(best_ask)
+            oid = str(resp.get("orderID") or resp.get("order_id") or "")
+            qtext = _fetch_market_question(sig.market_id)
+            if not qtext:
+                qtext = f"(marché {sig.market_id[:16]}…)"
+            open_note = ""
+            if matched_size <= 1e-9:
+                open_note = (
+                    "⚠️ Ordre posté ; aucun fill immédiat (taille remplie = 0, voir carnet CLOB)."
+                )
+            try:
+                alert_bot1_position_open(
+                    question=qtext,
+                    side=sig.recommended_side,
+                    price=float(best_ask),
+                    stake_usdc=stake_usdc,
+                    shares=float(matched_size),
+                    station=sig.station,
+                    ev=float(ev),
+                    market_id=sig.market_id,
+                    order_id=oid,
+                    note=open_note,
+                )
+            except Exception:
+                LOG.debug("Telegram ouverture ignorée (exception)", exc_info=True)
     finally:
         conn.close()
 
-    LOG.info("Terminé: executed=%s skipped=%s total=%s", executed, skipped, len(signals))
+    LOG.info(
+        "Terminé: executed_live=%s dry_simulated=%s skipped=%s total=%s",
+        executed,
+        dry_simulated,
+        skipped,
+        len(signals),
+    )
     return 0
 
 

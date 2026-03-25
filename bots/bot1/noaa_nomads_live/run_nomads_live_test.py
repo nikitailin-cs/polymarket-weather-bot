@@ -1,26 +1,45 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test d'intégration **réseau réel** : NOMADS GFS (fichiers du jour sur
-https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/) via :mod:`noaa_engine`.
+**Producteur de signaux trading bot1** (NOAA GFS / NOMADS + :mod:`noaa_engine`).
 
-Usage (depuis la racine du repo ou ce dossier) ::
+C’est le script invoqué par ``update_bot.sh`` pour alimenter ``finance_engine``.
+Nom de fichier historique : ``run_nomads_live_test.py`` — équivalent préféré en ops :
+``produce_trading_signals.py`` (simple délégation, mêmes arguments).
+
+Réseau réel : fichiers du jour sur
+https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/
+
+Sorties (voir ``core.bot1_data_paths``) :
+
+- ``TRADING_SIGNALS_FILE`` / manifeste / ``LAST_NOAA_RUN_FILE``
+- Skip watchdog : ``trading_signals.json`` inchangé ; manifeste ``skipped_*`` +
+  ``stale_policy`` — ne pas trader tant que le meta n’est pas ``ok``
+
+``finance_engine`` refuse de trader si manifeste présent et status ≠ ``ok``, ou si
+``generated_at_utc`` est trop vieux (``TRADING_SIGNALS_MAX_AGE_SEC``).
+
+Prérequis prod : **wgrib2** dans le PATH pour scorer les marchés (sauf 0 cible).
+
+Usage ::
+
+    python3 bots/bot1/noaa_nomads_live/produce_trading_signals.py
     python3 bots/bot1/noaa_nomads_live/run_nomads_live_test.py
-    python3 run_nomads_live_test.py --forecast-hours 3 --http-debug
+    python3 produce_trading_signals.py --forecast-hours 3 --http-debug
 """
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import logging
 import math
+import os
 import shutil
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 # noaa_engine vit dans le dossier voisin « Long Term »
 _LONG_TERM = Path(__file__).resolve().parent.parent / "Long Term"
@@ -36,6 +55,18 @@ if str(_ROOT) not in sys.path:
 
 import noaa_engine  # noqa: E402
 import market_manager  # noqa: E402
+
+try:
+    from signals.sources.model_calibrator import get_sigma_hint_for_key  # noqa: E402
+except Exception:  # pragma: no cover - import minimal si signals indisponible
+    get_sigma_hint_for_key = None  # type: ignore[misc, assignment]
+
+from core.bot1_data_paths import (  # noqa: E402
+    last_noaa_run_path,
+    noaa_watchdog_state_path,
+    trading_signals_meta_path,
+    trading_signals_path,
+)
 from core.models import ContractSpec  # noqa: E402
 
 T = TypeVar("T")
@@ -52,6 +83,27 @@ def calculate_probability(delta: float, sigma: float = 1.5) -> float:
     p = 0.5 * (1.0 + math.erf(z))
     # Clamp défensif pour éviter des artefacts flottants hors [0, 1].
     return max(0.0, min(1.0, p))
+
+
+def _resolve_sigma_for_target(target: market_manager.MarketTarget) -> float:
+    """
+    Écart-type pour ``calculate_probability`` : env global, puis hint calibrateur
+    (même clé que ``model_bias.json`` : souvent ville ; peut être ICAO si rempli à la main),
+    puis défauts par variable (°C vs mm).
+    """
+    g = os.getenv("BOT1_PROB_SIGMA", "").strip()
+    if g:
+        return max(1e-6, float(g))
+    if os.getenv("BOT1_USE_BIAS_STD_FOR_SIGMA", "").strip().lower() in ("1", "true", "yes", "on"):
+        if get_sigma_hint_for_key is not None:
+            hint = get_sigma_hint_for_key(target.station_code)
+            if hint is not None:
+                return max(1e-6, float(hint))
+    v = (target.variable or "").lower()
+    if v == "precip":
+        # Défaut identique à l’historique (1.5) ; à ajuster en mm via BOT1_PROB_SIGMA_PRECIP.
+        return max(1e-6, float(os.getenv("BOT1_PROB_SIGMA_PRECIP", "1.5")))
+    return max(1e-6, float(os.getenv("BOT1_PROB_SIGMA_TEMPS", "1.5")))
 
 
 def _match_substring_for_variable(variable: str) -> Optional[str]:
@@ -187,12 +239,6 @@ def _configure_logging(*, http_debug: bool) -> logging.Logger:
     return log
 
 
-def _watchdog_state_path() -> Path:
-    p = _ROOT / "data" / "logs" / "noaa_watchdog_state.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
-
-
 def _load_watchdog_state(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -201,21 +247,69 @@ def _load_watchdog_state(path: Path) -> dict:
 
 
 def _save_watchdog_state(path: Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
 
 
-def _trading_signals_path() -> Path:
-    p = _ROOT / "data" / "trading_signals.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+def _next_publication_iso(poll_status: dict[str, Any]) -> Optional[str]:
+    np = poll_status.get("next_publication")
+    if not isinstance(np, dict):
+        return None
+    at = np.get("at_utc")
+    return str(at).strip() if isinstance(at, str) and at.strip() else None
+
+
+def _interval_next_eligible_utc(last_ts: float, min_sec: int) -> str:
+    return datetime.fromtimestamp(
+        last_ts + max(0, int(min_sec)), tz=timezone.utc
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _write_last_noaa_run(payload: dict[str, Any]) -> None:
+    """Journal latéral ops (skip, prochaine fenêtre, etc.), distinct du manifeste finance."""
+    base = {"at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    base.update(payload)
+    _write_json_atomic(last_noaa_run_path(), base)
+
+
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f"{path.suffix}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _save_trading_signals(path: Path, payload: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _write_json_atomic(path, payload)
+
+
+def _write_signals_meta(
+    *,
+    status: str,
+    reason: str,
+    forecast_cycle_utc: str | None,
+    signals_written: int | None,
+    targets_expected: int | None,
+    wgrib2_available: bool | None,
+    pipeline_exit_code: int,
+    extra: Optional[dict[str, Any]] = None,
+) -> None:
+    """État du dernier run NOAA pour downstream (finance_engine). status ok = signaux fiables."""
+    payload: dict[str, Any] = {
+        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "forecast_cycle_utc": forecast_cycle_utc,
+        "status": status,
+        "reason": reason,
+        "signals_written": signals_written,
+        "targets_expected": targets_expected,
+        "wgrib2_available": wgrib2_available,
+        "pipeline_exit_code": pipeline_exit_code,
+    }
+    if extra:
+        payload.update(extra)
+    _write_json_atomic(trading_signals_meta_path(), payload)
 
 
 def _format_forecast_cycle_utc(day: object, cycle_utc: object) -> str:
@@ -236,8 +330,13 @@ def _format_forecast_cycle_utc(day: object, cycle_utc: object) -> str:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Test NOMADS live + noaa_engine (logs massifs).")
-    p.add_argument("--forecast-hours", type=int, default=3, help="Échéance fXXX (ex. 3 → f003).")
+    p = argparse.ArgumentParser(
+        description=(
+            "Producteur de signaux bot1: NOMADS GFS + noaa_engine + wgrib2 "
+            "(logs detailles en DEBUG)."
+        ),
+    )
+    p.add_argument("--forecast-hours", type=int, default=3, help="Echeance fXXX (ex. 3 -> f003).")
     p.add_argument(
         "--max-chunk-mb",
         type=float,
@@ -275,7 +374,7 @@ def main() -> int:
     log = _configure_logging(http_debug=args.http_debug)
     fh = max(0, int(args.forecast_hours))
     max_chunk = int(args.max_chunk_mb * 1024 * 1024)
-    state_path = _watchdog_state_path()
+    state_path = noaa_watchdog_state_path()
     now_ts = time.time()
     status = noaa_engine.gfs_poll_status()
     mode = str(status.get("mode", "sleep"))
@@ -286,6 +385,28 @@ def main() -> int:
                 "Watchdog: hors fenêtre intensive GFS (mode=%s), run NOAA ignoré.",
                 mode,
             )
+            _write_signals_meta(
+                status="skipped_watchdog_window",
+                reason=f"mode_gfs={mode!r} (hors fenêtre intensive); pas de nouveaux signaux",
+                forecast_cycle_utc=None,
+                signals_written=None,
+                targets_expected=None,
+                wgrib2_available=bool(shutil.which("wgrib2")),
+                pipeline_exit_code=0,
+                extra={
+                    "trading_signals_json_unchanged": True,
+                    "stale_policy": "refuse_trade_until_meta_status_ok",
+                },
+            )
+            _write_last_noaa_run(
+                {
+                    "skipped": True,
+                    "meta_status": "skipped_watchdog_window",
+                    "reason": f"mode_gfs={mode!r}",
+                    "next_eligible_utc": _next_publication_iso(status),
+                    "trading_signals_json_unchanged": True,
+                }
+            )
             return 0
         st = _load_watchdog_state(state_path)
         last_ts = float(st.get("last_run_started_ts", 0.0) or 0.0)
@@ -295,6 +416,33 @@ def main() -> int:
                 "Watchdog: run ignoré (dernière exécution il y a %.1fs, min=%ss).",
                 since,
                 int(args.min_run_interval_sec),
+            )
+            _write_signals_meta(
+                status="skipped_watchdog_interval",
+                reason=(
+                    f"min_run_interval_sec={int(args.min_run_interval_sec)} "
+                    f"non écoulé (dernière exécution il y a {since:.1f}s)"
+                ),
+                forecast_cycle_utc=None,
+                signals_written=None,
+                targets_expected=None,
+                wgrib2_available=bool(shutil.which("wgrib2")),
+                pipeline_exit_code=0,
+                extra={
+                    "trading_signals_json_unchanged": True,
+                    "stale_policy": "refuse_trade_until_meta_status_ok",
+                },
+            )
+            _write_last_noaa_run(
+                {
+                    "skipped": True,
+                    "meta_status": "skipped_watchdog_interval",
+                    "reason": f"min_interval_sec={int(args.min_run_interval_sec)}",
+                    "next_eligible_utc": _interval_next_eligible_utc(
+                        last_ts, int(args.min_run_interval_sec)
+                    ),
+                    "trading_signals_json_unchanged": True,
+                }
             )
             return 0
 
@@ -315,6 +463,15 @@ def main() -> int:
             log.error("SQLite stations manquante ou vide: %s", stations_db)
             log.error(
                 "Lance d'abord: python3 \"bots/bot1/Long Term/scripts/sync_master_stations.py\""
+            )
+            _write_signals_meta(
+                status="error",
+                reason="SQLite stations manquante ou vide (sync_master_stations requis)",
+                forecast_cycle_utc=None,
+                signals_written=None,
+                targets_expected=None,
+                wgrib2_available=bool(shutil.which("wgrib2")),
+                pipeline_exit_code=1,
             )
             return 1
         loaded = market_manager.load_active_markets(markets_json)
@@ -341,8 +498,48 @@ def main() -> int:
                 t.latitude,
                 t.longitude,
             )
+        if not targets:
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            log.info("Aucune cible marché — signaux vides, meta ok.")
+            signals_path = trading_signals_path()
+            _save_trading_signals(
+                signals_path,
+                {"last_run_utc": ts, "forecast_cycle_utc": "", "signals": []},
+            )
+            _write_signals_meta(
+                status="ok",
+                reason="Aucun marché actif avec station résolue",
+                forecast_cycle_utc=None,
+                signals_written=0,
+                targets_expected=0,
+                wgrib2_available=bool(shutil.which("wgrib2")),
+                pipeline_exit_code=0,
+                extra={
+                    "trading_signals_json_unchanged": False,
+                    "stale_policy": "ok",
+                },
+            )
+            _write_last_noaa_run(
+                {
+                    "skipped": False,
+                    "meta_status": "ok",
+                    "forecast_cycle_utc": None,
+                    "signals_written": 0,
+                    "trading_signals_json_unchanged": False,
+                }
+            )
+            return 0
     except Exception:
         log.exception("Echec liaison JSON <-> SQLite")
+        _write_signals_meta(
+            status="error",
+            reason="Echec liaison active_markets.json / master_stations.sqlite3",
+            forecast_cycle_utc=None,
+            signals_written=None,
+            targets_expected=None,
+            wgrib2_available=bool(shutil.which("wgrib2")),
+            pipeline_exit_code=1,
+        )
         return 1
 
     t0 = time.monotonic()
@@ -378,6 +575,15 @@ def main() -> int:
 
     if not hit or chosen_run is None:
         log.error("Aucun .idx trouvé (NOMADS/S3) sur les runs candidats.")
+        _write_signals_meta(
+            status="error_no_idx",
+            reason="Aucun fichier .idx GFS disponible sur les runs candidats (NOMADS/S3)",
+            forecast_cycle_utc=None,
+            signals_written=None,
+            targets_expected=len(targets),
+            wgrib2_available=bool(shutil.which("wgrib2")),
+            pipeline_exit_code=1,
+        )
         return 1
 
     pgrb2_url = noaa_engine.build_gfs_pgrb2_url(
@@ -412,6 +618,15 @@ def main() -> int:
         }
         if not needed_match_substrings:
             log.error("Aucun champ NOAA supporté par les targets (variables non mappées).")
+            _write_signals_meta(
+                status="error",
+                reason="Variables marchés non mappées vers champs NOAA (TMP/APCP)",
+                forecast_cycle_utc=_format_forecast_cycle_utc(chosen_run.day, chosen_run.cycle_utc),
+                signals_written=None,
+                targets_expected=len(targets),
+                wgrib2_available=bool(shutil.which("wgrib2")),
+                pipeline_exit_code=1,
+            )
             return 1
 
         # Correction RAM: vérifie la taille via offsets AVANT tout GET Range.
@@ -448,185 +663,263 @@ def main() -> int:
         if not available_chunks:
             log.warning("Aucun chunk NOAA disponible après contrôles mémoire/réseau.")
             log.info("========== FIN TEST (partiel) en %.2fs ==========", time.monotonic() - t0)
-            return 0
+            _write_signals_meta(
+                status="error_no_chunks",
+                reason="Aucun segment GRIB récupérable (taille/plage idx/réseau)",
+                forecast_cycle_utc=_format_forecast_cycle_utc(chosen_run.day, chosen_run.cycle_utc),
+                signals_written=None,
+                targets_expected=len(targets),
+                wgrib2_available=bool(shutil.which("wgrib2")),
+                pipeline_exit_code=1,
+            )
+            return 1
 
         wgrib_code: int | None = None
+        wgrib_exe = None if args.skip_wgrib2 else shutil.which("wgrib2")
         if args.skip_wgrib2:
             log.info("— wgrib2 ignoré (--skip-wgrib2)")
-        else:
-            wg = shutil.which("wgrib2")
-            if not wg:
-                log.warning("wgrib2 absent du PATH — étape scalpel ignorée")
-            else:
-                log.info(
-                    "— Étape run_wgrib2_scalpel_at_point (boucle dynamique sur targets) — %s",
-                    wg,
+        elif not wgrib_exe:
+            log.error(
+                "wgrib2 absent du PATH — impossible de scorer les marchés. "
+                "Installez wgrib2 (ex. paquet wgrib2 / conda) et vérifiez le PATH."
+            )
+        if len(targets) > 0 and not wgrib_exe:
+            _write_signals_meta(
+                status="skipped_no_wgrib2",
+                reason=(
+                    "wgrib2 requis pour extraire les valeurs au point; "
+                    "absent du PATH ou désactivé via --skip-wgrib2"
+                ),
+                forecast_cycle_utc=_format_forecast_cycle_utc(chosen_run.day, chosen_run.cycle_utc),
+                signals_written=None,
+                targets_expected=len(targets),
+                wgrib2_available=False,
+                pipeline_exit_code=1,
+            )
+            log.info("========== FIN ÉCHEC (wgrib2 requis) en %.2fs ==========", time.monotonic() - t0)
+            return 1
+
+        log.info(
+            "— Étape run_wgrib2_scalpel_at_point (boucle dynamique sur targets) — %s",
+            wgrib_exe,
+        )
+        failed_targets = 0
+        compared_targets = 0
+        trading_signals: list[dict] = []
+        for target in targets:
+            match_sub = _match_substring_for_variable(target.variable)
+            if not match_sub:
+                failed_targets += 1
+                log.warning(
+                    "  market=%s station=%s variable non supportée=%s",
+                    target.market_id,
+                    target.station_code,
+                    target.variable,
                 )
-                failed_targets = 0
-                compared_targets = 0
-                trading_signals: list[dict] = []
-                for target in targets:
-                    match_sub = _match_substring_for_variable(target.variable)
-                    if not match_sub:
-                        failed_targets += 1
-                        log.warning(
-                            "  market=%s station=%s variable non supportée=%s",
-                            target.market_id,
-                            target.station_code,
-                            target.variable,
-                        )
-                        continue
-                    chunk = available_chunks.get(match_sub)
-                    if not chunk:
-                        failed_targets += 1
-                        log.warning(
-                            "  market=%s station=%s champ NOAA manquant pour variable=%s (%s)",
-                            target.market_id,
-                            target.station_code,
-                            target.variable,
-                            match_sub,
-                        )
-                        continue
-                    t4 = time.monotonic()
-                    fh_series = _forecast_hours_for_target(fh, target)
-                    raw_samples: list[float] = []
-                    for fh_i in fh_series:
-                        # Pour fH != run initial, on réutilise le même run + idx/pgrb2 calculé à la volée.
-                        # Best-effort: si indispo, on skip ce point et continue.
-                        try:
-                            pgrb2_url_i = noaa_engine.build_gfs_pgrb2_url(
-                                chosen_run.day, chosen_run.cycle_utc, fh_i, base=noaa_engine.GFS_PROD_BASE
-                            )
-                            idx_url_i = noaa_engine.build_gfs_idx_url(
-                                chosen_run.day, chosen_run.cycle_utc, fh_i, base=noaa_engine.BASE_URL_PRIORITY
-                            )
-                            idx_text_i = _retry(
-                                f"fetch_idx_text f{fh_i:03d}",
-                                lambda idx_url_i=idx_url_i: noaa_engine.fetch_idx_text(idx_url_i),
-                                tries=2,
-                            )
-                            total_i = noaa_engine.head_get_content_length(pgrb2_url_i)
-                            span_i = noaa_engine.byte_range_for_idx_line_containing(
-                                idx_text_i, match_sub, pgrb2_total_bytes=total_i
-                            )
-                            if span_i is None:
-                                continue
-                            a_i, b_i = span_i
-                            if (b_i - a_i + 1) > max_chunk:
-                                continue
-                            chunk_i = _retry(
-                                f"get_range_bytes f{fh_i:03d}",
-                                lambda pgrb2_url_i=pgrb2_url_i, a_i=a_i, b_i=b_i: noaa_engine.get_range_bytes(
-                                    pgrb2_url_i, a_i, b_i
-                                ),
-                                tries=2,
-                            )
-                        except Exception:
-                            continue
-                        code, val, out, err = _retry(
-                            f"wgrib2 f{fh_i:03d}",
-                            lambda chunk_i=chunk_i: noaa_engine.run_wgrib2_scalpel_at_point(
-                                chunk_i,
-                                lon=target.longitude,
-                                lat=target.latitude,
-                                match_substring=match_sub,
-                                timeout_sec=120.0,
-                            ),
-                            tries=2,
-                        )
-                        if code == 0 and val is not None:
-                            raw_samples.append(val)
-                        elif code != 0:
-                            wgrib_code = code
-                    compared_targets += 1
-                    if not raw_samples:
-                        failed_targets += 1
-                        log.error(
-                            "  market=%s station=%s -> aucune valeur NOAA exploitable",
-                            target.market_id,
-                            target.station_code,
-                        )
-                        continue
-                    try:
-                        raw_observed = _aggregate_observed_value(raw_samples, target)
-                        val_converted = _convert_value_to_contract_unit(
-                            variable=target.variable,
-                            unit=target.unit,
-                            raw_value=raw_observed,
-                        )
-                        spec = _build_contract_spec_from_target(target)
-                        passed = spec.evaluate(val_converted)
-                    except Exception as e:
-                        failed_targets += 1
-                        log.error(
-                            "  market=%s station=%s conversion/eval impossible: %s",
-                            target.market_id,
-                            target.station_code,
-                            e,
-                        )
-                        continue
-                    decision = "BET_WIN" if passed else "BET_LOSE"
-                    delta = val_converted - target.threshold
-                    pwin = calculate_probability(delta)
-                    recommended_side = "YES" if pwin >= 0.5 else "NO"
-                    trading_signals.append(
-                        {
-                            "market_id": target.market_id,
-                            "station": target.station_code,
-                            "p_win": round(pwin, 3),
-                            "delta": round(delta, 2),
-                            "recommended_side": recommended_side,
-                        }
-                    )
-                    log.info(
-                        "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f result=%s (%.3fs)",
-                        target.market_id,
-                        target.station_code,
-                        target.oracle_source,
-                        target.variable,
-                        target.unit,
-                        target.operator,
-                        len(raw_samples),
-                        target.latitude,
-                        target.longitude,
-                        raw_observed,
-                        val_converted,
-                        target.threshold,
-                        delta,
-                        pwin,
-                        decision,
-                        time.monotonic() - t4,
-                    )
-                log.info(
-                    "  synthèse comparaison: targets=%s comparés=%s erreurs=%s",
-                    len(targets),
-                    compared_targets,
-                    failed_targets,
+                continue
+            chunk = available_chunks.get(match_sub)
+            if not chunk:
+                failed_targets += 1
+                log.warning(
+                    "  market=%s station=%s champ NOAA manquant pour variable=%s (%s)",
+                    target.market_id,
+                    target.station_code,
+                    target.variable,
+                    match_sub,
                 )
-                signals_payload = {
-                    "last_run_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "forecast_cycle_utc": _format_forecast_cycle_utc(
-                        chosen_run.day, chosen_run.cycle_utc
+                continue
+            t4 = time.monotonic()
+            fh_series = _forecast_hours_for_target(fh, target)
+            raw_samples: list[float] = []
+            for fh_i in fh_series:
+                try:
+                    pgrb2_url_i = noaa_engine.build_gfs_pgrb2_url(
+                        chosen_run.day, chosen_run.cycle_utc, fh_i, base=noaa_engine.GFS_PROD_BASE
+                    )
+                    idx_url_i = noaa_engine.build_gfs_idx_url(
+                        chosen_run.day, chosen_run.cycle_utc, fh_i, base=noaa_engine.BASE_URL_PRIORITY
+                    )
+                    idx_text_i = _retry(
+                        f"fetch_idx_text f{fh_i:03d}",
+                        lambda idx_url_i=idx_url_i: noaa_engine.fetch_idx_text(idx_url_i),
+                        tries=2,
+                    )
+                    total_i = noaa_engine.head_get_content_length(pgrb2_url_i)
+                    span_i = noaa_engine.byte_range_for_idx_line_containing(
+                        idx_text_i, match_sub, pgrb2_total_bytes=total_i
+                    )
+                    if span_i is None:
+                        continue
+                    a_i, b_i = span_i
+                    if (b_i - a_i + 1) > max_chunk:
+                        continue
+                    chunk_i = _retry(
+                        f"get_range_bytes f{fh_i:03d}",
+                        lambda pgrb2_url_i=pgrb2_url_i, a_i=a_i, b_i=b_i: noaa_engine.get_range_bytes(
+                            pgrb2_url_i, a_i, b_i
+                        ),
+                        tries=2,
+                    )
+                except Exception:
+                    continue
+                code, val, out, err = _retry(
+                    f"wgrib2 f{fh_i:03d}",
+                    lambda chunk_i=chunk_i: noaa_engine.run_wgrib2_scalpel_at_point(
+                        chunk_i,
+                        lon=target.longitude,
+                        lat=target.latitude,
+                        match_substring=match_sub,
+                        timeout_sec=120.0,
                     ),
-                    "signals": trading_signals,
-                }
-                signals_path = _trading_signals_path()
-                _save_trading_signals(signals_path, signals_payload)
-                log.info(
-                    "  trading signals écrits: path=%s signaux=%s",
-                    signals_path,
-                    len(trading_signals),
+                    tries=2,
                 )
+                if code == 0 and val is not None:
+                    raw_samples.append(val)
+                elif code != 0:
+                    wgrib_code = code
+            compared_targets += 1
+            if not raw_samples:
+                failed_targets += 1
+                log.error(
+                    "  market=%s station=%s -> aucune valeur NOAA exploitable",
+                    target.market_id,
+                    target.station_code,
+                )
+                continue
+            try:
+                raw_observed = _aggregate_observed_value(raw_samples, target)
+                val_converted = _convert_value_to_contract_unit(
+                    variable=target.variable,
+                    unit=target.unit,
+                    raw_value=raw_observed,
+                )
+                spec = _build_contract_spec_from_target(target)
+                passed = spec.evaluate(val_converted)
+            except Exception as e:
+                failed_targets += 1
+                log.error(
+                    "  market=%s station=%s conversion/eval impossible: %s",
+                    target.market_id,
+                    target.station_code,
+                    e,
+                )
+                continue
+            decision = "BET_WIN" if passed else "BET_LOSE"
+            delta = val_converted - target.threshold
+            pwin = calculate_probability(delta, sigma=_resolve_sigma_for_target(target))
+            recommended_side = "YES" if pwin >= 0.5 else "NO"
+            trading_signals.append(
+                {
+                    "market_id": target.market_id,
+                    "station": target.station_code,
+                    "p_win": round(pwin, 3),
+                    "delta": round(delta, 2),
+                    "recommended_side": recommended_side,
+                }
+            )
+            log.info(
+                "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f result=%s (%.3fs)",
+                target.market_id,
+                target.station_code,
+                target.oracle_source,
+                target.variable,
+                target.unit,
+                target.operator,
+                len(raw_samples),
+                target.latitude,
+                target.longitude,
+                raw_observed,
+                val_converted,
+                target.threshold,
+                delta,
+                pwin,
+                decision,
+                time.monotonic() - t4,
+            )
+
+        log.info(
+            "  synthèse comparaison: targets=%s comparés=%s erreurs=%s",
+            len(targets),
+            compared_targets,
+            failed_targets,
+        )
+        fc_utc = _format_forecast_cycle_utc(chosen_run.day, chosen_run.cycle_utc)
+        signals_payload = {
+            "last_run_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "forecast_cycle_utc": fc_utc,
+            "signals": trading_signals,
+        }
+        signals_path = trading_signals_path()
+        _save_trading_signals(signals_path, signals_payload)
+        log.info(
+            "  trading signals écrits: path=%s signaux=%s",
+            signals_path,
+            len(trading_signals),
+        )
 
         if wgrib_code is not None and wgrib_code != 0:
             log.error("wgrib2 a retourné code=%s — échec", wgrib_code)
             log.info("========== FIN TEST ÉCHEC wgrib2 en %.2fs ==========", time.monotonic() - t0)
+            _write_signals_meta(
+                status="error_wgrib2",
+                reason=f"wgrib2 a retourné un code d'erreur={wgrib_code}",
+                forecast_cycle_utc=fc_utc,
+                signals_written=len(trading_signals),
+                targets_expected=len(targets),
+                wgrib2_available=True,
+                pipeline_exit_code=1,
+            )
             return 1
 
+        if len(targets) > 0 and not trading_signals:
+            log.error("Aucun signal produit malgré %s cible(s) active(s).", len(targets))
+            _write_signals_meta(
+                status="error_no_signals_produced",
+                reason="Boucle wgrib2 n'a produit aucun signal (toutes cibles en échec partiel)",
+                forecast_cycle_utc=fc_utc,
+                signals_written=0,
+                targets_expected=len(targets),
+                wgrib2_available=True,
+                pipeline_exit_code=1,
+            )
+            log.info("========== FIN ÉCHEC (aucun signal) en %.2fs ==========", time.monotonic() - t0)
+            return 1
+
+        _write_signals_meta(
+            status="ok",
+            reason="Signaux NOAA/wgrib2 écrits pour ce cycle",
+            forecast_cycle_utc=fc_utc,
+            signals_written=len(trading_signals),
+            targets_expected=len(targets),
+            wgrib2_available=True,
+            pipeline_exit_code=0,
+            extra={
+                "trading_signals_json_unchanged": False,
+                "stale_policy": "ok",
+            },
+        )
+        _write_last_noaa_run(
+            {
+                "skipped": False,
+                "meta_status": "ok",
+                "forecast_cycle_utc": fc_utc,
+                "signals_written": len(trading_signals),
+                "trading_signals_json_unchanged": False,
+            }
+        )
         log.info("========== FIN TEST OK en %.2fs ==========", time.monotonic() - t0)
         return 0
     except Exception:
         log.exception("Échec pipeline (exception ci-dessous)")
+        _write_signals_meta(
+            status="error_exception",
+            reason="Exception non gérée dans le pipeline NOMADS (voir logs)",
+            forecast_cycle_utc=None,
+            signals_written=None,
+            targets_expected=None,
+            wgrib2_available=bool(shutil.which("wgrib2")),
+            pipeline_exit_code=1,
+        )
         return 1
 
 

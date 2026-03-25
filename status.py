@@ -28,7 +28,7 @@ def main() -> None:
     print(
         "\n"
         "  Sources : (1) JSON pnl_tracker — souvent [DRY] si DRY_RUN=1 (≠ portefeuille Polymarket) ;\n"
-        "            (2) data/portfolio.sqlite — enregistré par finance_engine après ordres ;\n"
+        "            (2) portfolio.sqlite (PORTFOLIO_SQLITE_PATH / défaut data/) — finance_engine ;\n"
         "            (3) état CLOB live : .venv/bin/python bots/bot1/execution/status_live.py\n"
     )
     print("═" * 72)
@@ -41,7 +41,7 @@ def main() -> None:
     if mod is not None and hasattr(mod, "get_status"):
         print()
         print("═" * 72)
-        print("  (2) Bot1 — derniers trades (data/portfolio.sqlite)")
+        print("  (2) Bot1 — derniers trades (voir PORTFOLIO_SQLITE_PATH / data/portfolio.sqlite)")
         print("═" * 72)
         mod.get_status(limit=15)
     else:

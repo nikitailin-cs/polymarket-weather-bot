@@ -132,6 +132,32 @@ def update_actuals() -> int:
     return updated
 
 
+def get_sigma_hint_for_key(key: str) -> Optional[float]:
+    """
+    Pour bot1 / autres pipelines : si la clé (ville, ICAO, etc.) existe dans le fichier
+    biais avec assez d'observations, retourne un sigma gaussien heuristique dérivé de
+    ``bias_std`` (écart-type des erreurs passées), borné pour éviter des extrêmes.
+    Retourne None si pas de données exploitables.
+    """
+    if not key or not str(key).strip():
+        return None
+    bias = _load_bias()
+    k = str(key).lower().strip()
+    data = bias.get(k)
+    if not isinstance(data, dict):
+        return None
+    n = int(data.get("n", 0) or 0)
+    if n < MIN_OBSERVATIONS:
+        return None
+    try:
+        std = float(data.get("bias_std", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if std <= 0:
+        return None
+    return max(0.5, min(8.0, std))
+
+
 def get_bias_correction(city: str) -> Optional[float]:
     """
     Retourne la correction de biais à appliquer pour une ville (en °C).

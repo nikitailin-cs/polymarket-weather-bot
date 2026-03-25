@@ -63,6 +63,21 @@ LOG_LEVEL          = os.getenv("LOG_LEVEL", "INFO")
 # ── Mode ──────────────────────────────────────────────────────────────────────
 DRY_RUN = os.getenv("DRY_RUN", "1") == "1"
 
+
+def finance_engine_is_dry_run() -> bool:
+    """
+    Dry-run pour ``bots/bot1/execution/finance_engine.py`` : pas d'ordre CLOB ni INSERT réel
+    dans ``portfolio.sqlite``. ``FINANCE_ENGINE_DRY_RUN`` force (1/0/true/false) ;
+    si absent, suit ``DRY_RUN``.
+    """
+    v = (os.getenv("FINANCE_ENGINE_DRY_RUN") or "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return DRY_RUN
+
+
 # ── Contractuel / Oracle (v2) ─────────────────────────────────────────────────
 # Seuil minimum d'alignement modèle ↔ source oracle pour trader un marché.
 # Sous ce seuil, le parsing est jugé insuffisant et le marché est écarté.

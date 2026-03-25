@@ -8,7 +8,6 @@ import sqlite3
 import sys
 import time
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,13 +18,19 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
+from core.bot1_http import bot1_http_get_json  # noqa: E402
 from execution.ctf_manager import (  # noqa: E402
     RedeemResult,
     get_pol_balance,
     get_usdc_balance,
     redeem_position_detailed,
 )
-from monitoring.telegram_alert import send_alert  # noqa: E402
+from monitoring.telegram_alert import (  # noqa: E402
+    alert_bot1_position_close,
+    alert_error,
+    send_alert,
+)
 
 LOG = logging.getLogger("exit_engine")
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
@@ -49,7 +54,7 @@ class ResolutionState:
 
 
 def _portfolio_db_path() -> Path:
-    p = _ROOT / "data" / "portfolio.sqlite"
+    p = portfolio_sqlite_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -59,9 +64,7 @@ def _now_utc_iso() -> str:
 
 
 def _http_get_json(url: str) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": "exit-engine/1.0"})
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as resp:
-        return json.loads(resp.read())
+    return bot1_http_get_json(url, timeout=float(HTTP_TIMEOUT_SEC))
 
 
 def _open_db() -> sqlite3.Connection:
@@ -282,6 +285,46 @@ def _mark_skipped_dust(conn: sqlite3.Connection, market_id: str, side: str, sett
     return int(rowcount or 0)
 
 
+def _fetch_market_question(market_id: str) -> str:
+    for q in (
+        urllib.parse.urlencode({"condition_ids": market_id, "limit": 1}),
+        urllib.parse.urlencode({"id": market_id, "limit": 1}),
+    ):
+        try:
+            data = _http_get_json(f"{GAMMA_URL}?{q}")
+            if isinstance(data, list) and data:
+                m = data[0]
+                return str(m.get("question") or m.get("title") or "").strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _sum_stake_resolved(conn: sqlite3.Connection, market_id: str, side: str) -> float:
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(spent_usdc, 0.0)), 0.0)
+        FROM executed_trades
+        WHERE market_id = ? AND recommended_side = ? AND status = 'RESOLVED'
+        """,
+        (market_id, side),
+    ).fetchone()
+    return float(row[0] if row and row[0] is not None else 0.0)
+
+
+def _station_for_resolved(conn: sqlite3.Connection, market_id: str, side: str) -> str:
+    row = conn.execute(
+        """
+        SELECT station FROM executed_trades
+        WHERE market_id = ? AND recommended_side = ? AND status = 'RESOLVED'
+        ORDER BY id ASC
+        LIMIT 1
+        """,
+        (market_id, side),
+    ).fetchone()
+    return str(row[0]).strip() if row and row[0] else ""
+
+
 def _fetch_resolution_state(market_id: str) -> ResolutionState:
     query = urllib.parse.urlencode({"condition_ids": market_id, "limit": 1})
     url = f"{GAMMA_URL}?{query}"
@@ -361,6 +404,11 @@ def run(dry_run: bool = False) -> int:
                 skipped += 1
                 continue
             if state.status == "CANCELLED":
+                stake = _sum_stake_resolved(conn, pos.market_id, pos.side)
+                station = _station_for_resolved(conn, pos.market_id, pos.side)
+                question = _fetch_market_question(pos.market_id) or (
+                    f"(marché {pos.market_id[:16]}…)"
+                )
                 changed = _mark_settled_loser(
                     conn,
                     market_id=pos.market_id,
@@ -369,6 +417,16 @@ def run(dry_run: bool = False) -> int:
                 )
                 if changed > 0:
                     settled += changed
+                    alert_bot1_position_close(
+                        title="Fermeture — marché annulé",
+                        question=question,
+                        side=pos.side,
+                        station=station,
+                        pnl_usdc=-stake,
+                        stake_usdc=stake,
+                        detail="Marché annulé ; mise comptabilisée comme perte.",
+                        emoji="⚠️",
+                    )
                 _upsert_attempt(
                     conn,
                     market_id=pos.market_id,
@@ -380,6 +438,11 @@ def run(dry_run: bool = False) -> int:
                 continue
             assert state.status == "RESOLVED"
             if state.winning_side != pos.side:
+                stake = _sum_stake_resolved(conn, pos.market_id, pos.side)
+                station = _station_for_resolved(conn, pos.market_id, pos.side)
+                question = _fetch_market_question(pos.market_id) or (
+                    f"(marché {pos.market_id[:16]}…)"
+                )
                 changed = _mark_settled_loser(
                     conn,
                     market_id=pos.market_id,
@@ -388,6 +451,16 @@ def run(dry_run: bool = False) -> int:
                 )
                 if changed > 0:
                     settled += changed
+                    alert_bot1_position_close(
+                        title="Fermeture — position perdante",
+                        question=question,
+                        side=pos.side,
+                        station=station,
+                        pnl_usdc=-stake,
+                        stake_usdc=stake,
+                        detail=f"Côté gagnant du marché : {state.winning_side}",
+                        emoji="🔴",
+                    )
                 _upsert_attempt(
                     conn,
                     market_id=pos.market_id,
@@ -399,6 +472,10 @@ def run(dry_run: bool = False) -> int:
                 continue
             recoverable_usdc = _estimate_recoverable_usdc(conn, pos.market_id, pos.side)
             if recoverable_usdc < DUST_MIN_RECOVERABLE_USDC:
+                station = _station_for_resolved(conn, pos.market_id, pos.side)
+                question = _fetch_market_question(pos.market_id) or (
+                    f"(marché {pos.market_id[:16]}…)"
+                )
                 changed = _mark_skipped_dust(
                     conn,
                     market_id=pos.market_id,
@@ -415,6 +492,20 @@ def run(dry_run: bool = False) -> int:
                         f"threshold={DUST_MIN_RECOVERABLE_USDC:.2f}"
                     ),
                 )
+                if changed > 0:
+                    alert_bot1_position_close(
+                        title="Fermeture — redeem non tenté (dust)",
+                        question=question,
+                        side=pos.side,
+                        station=station,
+                        pnl_usdc=0.0,
+                        stake_usdc=recoverable_usdc,
+                        detail=(
+                            f"Montant récupérable estimé {recoverable_usdc:.4f} USDC "
+                            f"&lt; seuil {DUST_MIN_RECOVERABLE_USDC:.2f} USDC."
+                        ),
+                        emoji="📎",
+                    )
                 skipped += max(1, changed)
                 LOG.info(
                     "Dust skip market_id=%s side=%s recoverable=%.6f threshold=%.2f rows=%s",
@@ -461,6 +552,10 @@ def run(dry_run: bool = False) -> int:
                         break
 
             if result == RedeemResult.SUCCESS and usdc_delta > 0:
+                stake_before = _sum_stake_resolved(conn, pos.market_id, pos.side)
+                question = _fetch_market_question(pos.market_id) or (
+                    f"(marché {pos.market_id[:16]}…)"
+                )
                 _upsert_attempt(
                     conn,
                     market_id=pos.market_id,
@@ -482,12 +577,23 @@ def run(dry_run: bool = False) -> int:
                 settled += changed
                 station = str(getattr(_mark_settled_winner, "_last_station", "")).strip() or "N/A"
                 total_pnl = float(getattr(_mark_settled_winner, "_last_total_pnl", 0.0))
-                send_alert(
-                    (
-                        f"💰 Gain encaissé sur {station} : {total_pnl:+.2f} USDC. "
-                        f"Nouveau solde : {usdc_after:.2f} USDC"
+                tx_short = (
+                    (details.tx_hash[:18] + "…")
+                    if details.tx_hash and len(details.tx_hash) > 20
+                    else (details.tx_hash or "-")
+                )
+                alert_bot1_position_close(
+                    title="Fermeture — gain encaissé (redeem)",
+                    question=question,
+                    side=pos.side,
+                    station=station,
+                    pnl_usdc=total_pnl,
+                    stake_usdc=stake_before,
+                    detail=(
+                        f"USDC reçus (delta wallet) ~{usdc_delta:.2f} · "
+                        f"solde ~{usdc_after:.2f} USDC · tx {tx_short}"
                     ),
-                    emoji="",
+                    emoji="🟢",
                 )
                 LOG.info(
                     "Redeem SUCCESS market_id=%s side=%s tx=%s event=%s "
@@ -521,6 +627,10 @@ def run(dry_run: bool = False) -> int:
                     details.payout_event_found,
                     usdc_delta,
                 )
+                alert_error(
+                    f"Redeem OK mais solde USDC inchangé (vérif manuelle). "
+                    f"market={pos.market_id[:24]}… side={pos.side} delta={usdc_delta:.6f}"
+                )
             else:
                 _upsert_attempt(
                     conn,
@@ -541,6 +651,10 @@ def run(dry_run: bool = False) -> int:
                     details.tx_hash[:20] + "..." if details.tx_hash else "-",
                     details.payout_event_found,
                     usdc_delta,
+                )
+                alert_error(
+                    f"Redeem {result.value} market={pos.market_id[:24]}… "
+                    f"side={pos.side} err={details.error[:120]}"
                 )
     finally:
         conn.close()

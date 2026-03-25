@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer — settlement bot1 (sans NOAA/finance)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+
+[Timer]
+# À n’activer que si NOAA/finance ne passent pas par update_bot.sh sur cette machine.
+OnBootSec=5min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,10 +1,18 @@
 # Use UTC explicitly for deterministic execution windows.
 CRON_TZ=UTC
 
-# Settlement Watcher (OPEN -> RESOLVED)
-# Runs daily at 01:00 UTC and 13:00 UTC.
-0 1,13 * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settlement_watcher.sh
+# ── Déploiement standard (recommandé) ─────────────────────────────────────
+# Si le serveur utilise déjà `update_bot.sh` via systemd (polymarket-bot1.service
+# ou polymarket-bot1-cycle.timer), la chaîne settlement (watcher + exit_engine)
+# est exécutée **à chaque cycle**. Ne pas dupliquer les lignes ci-dessous :
+# tu n’aurais que des passages en plus (idempotents mais inutiles).
 
-# Settler (RESOLVED -> SETTLED + PnL + Telegram)
-# Runs 10 minutes after watcher, same windows.
-10 1,13 * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settler.sh
+# ── Cas alternatif : NOAA/finance ailleurs, settlement seulement sur cet hôte ─
+# Remplace /path/to/POLYMARKET par la racine du clone.
+# Ordre obligatoire : watcher puis exit (exit ne traite que RESOLVED).
+#
+# 0 * * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settlement_chain.sh
+#
+# Ou, équivalent en deux tâches (laissez un délai si vous préférez séparer) :
+# 0 * * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settlement_watcher.sh
+# 5 * * * * cd /path/to/POLYMARKET && /usr/bin/env bash bots/bot1/execution/run_settler.sh

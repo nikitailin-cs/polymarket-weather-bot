@@ -1,13 +1,41 @@
-# Systemd — bot1 (NOAA + `finance_engine`)
+# Systemd — bot1 (NOAA + finance + settlement)
 
-Deux modes :
+## Chaîne métier (une vérité)
+
+Chaque cycle **`update_bot.sh`** exécute **dans cet ordre** :
+
+1. **NOAA** (`produce_trading_signals.py`, alias `run_nomads_live_test.py`) → signaux + manifeste (chemins : `TRADING_SIGNALS_FILE` / `TRADING_SIGNALS_META_FILE`, défaut `data/…`)  
+2. **`finance_engine.py`** → positions **OPEN** dans `PORTFOLIO_SQLITE_PATH` (défaut `data/portfolio.sqlite`)  
+3. **`settlement_watcher.py`** → **OPEN → RESOLVED** (API Gamma : marché résolu / clos)  
+4. **`exit_engine.py`** → **RESOLVED → SETTLED** (redeem on-chain, PnL, Telegram)
+
+Sans l’étape 3, `exit_engine` ne voit aucune ligne **RESOLVED** : le watcher est donc obligatoire dans le déploiement standard (désormais **inclus** dans `update_bot.sh`).
+
+Les appels sont **idempotents** : plusieurs passages watcher / exit_engine restent sûrs (statuts SQLite + table `redeem_attempts`).
+
+## Modes principaux
 
 | Fichier | Mode |
 |---------|------|
 | **`polymarket-bot1.service`** | Processus **long** : `deploy/bot1_daemon.sh` boucle avec `sleep` (`BOT1_CYCLE_INTERVAL_SEC`, défaut 900). |
 | **`polymarket-bot1-cycle.timer`** + **`polymarket-bot1-cycle.service`** | **Timer systemd** : un cycle `update_bot.sh` toutes les 15 min (sans processus bash `while`). |
 
-Ne pas activer les deux en même temps sur la même machine (double exécution).
+Ne pas activer **les deux** (`polymarket-bot1.service` et `polymarket-bot1-cycle.timer`) en même temps sur la même machine (double exécution des cycles).
+
+## Option — settlement seul (sans NOAA/finance)
+
+Si sur une machine tu lances **NOAA + finance ailleurs** (autre hôte, manuel, etc.) mais tu veux quand même faire tourner **watcher + exit** sur un rythme propre :
+
+| Fichier | Rôle |
+|---------|------|
+| **`polymarket-bot1-settlement-chain.timer`** + **`polymarket-bot1-settlement-chain.service`** | Oneshot : `bots/bot1/execution/run_settlement_chain.sh` (watcher puis exit). Défaut timer : **1 h**. |
+
+**Ne pas** activer ce timer sur un serveur qui exécute déjà `update_bot.sh` en boucle ou via `polymarket-bot1-cycle.timer` : tu **doublerais** inutilement la chaîne settlement (reste sûr mais bruyant dans les logs).
+
+```bash
+sudo systemctl enable --now polymarket-bot1-settlement-chain.timer
+journalctl -u polymarket-bot1-settlement-chain.service -f
+```
 
 ## Prérequis
 
@@ -41,7 +69,8 @@ Remplace `__REPO_ROOT__` et `__RUN_AS_USER__` avant installation :
 REPO="$HOME/polymarket-weather-bot"
 USER="$(whoami)"
 
-for f in polymarket-bot1.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer; do
+for f in polymarket-bot1.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer \
+  polymarket-bot1-settlement-chain.service polymarket-bot1-settlement-chain.timer; do
   sed -e "s|__REPO_ROOT__|${REPO}|g" -e "s|__RUN_AS_USER__|${USER}|g" \
     "${REPO}/deploy/systemd/${f}" | sudo tee "/etc/systemd/system/${f}" >/dev/null
 done
@@ -88,13 +117,47 @@ journalctl -u polymarket-bot1-cycle.service -f
 | `NOMADS_ALLOW_OUTSIDE_WINDOW=1` | Passe `--allow-outside-window` au script NOAA (voir `update_bot.sh`). |
 | `NOMADS_FORCE=1` | Passe aussi `--force` au NOAA (ignore l’intervalle min entre runs ; à utiliser avec prudence). |
 | `BOT1_DAEMON_LOG` | Chemin absolu du log daemon (défaut : `logs/bot1_daemon.log` dans le repo). |
+| `UPDATE_BOT_CYCLE_SUMMARY_LOG` | Fichier du résumé JSON par cycle (défaut : `logs/update_bot_cycle.log`). |
+
+### Fichiers bot1 (NOAA / finance / settlement)
+
+Chemins absolus ou relatifs à la racine du repo ; `update_bot.sh` les normalise en absolu. Détail : `core/bot1_data_paths.py`. Exemple compartiment : `python main_compartment.py --bot 1` préremplit `data/bots/bot_1/…`.
+
+| Variable | Défaut |
+|----------|--------|
+| `TRADING_SIGNALS_FILE` | `data/trading_signals.json` |
+| `TRADING_SIGNALS_META_FILE` | `data/trading_signals_meta.json` |
+| `PORTFOLIO_SQLITE_PATH` | `data/portfolio.sqlite` |
+| `NOAA_WATCHDOG_STATE_PATH` | `data/logs/noaa_watchdog_state.json` |
+| `LAST_NOAA_RUN_FILE` | `data/last_noaa_run.json` |
+
+### `finance_engine` (signaux NOAA)
+
+| Variable | Effet |
+|----------|--------|
+| `TRADING_SIGNALS_MAX_AGE_SEC` | Défaut **21600** (6 h). Si `generated_at_utc` du manifeste est plus vieux, pas d’ordres. Mettre **-1** pour désactiver la limite d’âge. |
+| `TRADING_SIGNALS_REQUIRE_SAME_UTC_DATE` | Si `1` / `true` : exige que la date UTC de `generated_at_utc` soit celle du jour (stricte). |
+| `DRY_RUN` | Défaut `1` : pas d’ordres réels côté `finance_engine` (sauf si `FINANCE_ENGINE_DRY_RUN=0`). |
+| `FINANCE_ENGINE_DRY_RUN` | `1`/`0` : force le dry-run ou le live **uniquement** pour `finance_engine` ; si absent, suit `DRY_RUN`. |
+
+### HTTP Gamma / CLOB (bot1)
+
+`finance_engine`, `settlement_watcher` et `exit_engine` utilisent `core/bot1_http.py` : **même** proxy SOCKS que le CLOB (`POLYMARKET_PROXY_ENABLED=1` + `POLYMARKET_SOCKS5_*`). Dépend de **PySocks** (déjà requis pour `requests` via SOCKS).
+
+| Variable | Effet |
+|----------|--------|
+| `BOT1_HTTP_TIMEOUT_SEC` | Timeout GET (défaut **20**). Alias accepté : `GAMMA_HTTP_TIMEOUT_SEC`. |
+| `BOT1_HTTP_USER_AGENT` | User-Agent des GET (défaut `POLYMARKET-bot1-http/1.0`). |
 
 Après modification : `sudo systemctl daemon-reload && sudo systemctl restart polymarket-bot1.service`.
 
 ## Fichiers de log
 
 - `logs/bot1_daemon.log` — sortie agrégée des cycles (mode boucle)
-- `logs/finance.log` — append `finance_engine` (comme avant)
+- `logs/finance.log` — `finance_engine`
+- `logs/settlement_watcher.log` — `settlement_watcher` (chaîne OPEN → RESOLVED)
+- `logs/exit_engine.log` — `exit_engine` (redeem, RESOLVED → SETTLED)
+- `logs/update_bot_cycle.log` — une ligne JSON par cycle (`step_exit_codes`, `aggregated_exit_code`)
 
 ## Sécurité
 

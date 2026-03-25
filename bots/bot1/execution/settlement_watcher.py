@@ -8,7 +8,6 @@ import sqlite3
 import sys
 import time
 import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,13 +17,16 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
+from core.bot1_http import bot1_http_get_json  # noqa: E402
+
 LOG = logging.getLogger("settlement_watcher")
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 HTTP_TIMEOUT_SEC = 20
 
 
 def _portfolio_db_path() -> Path:
-    p = _ROOT / "data" / "portfolio.sqlite"
+    p = portfolio_sqlite_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -34,9 +36,7 @@ def _utc_now_iso() -> str:
 
 
 def _http_get_json(url: str) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": "settlement-watcher/1.0"})
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as resp:
-        return json.loads(resp.read())
+    return bot1_http_get_json(url, timeout=float(HTTP_TIMEOUT_SEC))
 
 
 def _open_db() -> sqlite3.Connection:

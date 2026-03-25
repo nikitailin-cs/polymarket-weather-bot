@@ -1,0 +1,15 @@
+[Unit]
+Description=Polymarket bot1 — settlement seul (watcher puis exit_engine)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__RUN_AS_USER__
+Group=__RUN_AS_USER__
+WorkingDirectory=__REPO_ROOT__
+
+ExecStart=/bin/bash __REPO_ROOT__/bots/bot1/execution/run_settlement_chain.sh
+StandardOutput=journal
+StandardError=journal
