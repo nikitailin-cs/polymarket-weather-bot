@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import urllib.parse
 from dataclasses import dataclass, asdict
@@ -19,7 +20,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from config.settings import FEE_BPS, resolve_trading_private_key  # noqa: E402
-from core.client import invoke_clob_post_order  # noqa: E402
+from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
 from execution.ctf_manager import get_pol_balance, get_usdc_balances  # noqa: E402
 from core.polymarket_proxy import (  # noqa: E402
     apply_proxy_env_for_clob,
@@ -164,6 +165,19 @@ def _resolve_token_from_market_id(market_id: str, side: str) -> Optional[str]:
     return None
 
 
+def _normalize_market_id(raw_market_id: str) -> str:
+    """
+    Extrait un condition_id hex depuis une entrée potentiellement polluée par des logs.
+    """
+    raw = (raw_market_id or "").strip()
+    if not raw:
+        return ""
+    matches = re.findall(r"0x[a-fA-F0-9]{64}", raw)
+    if matches:
+        return matches[-1]
+    return raw
+
+
 def _fetch_best_ask(token_id: str) -> tuple[Optional[float], dict[str, Any]]:
     data = _http_get_json(f"{CLOB_HOST}/book?token_id={urllib.parse.quote(token_id)}")
     if not isinstance(data, dict):
@@ -196,19 +210,27 @@ def _build_client() -> Any:
             "py_clob_client introuvable. Active le bon venv ou installe requirements."
         ) from exc
     private_key = resolve_trading_private_key() or ""
-    public_address = os.getenv("PUBLIC_ADDRESS", "").strip()
+    funder = resolve_clob_funder()
     host_rpc = os.getenv("POLYGON_RPC_URL", "").strip()
     if not private_key:
         raise ValueError("PRIVATE_KEY ou POLYMARKET_PKEY manquant dans .env")
-    if not public_address:
-        raise ValueError("PUBLIC_ADDRESS manquant dans .env")
+    if not funder:
+        raise ValueError(
+            "Adresse funder manquante: POLYMARKET_PROXY_ADDRESS, POLYMARKET_FUNDER, "
+            "FUNDER_ADDRESS ou PUBLIC_ADDRESS dans le .env"
+        )
+    sig_type_raw = os.getenv("POLYMARKET_SIGNATURE_TYPE", "1").strip()
+    try:
+        signature_type = int(sig_type_raw)
+    except ValueError:
+        signature_type = 1
 
     kwargs: dict[str, Any] = {
         "host": CLOB_HOST,
         "key": private_key,
         "chain_id": POLYGON,
-        "funder": public_address,
-        "signature_type": 1,
+        "funder": funder,
+        "signature_type": signature_type,
     }
     init_params = set(inspect.signature(ClobClient).parameters.keys())
     if host_rpc and "host_rpc" in init_params:
@@ -345,7 +367,8 @@ def run() -> int:
     )
     args = parser.parse_args()
 
-    if args.market_id.strip() in {"<MARKET_ID>", "MARKET_ID", "<market_id>"}:
+    market_id_input = _normalize_market_id(args.market_id)
+    if market_id_input in {"<MARKET_ID>", "MARKET_ID", "<market_id>", "0xVRAI_CONDITION_ID"}:
         print("Erreur: remplace <MARKET_ID> par un vrai market id 0x...", file=sys.stderr)
         return 2
 
@@ -353,7 +376,7 @@ def run() -> int:
 
     load_dotenv(dotenv_path=_ROOT / ".env", override=False)
 
-    if args.execute_live and not (args.token_id.strip() or args.market_id.strip()):
+    if args.execute_live and not (args.token_id.strip() or market_id_input):
         LOG.error("Avec --execute-live, fournis --token-id ou --market-id")
         print(
             "Erreur: avec --execute-live, fournis --token-id ou --market-id",
@@ -436,13 +459,13 @@ def run() -> int:
 
     # 5) Token resolution + book
     token_id = (args.token_id or "").strip()
-    if not token_id and args.market_id.strip():
+    if not token_id and market_id_input:
         try:
-            token_id = _resolve_token_from_market_id(args.market_id.strip(), args.side)
+            token_id = _resolve_token_from_market_id(market_id_input, args.side)
             step(
                 "resolve_token_from_market",
                 bool(token_id),
-                market_id=args.market_id.strip(),
+                market_id=market_id_input,
                 side=args.side,
                 token_id=token_id,
             )

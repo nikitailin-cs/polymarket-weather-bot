@@ -203,9 +203,9 @@ def scan_weather_markets(
     UNIQUEMENT si spec_cache est actif — rétrocompatibilité garantie sinon.
     """
     max_pages = int(os.getenv("GAMMA_MAX_PAGES", str(GAMMA_MAX_PAGES)) or str(GAMMA_MAX_PAGES))
-    print(f"🔍 Gamma API scan | page_limit={limit} max_pages={max_pages}")
+    print(f"🔍 Gamma API scan | page_limit={limit} max_pages={max_pages}", file=sys.stderr)
     raw_markets = fetch_gamma_active_markets_full(page_limit=limit, max_pages=max_pages)
-    print(f"   Reçus (dédupliqués) : {len(raw_markets)} marchés")
+    print(f"   Reçus (dédupliqués) : {len(raw_markets)} marchés", file=sys.stderr)
 
     results: List[WeatherMarket] = []
 
@@ -258,7 +258,7 @@ def scan_weather_markets(
         results.append(market)
 
     results.sort(key=lambda m: m.volume, reverse=True)
-    print(f"   ✅ Météo actifs : {len(results)}")
+    print(f"   ✅ Météo actifs : {len(results)}", file=sys.stderr)
     return results
 
 
