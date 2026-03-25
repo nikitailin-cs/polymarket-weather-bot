@@ -9,7 +9,7 @@ from __future__ import annotations
 import re, sys, os, json, urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 from core.models import WeatherMarket, TokenInfo
 from config.keywords import WEATHER_KEYWORDS
 
@@ -33,6 +33,43 @@ def _fetch_gamma(limit: int = GAMMA_LIMIT) -> List[dict]:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
+
+
+def _gamma_sidecar_from_raw(raw: dict) -> dict[str, Any]:
+    """Sous-ensemble des champs Gamma utiles audit / registre (JSON)."""
+    keys = (
+        "id",
+        "slug",
+        "conditionId",
+        "question",
+        "description",
+        "endDate",
+        "endDateIso",
+        "startDate",
+        "startDateIso",
+        "active",
+        "closed",
+        "archived",
+        "new",
+        "volume",
+        "liquidityNum",
+        "liquidity",
+        "spread",
+        "resolutionSource",
+        "umaResolutionStatus",
+        "negRisk",
+        "events",
+        "marketMakerAddress",
+        "fee",
+    )
+    out: dict[str, Any] = {}
+    for k in keys:
+        if k in raw and raw[k] is not None:
+            out[k] = raw[k]
+    meta = raw.get("metadata")
+    if isinstance(meta, dict):
+        out["metadata"] = meta
+    return out
 
 
 def _extract_resolution_rules(raw: dict) -> str:
@@ -59,9 +96,11 @@ def _extract_resolution_rules(raw: dict) -> str:
 def _build_market(raw: dict) -> Optional[tuple]:
     if not raw.get("enableOrderBook"):  return None
     if not raw.get("acceptingOrders"):  return None
-    end_date = _parse_dt(raw.get("endDate") or raw.get("endDateIso"))
+    end_raw = raw.get("endDate") or raw.get("endDateIso") or ""
+    end_date = _parse_dt(end_raw)
     now = datetime.now(timezone.utc)
-    if end_date and (end_date - now).total_seconds() < 86400: return None
+    if end_date and (end_date - now).total_seconds() < 86400:
+        return None
     question = raw.get("question") or ""
     keyword  = _match_keyword(question)
     if keyword is None: return None
@@ -86,6 +125,9 @@ def _build_market(raw: dict) -> Optional[tuple]:
         TokenInfo(token_id=token_ids[i], outcome=outcomes[i], price=prices[i])
         for i in range(len(outcomes))
     ]
+    liq = float(raw.get("liquidityNum") or raw.get("liquidity") or volume or 0)
+    res_src = str(raw.get("resolutionSource") or "")
+    gamma_raw = _gamma_sidecar_from_raw(raw)
     return WeatherMarket(
         condition_id      = raw.get("conditionId") or "",
         question          = question,
@@ -96,7 +138,13 @@ def _build_market(raw: dict) -> Optional[tuple]:
         accepting_orders  = True,
         enable_order_book = True,
         matched_keyword   = keyword,
-    ), raw.get("resolutionSource", ""), float(raw.get("liquidityNum") or raw.get("liquidity") or volume or 0)
+        liquidity_usd     = liq,
+        resolution_source = res_src,
+        end_date_iso_raw  = str(end_raw) if end_raw else "",
+        slug              = str(raw.get("slug") or ""),
+        gamma_id          = str(raw.get("id") or ""),
+        gamma_raw         = gamma_raw,
+    ), res_src, liq
 
 
 def scan_weather_markets(

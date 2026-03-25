@@ -44,8 +44,22 @@ class ActiveMarket:
     threshold_range: Optional[list[float]]
     oracle_rounding: int
     threshold: float
-    target_date: Optional[str] = None  # YYYY-MM-DD (jour du contrat Polymarket, fuseau ci-dessous)
-    locality_tz: Optional[str] = None  # IANA (ex. America/New_York) — jour cible en heure locale
+    target_date: Optional[str] = None  # YYYY-MM-DD (jour contrat ; GFS bot1)
+    target_date_start: Optional[str] = None  # RT plage multi-jours (inclus)
+    target_date_end: Optional[str] = None
+    locality_tz: Optional[str] = None  # IANA (ex. America/New_York)
+    end_date_iso: Optional[str] = None  # Gamma / spec
+    end_date_utc_iso: Optional[str] = None  # Clôture marché UTC (ISO Z)
+    volume: float = 0.0
+    liquidity_usd: float = 0.0
+    slug: Optional[str] = None
+    gamma_id: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    resolution_source_contract: Optional[str] = None
+    resolution_source_gamma: Optional[str] = None
+    tokens_json: Optional[str] = None  # outcomes CLOB (JSON array)
+    gamma_sidecar_json: Optional[str] = None  # champs Gamma restants (JSON object)
 
 
 @dataclass(frozen=True)
@@ -70,7 +84,21 @@ class EnrichedMarket:
     threshold: float
     station_info: Optional[StationInfo]
     target_date: Optional[str] = None
+    target_date_start: Optional[str] = None  # RT / registre plage
+    target_date_end: Optional[str] = None
     locality_tz: Optional[str] = None
+    end_date_iso: Optional[str] = None
+    end_date_utc_iso: Optional[str] = None
+    volume: float = 0.0
+    liquidity_usd: float = 0.0
+    slug: Optional[str] = None
+    gamma_id: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    resolution_source_contract: Optional[str] = None
+    resolution_source_gamma: Optional[str] = None
+    tokens_json: Optional[str] = None
+    gamma_sidecar_json: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -90,7 +118,21 @@ class MarketTarget:
     longitude: float
     threshold: float
     target_date: Optional[str] = None
+    target_date_start: Optional[str] = None
+    target_date_end: Optional[str] = None
     locality_tz: Optional[str] = None
+    end_date_iso: Optional[str] = None
+    end_date_utc_iso: Optional[str] = None
+    volume: float = 0.0
+    liquidity_usd: float = 0.0
+    slug: Optional[str] = None
+    gamma_id: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    resolution_source_contract: Optional[str] = None
+    resolution_source_gamma: Optional[str] = None
+    tokens_json: Optional[str] = None
+    gamma_sidecar_json: Optional[str] = None
 
 
 def repo_root_from_this_file() -> Path:
@@ -110,6 +152,13 @@ def _require_dict(obj: Any, ctx: str) -> dict[str, Any]:
     if not isinstance(obj, dict):
         raise ValueError(f"{ctx}: objet JSON attendu")
     return obj
+
+
+def _json_compact_snippet(obj: Any) -> Optional[str]:
+    try:
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _looks_like_icao(code: str) -> bool:
@@ -183,7 +232,29 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
         except (TypeError, ValueError):
             oracle_rounding = 1
         target_date = str(obj.get("target_date") or "").strip() or None
+        target_date_start = str(obj.get("target_date_start") or "").strip() or None
+        target_date_end = str(obj.get("target_date_end") or "").strip() or None
         locality_tz = str(obj.get("timezone") or obj.get("locality_tz") or "").strip() or None
+        end_date_iso = str(obj.get("end_date_iso") or "").strip() or None
+        end_date_utc_iso = str(obj.get("end_date_utc_iso") or "").strip() or None
+        try:
+            volume = float(obj.get("volume") or 0.0)
+        except (TypeError, ValueError):
+            volume = 0.0
+        try:
+            liquidity_usd = float(obj.get("liquidity_usd") or 0.0)
+        except (TypeError, ValueError):
+            liquidity_usd = 0.0
+        slug = str(obj.get("slug") or "").strip() or None
+        gamma_id = str(obj.get("gamma_id") or "").strip() or None
+        city = str(obj.get("city") or "").strip() or None
+        country = str(obj.get("country") or "").strip() or None
+        resolution_source_contract = str(obj.get("resolution_source_contract") or "").strip() or None
+        resolution_source_gamma = str(obj.get("resolution_source_gamma") or "").strip() or None
+        tok_raw = obj.get("tokens")
+        tokens_json = _json_compact_snippet(tok_raw) if isinstance(tok_raw, list) else None
+        gamma_raw = obj.get("gamma")
+        gamma_sidecar_json = _json_compact_snippet(gamma_raw) if isinstance(gamma_raw, dict) else None
         # Compat: accepte "station" (nouveau) ou "icao" (historique).
         station = str(obj.get("station") or obj.get("icao") or "").strip().upper()
         thr_raw = obj.get("threshold")
@@ -208,7 +279,21 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
                 oracle_rounding=oracle_rounding,
                 threshold=threshold,
                 target_date=target_date,
+                target_date_start=target_date_start,
+                target_date_end=target_date_end,
                 locality_tz=locality_tz,
+                end_date_iso=end_date_iso,
+                end_date_utc_iso=end_date_utc_iso,
+                volume=volume,
+                liquidity_usd=liquidity_usd,
+                slug=slug,
+                gamma_id=gamma_id,
+                city=city,
+                country=country,
+                resolution_source_contract=resolution_source_contract,
+                resolution_source_gamma=resolution_source_gamma,
+                tokens_json=tokens_json,
+                gamma_sidecar_json=gamma_sidecar_json,
             )
         )
     return out
@@ -351,7 +436,21 @@ def enrich_markets_with_station(
                     threshold=m.threshold,
                     station_info=st,
                     target_date=m.target_date,
+                    target_date_start=m.target_date_start,
+                    target_date_end=m.target_date_end,
                     locality_tz=m.locality_tz,
+                    end_date_iso=m.end_date_iso,
+                    end_date_utc_iso=m.end_date_utc_iso,
+                    volume=m.volume,
+                    liquidity_usd=m.liquidity_usd,
+                    slug=m.slug,
+                    gamma_id=m.gamma_id,
+                    city=m.city,
+                    country=m.country,
+                    resolution_source_contract=m.resolution_source_contract,
+                    resolution_source_gamma=m.resolution_source_gamma,
+                    tokens_json=m.tokens_json,
+                    gamma_sidecar_json=m.gamma_sidecar_json,
                 )
             )
         return enriched
@@ -419,7 +518,21 @@ def build_market_targets(
                     longitude=lon,
                     threshold=m.threshold,
                     target_date=m.target_date,
+                    target_date_start=m.target_date_start,
+                    target_date_end=m.target_date_end,
                     locality_tz=m.locality_tz,
+                    end_date_iso=m.end_date_iso,
+                    end_date_utc_iso=m.end_date_utc_iso,
+                    volume=m.volume,
+                    liquidity_usd=m.liquidity_usd,
+                    slug=m.slug,
+                    gamma_id=m.gamma_id,
+                    city=m.city,
+                    country=m.country,
+                    resolution_source_contract=m.resolution_source_contract,
+                    resolution_source_gamma=m.resolution_source_gamma,
+                    tokens_json=m.tokens_json,
+                    gamma_sidecar_json=m.gamma_sidecar_json,
                 )
             )
     finally:

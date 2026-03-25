@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 __all__ = [
     "calculate_gfs_horizons",
     "gfs_run_start_utc_from_parts",
+    "local_date_for_gfs_fh",
     "sigma_horizon_multiplier",
 ]
 
@@ -83,6 +84,23 @@ def calculate_gfs_horizons(
         if day_start <= local < day_end:
             out.append(fh)
     return tuple(out)
+
+
+def local_date_for_gfs_fh(run_start_utc: datetime, fh: int, locality_tz: str) -> date:
+    """
+    Date calendaire locale (``locality_tz``) de l'instant *valid* GFS
+    ``run_start_utc + fh`` (heures), en UTC normalisé pour la run.
+    """
+    if run_start_utc.tzinfo is None:
+        run_utc = run_start_utc.replace(tzinfo=timezone.utc)
+    else:
+        run_utc = run_start_utc.astimezone(timezone.utc)
+    try:
+        tz = ZoneInfo((locality_tz or "UTC").strip() or "UTC")
+    except ZoneInfoNotFoundError as e:
+        raise ValueError(f"Fuseau IANA invalide: {locality_tz!r}") from e
+    valid_utc = run_utc + timedelta(hours=int(fh))
+    return valid_utc.astimezone(tz).date()
 
 
 def sigma_horizon_multiplier(

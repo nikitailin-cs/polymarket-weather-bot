@@ -6,7 +6,7 @@ v2 : ajout ContractSpec + MarketStatus pour la couche contractuelle.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple
+from typing import Any, Optional, List, Tuple
 from datetime import datetime, timezone
 from enum import Enum
 import json
@@ -36,6 +36,13 @@ class WeatherMarket:
     accepting_orders:  bool  = True
     enable_order_book: bool  = True
     matched_keyword:   Optional[str] = None
+    # Champs Gamma (remplis par le scanner pour generate_markets / audit)
+    liquidity_usd:     float = 0.0
+    resolution_source: str = ""
+    end_date_iso_raw:  str = ""
+    slug:              str = ""
+    gamma_id:          str = ""
+    gamma_raw:         dict[str, Any] = field(default_factory=dict)
 
     @property
     def yes_token(self) -> Optional[TokenInfo]:

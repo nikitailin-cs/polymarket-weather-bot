@@ -1098,26 +1098,69 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestProduceRtDayGuard(unittest.TestCase):
-    """Garde jour J (target_date vs date locale) — bot2 RT produce_rt_signals."""
+    """Garde jour J — :mod:`core.rt_day_guard` (bot2 RT)."""
 
     def test_classify_empty_string_invalid(self):
-        """Chaîne vide → invalid (défensif ; le producteur skip avant METAR si target_date absent)."""
-        from bots.bot2_realtime.metar_live.produce_rt_signals import classify_rt_market_day
+        from core.rt_day_guard import classify_rt_market_day
 
         self.assertEqual(classify_rt_market_day(date(2026, 3, 24), ""), "invalid")
         self.assertEqual(classify_rt_market_day(date(2026, 3, 24), "   "), "invalid")
 
     def test_classify_premature_past_jour_j(self):
-        from bots.bot2_realtime.metar_live.produce_rt_signals import classify_rt_market_day
+        from core.rt_day_guard import classify_rt_market_day
 
         self.assertEqual(classify_rt_market_day(date(2026, 3, 24), "2026-03-26"), "premature")
         self.assertEqual(classify_rt_market_day(date(2026, 3, 27), "2026-03-26"), "past_target")
         self.assertEqual(classify_rt_market_day(date(2026, 3, 26), "2026-03-26"), "jour_j")
 
     def test_classify_invalid_date(self):
-        from bots.bot2_realtime.metar_live.produce_rt_signals import classify_rt_market_day
+        from core.rt_day_guard import classify_rt_market_day
 
         self.assertEqual(classify_rt_market_day(date(2026, 3, 26), "not-a-date"), "invalid")
+
+    def test_classify_range_overrides_single_target(self):
+        from core.rt_day_guard import classify_rt_market_day
+
+        self.assertEqual(
+            classify_rt_market_day(
+                date(2026, 3, 24),
+                "2026-03-30",
+                target_date_start="2026-03-25",
+                target_date_end="2026-03-28",
+            ),
+            "premature",
+        )
+        self.assertEqual(
+            classify_rt_market_day(
+                date(2026, 3, 26),
+                "2026-03-30",
+                target_date_start="2026-03-25",
+                target_date_end="2026-03-28",
+            ),
+            "jour_j",
+        )
+        self.assertEqual(
+            classify_rt_market_day(
+                date(2026, 3, 29),
+                "2026-03-26",
+                target_date_start="2026-03-25",
+                target_date_end="2026-03-28",
+            ),
+            "past_target",
+        )
+
+    def test_classify_range_invalid_order(self):
+        from core.rt_day_guard import classify_rt_market_day
+
+        self.assertEqual(
+            classify_rt_market_day(
+                date(2026, 3, 26),
+                "",
+                target_date_start="2026-03-28",
+                target_date_end="2026-03-25",
+            ),
+            "invalid",
+        )
 
 
 class TestGfsHorizons(unittest.TestCase):
@@ -1173,6 +1216,13 @@ class TestGfsHorizons(unittest.TestCase):
         self.assertAlmostEqual(m.sigma_horizon_multiplier(24.0), 1.0)
         self.assertAlmostEqual(m.sigma_horizon_multiplier(23.0), 1.0)
         self.assertAlmostEqual(m.sigma_horizon_multiplier(120.0), 3.0)
+
+    def test_local_date_for_gfs_fh(self):
+        m = self._gfs_mod()
+        from datetime import date, datetime, timezone
+
+        run = datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(m.local_date_for_gfs_fh(run, 60, "UTC"), date(2026, 3, 27))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

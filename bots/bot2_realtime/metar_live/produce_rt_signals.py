@@ -7,10 +7,8 @@ Science binaire : ``p_win`` 1.0 / 0.0 / 0.5, fuseaux via **pytz** (aligné deman
 Chaque marché doit avoir un ``target_date`` (YYYY-MM-DD) : sans ce champ, le marché est **ignoré**
 (erreur log, pas de signal) — pas de fallback « legacy ».
 
-**Portée (contrats journaliers)** : la garde jour J suppose **un seul jour** de résolution (ex. « max le 26 mars »).
-Les marchés du type « entre le 25 et le 31 mars » ne sont **pas** modélisés : il faudrait un refactor
-``target_date_start`` / ``target_date_end`` (et une définition claire de « mort » sur une plage).
-Tant qu’on ne trade que des contrats **un jour = une date cible**, le schéma actuel suffit.
+**Portée** : soit ``target_date`` (jour unique), soit **plage** ``target_date_start`` + ``target_date_end``
+(inclus, YYYY-MM-DD) — voir :mod:`core.rt_day_guard`.
 """
 from __future__ import annotations
 
@@ -18,9 +16,9 @@ import json
 import logging
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytz
 
@@ -29,6 +27,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from core.bot2_data_paths import REALTIME_SIGNALS_MAX_AGE_SEC, get_rt_paths  # noqa: E402
+from core.rt_day_guard import classify_rt_market_day  # noqa: E402
 from bots.bot2_realtime.metar_live.realtime_metar_registry import RealTimeMetarRegistry  # noqa: E402
 
 logging.basicConfig(
@@ -36,35 +35,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 logger = logging.getLogger("produce_rt_signals")
-
-
-RtDayKind = Literal["invalid", "premature", "past_target", "jour_j"]
-
-
-def classify_rt_market_day(local_d: date, target_date_raw: str) -> RtDayKind:
-    """
-    Compare la date locale (lieu METAR / ``timezone``) à **un seul** ``target_date`` (YYYY-MM-DD).
-
-    Ne couvre pas les plages multi-jours (voir doc module).
-
-    - **jour_j** : même jour calendaire que la cible → logique met / dead autorisée.
-    - **premature** / **past_target** : hors fenêtre → pas de scalp RT (p_win neutre).
-    - **invalid** : chaîne vide ou date illisible (le flux normal exige ``target_date`` avant METAR).
-
-    Appel avec chaîne vide : retourne ``invalid`` (défensif ; la boucle principale skip avant METAR).
-    """
-    raw = (target_date_raw or "").strip()
-    if not raw:
-        return "invalid"
-    try:
-        td = datetime.strptime(raw, "%Y-%m-%d").date()
-    except ValueError:
-        return "invalid"
-    if local_d < td:
-        return "premature"
-    if local_d > td:
-        return "past_target"
-    return "jour_j"
 
 
 def check_if_dead(
@@ -147,9 +117,12 @@ def run_realtime_signals() -> None:
             continue
 
         target_date_raw = str(config.get("target_date") or "").strip()
-        if not target_date_raw:
+        target_date_start = str(config.get("target_date_start") or "").strip()
+        target_date_end = str(config.get("target_date_end") or "").strip()
+        has_range = bool(target_date_start and target_date_end)
+        if not has_range and not target_date_raw:
             logger.error(
-                "Missing target_date pour marché RT %s — SKIP (champ obligatoire).",
+                "Missing target_date (ou target_date_start+end) pour marché RT %s — SKIP.",
                 market_id[:18] + "…" if len(market_id) > 20 else market_id,
             )
             continue
@@ -171,7 +144,12 @@ def run_realtime_signals() -> None:
             local_tz = pytz.UTC
         current_local_time = datetime.now(local_tz)
         local_d = current_local_time.date()
-        day_kind = classify_rt_market_day(local_d, target_date_raw)
+        day_kind = classify_rt_market_day(
+            local_d,
+            target_date_raw,
+            target_date_start=target_date_start,
+            target_date_end=target_date_end,
+        )
 
         p_win = 0.5
         binary_state = "open"
@@ -230,7 +208,7 @@ def run_realtime_signals() -> None:
             else:
                 rec_side = "NONE"
 
-        signals[market_id] = {
+        sig_row: dict[str, Any] = {
             "p_win": p_win,
             "recommended_side": rec_side,
             "binary_state": binary_state,
@@ -241,6 +219,10 @@ def run_realtime_signals() -> None:
             "local_date": local_d.isoformat(),
             "rt_day_guard": rt_day_guard,
         }
+        if has_range:
+            sig_row["target_date_start"] = target_date_start
+            sig_row["target_date_end"] = target_date_end
+        signals[market_id] = sig_row
         success_count += 1
 
         logger.info(

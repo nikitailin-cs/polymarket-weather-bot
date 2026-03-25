@@ -132,30 +132,58 @@ def update_actuals() -> int:
     return updated
 
 
+def _sigma_lookup_key_variants(key: str) -> List[str]:
+    """Ordre de recherche dans ``model_bias.json`` (ville minuscule, ICAO, WMO, etc.)."""
+    k0 = str(key).lower().strip()
+    if not k0:
+        return []
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def add(x: str) -> None:
+        x = x.strip()
+        if not x or x in seen:
+            return
+        seen.add(x)
+        out.append(x)
+
+    add(k0)
+    add(k0.upper())
+    # Marché condition_id souvent long ; préfixe ville si format "ville_…"
+    if "_" in k0:
+        add(k0.split("_", 1)[0])
+    return out
+
+
 def get_sigma_hint_for_key(key: str) -> Optional[float]:
     """
     Pour bot1 / autres pipelines : si la clé (ville, ICAO, etc.) existe dans le fichier
     biais avec assez d'observations, retourne un sigma gaussien heuristique dérivé de
     ``bias_std`` (écart-type des erreurs passées), borné pour éviter des extrêmes.
     Retourne None si pas de données exploitables.
+
+    Essaie plusieurs variantes (:func:`_sigma_lookup_key_variants`) pour matcher des entrées
+    ``KJFK`` vs ``kjfk`` ou une clé ``market_id``.
     """
-    if not key or not str(key).strip():
+    variants = _sigma_lookup_key_variants(key)
+    if not variants:
         return None
     bias = _load_bias()
-    k = str(key).lower().strip()
-    data = bias.get(k)
-    if not isinstance(data, dict):
-        return None
-    n = int(data.get("n", 0) or 0)
-    if n < MIN_OBSERVATIONS:
-        return None
-    try:
-        std = float(data.get("bias_std", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        return None
-    if std <= 0:
-        return None
-    return max(0.5, min(8.0, std))
+    for k in variants:
+        data = bias.get(k)
+        if not isinstance(data, dict):
+            continue
+        n = int(data.get("n", 0) or 0)
+        if n < MIN_OBSERVATIONS:
+            continue
+        try:
+            std = float(data.get("bias_std", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if std <= 0:
+            continue
+        return max(0.5, min(8.0, std))
+    return None
 
 
 def get_bias_correction(city: str) -> Optional[float]:

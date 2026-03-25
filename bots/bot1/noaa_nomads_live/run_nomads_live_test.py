@@ -99,9 +99,10 @@ def _sigma_base_for_target(target: market_manager.MarketTarget) -> float:
         return max(1e-6, float(g))
     if os.getenv("BOT1_USE_BIAS_STD_FOR_SIGMA", "").strip().lower() in ("1", "true", "yes", "on"):
         if get_sigma_hint_for_key is not None:
-            hint = get_sigma_hint_for_key(target.station_code)
-            if hint is not None:
-                return max(1e-6, float(hint))
+            for key in (target.station_code, target.market_id):
+                hint = get_sigma_hint_for_key(key)
+                if hint is not None:
+                    return max(1e-6, float(hint))
     v = (target.variable or "").lower()
     if v == "precip":
         return max(1e-6, float(os.getenv("BOT1_PROB_SIGMA_PRECIP", "1.5")))
@@ -159,24 +160,23 @@ def _forecast_hours_for_target(
     """
     Échéances GFS (fXXX) à télécharger pour ce marché.
 
-    - **temp_max / temp_min / temp_avg** : si ``target_date`` + ``timezone`` (IANA) sont
-      renseignés dans ``active_markets.json``, utilise :func:`gfs_horizons.calculate_gfs_horizons`
-      (jour calendaire du contrat en heure locale) — ex. f060–f081 au lieu de f000–f024.
-    - Sinon : grille historique **f000–f024** (premier jour depuis la run).
-    - **precip** et autres variables : ``fallback_fh`` seul (inchangé).
+    - **temp_*** / **precip** : si ``target_date`` + ``timezone`` (IANA) sont renseignés,
+      utilise :func:`gfs_horizons.calculate_gfs_horizons` (jour calendaire du contrat en local).
+    - **precip** sans jour cible : ``fallback_fh`` seul (legacy).
+    - **Autres variables** : ``fallback_fh`` seul.
+    - **temp_*** sans jour cible : grille **f000–f024** (legacy).
     """
     log = logging.getLogger(__name__)
     v = (target.variable or "").lower()
-    if v == "precip":
-        return (fallback_fh,)
-    if v not in ("temp_max", "temp_min", "temp_avg"):
+    if v not in ("temp_max", "temp_min", "temp_avg", "precip"):
         return (fallback_fh,)
 
     legacy_day0 = (0, 3, 6, 9, 12, 15, 18, 21, 24)
     td_raw = (getattr(target, "target_date", None) or "").strip()
     tz_name = (getattr(target, "locality_tz", None) or "").strip()
+    is_precip = v == "precip"
 
-    if not td_raw or not tz_name:
+    def _legacy_fallback_temp() -> tuple[int, ...]:
         log.warning(
             "market=%s variable=%s — target_date ou timezone absent — grille GFS legacy f000–f024",
             target.market_id,
@@ -184,16 +184,27 @@ def _forecast_hours_for_target(
         )
         return legacy_day0
 
+    def _legacy_fallback_precip() -> tuple[int, ...]:
+        log.warning(
+            "market=%s precip — target_date ou timezone absent — f%03d seul (legacy)",
+            target.market_id,
+            fallback_fh,
+        )
+        return (fallback_fh,)
+
+    if not td_raw or not tz_name:
+        return _legacy_fallback_precip() if is_precip else _legacy_fallback_temp()
+
     try:
         y, m, d = map(int, td_raw.split("-"))
         td = date_cls(y, m, d)
     except (TypeError, ValueError):
         log.warning(
-            "market=%s target_date invalide %r — grille legacy f000–f024",
+            "market=%s target_date invalide %r — grille legacy",
             target.market_id,
             td_raw,
         )
-        return legacy_day0
+        return _legacy_fallback_precip() if is_precip else _legacy_fallback_temp()
 
     try:
         fh_grid = gfs_horizons.calculate_gfs_horizons(
@@ -207,28 +218,95 @@ def _forecast_hours_for_target(
             target.market_id,
             e,
         )
-        return legacy_day0
+        return _legacy_fallback_precip() if is_precip else _legacy_fallback_temp()
 
     if not fh_grid:
         log.warning(
-            "market=%s grille GFS vide pour target_date=%s tz=%s run=%s — legacy f000–f024",
+            "market=%s grille GFS vide pour target_date=%s tz=%s run=%s — legacy",
             target.market_id,
             td_raw,
             tz_name,
             run_start_utc.isoformat(),
         )
-        return legacy_day0
+        return _legacy_fallback_precip() if is_precip else _legacy_fallback_temp()
 
     log.info(
-        "market=%s GFS jour cible %s (%s): f%03d → f%03d (%s tranche(s))",
+        "market=%s GFS jour cible %s (%s): f%03d → f%03d (%s tranche(s)) var=%s",
         target.market_id,
         td_raw,
         tz_name,
         fh_grid[0],
         fh_grid[-1],
         len(fh_grid),
+        v,
     )
     return fh_grid
+
+
+def _normalized_resolution_bucket(target: market_manager.MarketTarget) -> str:
+    for raw in (target.resolution_source_gamma or "", target.resolution_source_contract or ""):
+        s = (raw or "").lower()
+        if "uma" in s or "optimistic" in s:
+            return "uma"
+        if "pyth" in s:
+            return "pyth"
+        if "manual" in s or "admin" in s:
+            return "manual"
+    return "unknown"
+
+
+def _target_passes_resolution_filter(target: market_manager.MarketTarget, log: logging.Logger) -> bool:
+    """
+    Filtre optionnel : ``BOT1_ALLOWED_RESOLUTION_SOURCES=uma,pyth`` (vide = tout autoriser).
+    ``unknown`` : si ``BOT1_TREAT_UNKNOWN_RESOLUTION_AS_UMA=1`` (défaut), compté comme ``uma``.
+    """
+    raw = os.getenv("BOT1_ALLOWED_RESOLUTION_SOURCES", "").strip()
+    if not raw:
+        return True
+    allowed = frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+    b = _normalized_resolution_bucket(target)
+    if b == "unknown" and os.getenv("BOT1_TREAT_UNKNOWN_RESOLUTION_AS_UMA", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    ):
+        b = "uma"
+    if b in allowed:
+        return True
+    log.info(
+        "market=%s ignoré (résolution %s pas dans BOT1_ALLOWED_RESOLUTION_SOURCES=%s)",
+        target.market_id,
+        b,
+        raw,
+    )
+    return False
+
+
+def _gfs_fh_matches_target_calendar_day(
+    run_start_utc: datetime,
+    fh_i: int,
+    target: market_manager.MarketTarget,
+) -> bool:
+    """
+    Garde défensive : le *valid time* (fh) doit tomber sur ``target_date`` en local.
+    Désactiver : ``BOT1_GFS_VALID_DATE_GATE=0``.
+    """
+    if os.getenv("BOT1_GFS_VALID_DATE_GATE", "1").strip().lower() in ("0", "false", "no"):
+        return True
+    td_raw = (getattr(target, "target_date", None) or "").strip()
+    tz_name = (getattr(target, "locality_tz", None) or "").strip()
+    if not td_raw or not tz_name:
+        return True
+    try:
+        y, m, d = map(int, td_raw.split("-"))
+        td = date_cls(y, m, d)
+    except (TypeError, ValueError):
+        return True
+    try:
+        ld = gfs_horizons.local_date_for_gfs_fh(run_start_utc, fh_i, tz_name)
+    except ValueError:
+        return False
+    return ld == td
 
 
 def _retry(name: str, fn: Callable[[], T], *, tries: int = 3, base_sleep: float = 0.8) -> T:
@@ -278,16 +356,34 @@ def _convert_value_to_contract_unit(*, variable: str, unit: str, raw_value: floa
 
 
 def _build_contract_spec_from_target(target: market_manager.MarketTarget) -> ContractSpec:
+    rs = _normalized_resolution_bucket(target)
+    if rs == "unknown" and os.getenv("BOT1_TREAT_UNKNOWN_RESOLUTION_AS_UMA", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    ):
+        rs = "uma"
+    end_iso = (getattr(target, "end_date_iso", None) or "").strip() or (
+        (getattr(target, "end_date_utc_iso", None) or "").strip().split("T")[0]
+        if getattr(target, "end_date_utc_iso", None)
+        else ""
+    )
     return ContractSpec(
         market_id=target.market_id,
         condition_id=target.market_id,
+        question=target.question or "",
         weather_variable=target.variable,
         threshold_value=target.threshold,
         threshold_unit=target.unit,
         threshold_op=target.operator,
         threshold_range=target.threshold_range,
         oracle_station_id=target.station_code,
+        oracle_source=(target.oracle_source or "unknown").strip().lower() or "unknown",
         oracle_rounding=target.oracle_rounding,
+        city=(target.city or "").strip(),
+        country=(target.country or "").strip(),
+        end_date_iso=end_iso,
+        resolution_source=rs,
     )
 
 
@@ -578,13 +674,21 @@ def main() -> int:
             )
             return 1
         loaded = market_manager.load_active_markets(markets_json)
-        targets = market_manager.build_market_targets(markets_json, stations_db)
-        ok = len(targets)
-        miss = len(loaded) - ok
+        targets_all = market_manager.build_market_targets(markets_json, stations_db)
+        targets = [t for t in targets_all if _target_passes_resolution_filter(t, log)]
+        if len(targets) < len(targets_all):
+            log.info(
+                "Filtre résolution Polymarket: %s → %s cible(s)",
+                len(targets_all),
+                len(targets),
+            )
+        georef_ok = len(targets_all)
+        miss = len(loaded) - georef_ok
         log.info(
-            "Liaison registre: markets=%s, stations trouvées=%s, manquantes=%s, targets=%s",
+            "Liaison registre: markets=%s, stations_résolues=%s, sans_coord=%s, "
+            "cibles_après_filtre_résolution=%s",
             len(loaded),
-            ok,
+            georef_ok,
             miss,
             len(targets),
         )
@@ -603,7 +707,14 @@ def main() -> int:
             )
         if not targets:
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            log.info("Aucune cible marché — signaux vides, meta ok.")
+            if targets_all:
+                log.info(
+                    "0 cible après filtre résolution (BOT1_ALLOWED_RESOLUTION_SOURCES) — signaux vides, meta ok."
+                )
+                empty_reason = "Cibles géoréférencées mais toutes exclues par filtre résolution Polymarket"
+            else:
+                log.info("Aucune cible marché (registre vide ou stations introuvables) — signaux vides, meta ok.")
+                empty_reason = "Aucun marché actif avec station résolue"
             signals_path = trading_signals_path()
             _save_trading_signals(
                 signals_path,
@@ -611,7 +722,7 @@ def main() -> int:
             )
             _write_signals_meta(
                 status="ok",
-                reason="Aucun marché actif avec station résolue",
+                reason=empty_reason,
                 forecast_cycle_utc=None,
                 signals_written=0,
                 targets_expected=0,
@@ -882,6 +993,13 @@ def main() -> int:
                     tries=2,
                 )
                 if code == 0 and val is not None:
+                    if not _gfs_fh_matches_target_calendar_day(run_start_utc, fh_i, target):
+                        log.warning(
+                            "  market=%s f%03d: valid date local ≠ target_date — échantillon ignoré (gate)",
+                            target.market_id,
+                            fh_i,
+                        )
+                        continue
                     raw_samples.append(val)
                 elif code != 0:
                     wgrib_code = code
