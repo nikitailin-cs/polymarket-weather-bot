@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polymarket.local/schemas/icao_mapping.schema.json",
+  "title": "icao_mapping",
+  "description": "Objet racine : clés = condition_id Polymarket ; valeurs = liaison OACI, seuil, fuseau.",
+  "type": "object",
+  "$defs": {
+    "marketSpec": {
+      "type": "object",
+      "required": ["icao", "threshold", "timezone"],
+      "additionalProperties": true,
+      "properties": {
+        "icao": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Code OACI (ex. KJFK)."
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Seuil numérique (ex. 80.0), unité via threshold_unit."
+        },
+        "threshold_unit": {
+          "type": "string",
+          "description": "F ou C (le code accepte aussi FAHRENHEIT / CELSIUS)."
+        },
+        "yes_if_above": {
+          "type": "boolean",
+          "description": "Marché « au-dessus » du seuil si true."
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "description": "IANA (ex. America/New_York)."
+        },
+        "deadline_local_hhmm": {
+          "type": "string",
+          "description": "Heure locale limite pour le régime « mort » (ex. 23:50)."
+        },
+        "dead_min_gap": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Écart minimal (degrés) après deadline pour p_win=0."
+        }
+      }
+    }
+  },
+  "patternProperties": {
+    "^_": {
+      "type": "object",
+      "description": "Clés réservées (commentaires) — ignorées par produce_rt_signals."
+    }
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/marketSpec"
+  }
+}

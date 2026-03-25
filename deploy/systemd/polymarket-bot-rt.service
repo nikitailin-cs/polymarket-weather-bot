@@ -1,0 +1,22 @@
+[Unit]
+Description=Polymarket bot RT — un cycle complet (update_bot_rt.sh : METAR, signaux, finance, settlement)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__RUN_AS_USER__
+Group=__RUN_AS_USER__
+WorkingDirectory=__REPO_ROOT__
+
+# Charger secrets (optionnel) : même convention que le bot batch.
+EnvironmentFile=-__REPO_ROOT__/.env
+
+# Phase 6.5 — validation dry-run 24 h avant prod : décommenter (aucun ordre CLOB réel).
+# Environment=DRY_RUN=1
+# Environment=FINANCE_RT_DRY_RUN=1
+
+ExecStart=/bin/bash __REPO_ROOT__/update_bot_rt.sh
+StandardOutput=journal
+StandardError=journal

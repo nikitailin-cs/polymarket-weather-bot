@@ -4,8 +4,10 @@ Lance un bot dans un compartiment de persistance isolé.
 Dossiers : tout est sous data/bots/<id>/ (ex. bot_1, bot_2).
 
 Définit aussi les variables NOAA / finance_engine / settlement (TRADING_SIGNALS_FILE,
-PORTFOLIO_SQLITE_PATH, etc.) pour que le pipeline bot1 et main.py partagent le même
-compartiment.
+PORTFOLIO_SQLITE_PATH, etc.) pour que le pipeline bot1 batch et main.py partagent le même
+compartiment. Pour ``bot_1`` uniquement : chemins **temps réel** isolés sous
+``data/bots/realtime/`` (BOT1_REALTIME_* / BOT_RT_* , ``portfolio_rt.sqlite``) ;
+mapping OACI par défaut ``data/icao_mapping.json``.
 
 Usage:
   python main_compartment.py --bot 1
@@ -33,6 +35,32 @@ def _set_isolated_paths(name: str) -> None:
     os.environ.setdefault("PORTFOLIO_SQLITE_PATH", str(compartment / "portfolio.sqlite"))
     os.environ.setdefault("NOAA_WATCHDOG_STATE_PATH", str(logs_dir / "noaa_watchdog_state.json"))
     os.environ.setdefault("LAST_NOAA_RUN_FILE", str(compartment / "last_noaa_run.json"))
+
+    # Pipeline temps réel (METAR) — dossier dédié data/bots/realtime/ (hors batch NOAA)
+    if name == "bot_1":
+        rt_root = root / "data" / "bots" / "realtime"
+        rt_logs = rt_root / "logs"
+        sig = str(rt_root / "realtime_signals.json")
+        meta = str(rt_root / "realtime_signals_meta.json")
+        prt = str(rt_root / "portfolio_rt.sqlite")
+        wd = str(rt_logs / "realtime_watchdog_state.json")
+        last_rt = str(rt_root / "last_realtime_run.json")
+        for key, val in (
+            ("BOT1_REALTIME_SIGNALS_FILE", sig),
+            ("BOT_RT_SIGNALS_FILE", sig),
+            ("BOT1_REALTIME_SIGNALS_META_FILE", meta),
+            ("BOT_RT_SIGNALS_META_FILE", meta),
+            ("BOT1_PORTFOLIO_RT_SQLITE_PATH", prt),
+            ("BOT_RT_PORTFOLIO_SQLITE_PATH", prt),
+            ("BOT1_REALTIME_WATCHDOG_STATE_PATH", wd),
+            ("BOT_RT_WATCHDOG_STATE_PATH", wd),
+            ("BOT1_LAST_REALTIME_RUN_FILE", last_rt),
+            ("BOT_RT_LAST_RUN_FILE", last_rt),
+        ):
+            os.environ.setdefault(key, val)
+        root_icao = root / "data" / "icao_mapping.json"
+        os.environ.setdefault("BOT1_ICAO_MAPPING_FILE", str(root_icao))
+        os.environ.setdefault("BOT_RT_ICAO_MAPPING_FILE", str(root_icao))
 
     os.environ.setdefault("CONTRACT_SPECS_FILE", str(compartment / "contract_specs.json"))
     os.environ.setdefault("POSITIONS_FILE", str(logs_dir / "positions.json"))

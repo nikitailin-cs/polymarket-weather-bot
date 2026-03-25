@@ -40,6 +40,18 @@ BALANCE_VERIFY_SLEEP_SEC = 3
 MIN_POL_GAS_BALANCE = 0.05
 DUST_MIN_RECOVERABLE_USDC = 0.10
 
+# Surcharge CLI (ex. bot 1 temps réel : ``portfolio_rt.sqlite``).
+_portfolio_sqlite_override: Optional[Path] = None
+
+
+def set_portfolio_sqlite_path(path: Optional[Path]) -> None:
+    """Fixe la base SQLite (API programmatique ; sinon ``--portfolio-sqlite`` / défaut bot1)."""
+    global _portfolio_sqlite_override
+    if path is None:
+        _portfolio_sqlite_override = None
+    else:
+        _portfolio_sqlite_override = path.expanduser().resolve()
+
 
 @dataclass(frozen=True)
 class TradePosition:
@@ -54,9 +66,38 @@ class ResolutionState:
 
 
 def _portfolio_db_path() -> Path:
-    p = portfolio_sqlite_path()
+    if _portfolio_sqlite_override is not None:
+        p = _portfolio_sqlite_override
+    else:
+        p = portfolio_sqlite_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _table_names(conn: sqlite3.Connection) -> set[str]:
+    return {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+
+
+def _is_bot2_rt_portfolio_path(path: Path) -> bool:
+    return "bot_2_realtime" in str(path).replace("\\", "/")
+
+
+def _telegram_cashout_context_tag(path: Path) -> str:
+    """
+    Préfixe visuel pour les alertes de clôture (exit_engine) quand la base est
+    ``portfolio_rt.sqlite`` (scalping RT), pas ``portfolio.sqlite`` (long terme).
+    """
+    s = str(path).replace("\\", "/").lower()
+    if "portfolio_rt.sqlite" not in s:
+        return ""
+    if "bot_2_realtime" in str(path).replace("\\", "/"):
+        return "💰 [SCALP RT CASH-OUT · bot2 METAR]"
+    return "💰 [SCALP RT CASH-OUT]"
 
 
 def _now_utc_iso() -> str:
@@ -67,8 +108,7 @@ def _http_get_json(url: str) -> Any:
     return bot1_http_get_json(url, timeout=float(HTTP_TIMEOUT_SEC))
 
 
-def _open_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_portfolio_db_path()))
+def _ensure_executed_trades_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS executed_trades (
@@ -118,6 +158,10 @@ def _open_db() -> sqlite3.Connection:
         WHERE status IS NULL OR TRIM(status) = ''
         """
     )
+    conn.commit()
+
+
+def _ensure_redeem_attempts_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS redeem_attempts (
@@ -133,23 +177,67 @@ def _open_db() -> sqlite3.Connection:
         """
     )
     conn.commit()
+
+
+def _open_db() -> sqlite3.Connection:
+    """
+    Bot 1 batch / RT : ``executed_trades`` + ``redeem_attempts``.
+    Bot 2 RT : ``positions`` (``core.bot2_portfolio_schema``) + ``redeem_attempts`` ;
+    pas de création de ``executed_trades`` sur une base vide dédiée bot2.
+    """
+    path = _portfolio_db_path()
+    conn = sqlite3.connect(str(path))
+    tables = _table_names(conn)
+    bot2 = _is_bot2_rt_portfolio_path(path)
+
+    if "executed_trades" in tables or not bot2:
+        _ensure_executed_trades_schema(conn)
+
+    if bot2 or "positions" in tables:
+        from core.bot2_portfolio_schema import ensure_bot2_positions_table  # noqa: WPS433
+
+        ensure_bot2_positions_table(conn)
+
+    _ensure_redeem_attempts_table(conn)
     return conn
 
 
 def _load_positions(conn: sqlite3.Connection) -> list[TradePosition]:
-    rows = conn.execute(
-        """
-        SELECT DISTINCT market_id, recommended_side
-        FROM executed_trades
-        WHERE status = 'RESOLVED'
-          AND market_id IS NOT NULL
-          AND market_id != ''
-          AND recommended_side IN ('YES', 'NO')
-        """
-    ).fetchall()
+    """Paires (market_id, side) distinctes en RESOLVED : ``executed_trades`` et/ou ``positions`` (bot2)."""
+    seen: set[tuple[str, str]] = set()
     out: list[TradePosition] = []
-    for market_id, side in rows:
-        out.append(TradePosition(market_id=str(market_id), side=str(side).upper()))
+    if "executed_trades" in _table_names(conn):
+        rows = conn.execute(
+            """
+            SELECT DISTINCT market_id, recommended_side
+            FROM executed_trades
+            WHERE status = 'RESOLVED'
+              AND market_id IS NOT NULL
+              AND market_id != ''
+              AND recommended_side IN ('YES', 'NO')
+            """
+        ).fetchall()
+        for market_id, side in rows:
+            key = (str(market_id), str(side).upper())
+            if key not in seen:
+                seen.add(key)
+                out.append(TradePosition(market_id=key[0], side=key[1]))
+    if "positions" in _table_names(conn):
+        rows = conn.execute(
+            """
+            SELECT DISTINCT market_id, side
+            FROM positions
+            WHERE UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+              AND market_id IS NOT NULL
+              AND market_id != ''
+              AND UPPER(TRIM(side)) IN ('YES', 'NO')
+            """
+        ).fetchall()
+        for market_id, side in rows:
+            key = (str(market_id), str(side).upper().strip())
+            if key not in seen:
+                seen.add(key)
+                out.append(TradePosition(market_id=key[0], side=key[1]))
     return out
 
 
@@ -196,39 +284,76 @@ def _mark_settled_winner(conn: sqlite3.Connection, market_id: str, side: str, se
         """,
         (market_id, side),
     ).fetchall()
-    if not rows:
+    pos_rows: list[tuple[int, float, float]] = []
+    if "positions" in _table_names(conn):
+        pos_rows = [
+            (int(r[0]), float(r[1]), float(r[2]))
+            for r in conn.execute(
+                """
+                SELECT rowid, price, size
+                FROM positions
+                WHERE market_id = ?
+                  AND UPPER(TRIM(side)) = ?
+                  AND UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+                ORDER BY rowid ASC
+                """,
+                (market_id, side.upper()),
+            ).fetchall()
+        ]
+
+    if not rows and not pos_rows:
         return 0
 
     total_spent = float(sum(float(r[2]) for r in rows))
+    total_spent += sum(p * s for _, p, s in pos_rows)
+
     usdc_received = float(getattr(_mark_settled_winner, "_last_usdc_delta", 0.0))
     total_pnl = usdc_received - total_spent
-    denom = total_spent if total_spent > 0 else float(len(rows))
+    n_units = len(rows) + len(pos_rows)
+    denom = total_spent if total_spent > 0 else float(n_units)
 
     station = ""
     updated = 0
     assigned_pnl = 0.0
-    for i, (trade_id, station_name, spent_i_raw) in enumerate(rows):
-        spent_i = float(spent_i_raw)
+    all_items: list[tuple[str, int, float, Optional[str]]] = []
+    for trade_id, station_name, spent_i_raw in rows:
+        all_items.append(("et", int(trade_id), float(spent_i_raw), station_name))
+    for rowid, p, s in pos_rows:
+        all_items.append(("pos", int(rowid), float(p) * float(s), None))
+
+    for i, (kind, tid, spent_i, station_name) in enumerate(all_items):
         if station_name and not station:
             station = str(station_name)
-        if i == len(rows) - 1:
-            # Dernière ligne = correction d'arrondi.
+        if i == n_units - 1:
             pnl_i = total_pnl - assigned_pnl
         else:
-            weight = (spent_i / denom) if denom > 0 else (1.0 / float(len(rows)))
+            weight = (spent_i / denom) if denom > 0 else (1.0 / float(n_units))
             pnl_i = total_pnl * weight
         assigned_pnl += pnl_i
-        rc = conn.execute(
-            """
-            UPDATE executed_trades
-            SET status = 'SETTLED',
-                settled_at = ?,
-                pnl = ROUND(?, 6)
-            WHERE id = ?
-              AND status = 'RESOLVED'
-            """,
-            (settled_at, pnl_i, int(trade_id)),
-        ).rowcount
+        if kind == "et":
+            rc = conn.execute(
+                """
+                UPDATE executed_trades
+                SET status = 'SETTLED',
+                    settled_at = ?,
+                    pnl = ROUND(?, 6)
+                WHERE id = ?
+                  AND status = 'RESOLVED'
+                """,
+                (settled_at, pnl_i, int(tid)),
+            ).rowcount
+        else:
+            rc = conn.execute(
+                """
+                UPDATE positions
+                SET status = 'SETTLED',
+                    settled_at = ?,
+                    pnl = ROUND(?, 6)
+                WHERE rowid = ?
+                  AND UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+                """,
+                (settled_at, pnl_i, int(tid)),
+            ).rowcount
         updated += int(rc or 0)
     conn.commit()
     if station:
@@ -238,51 +363,108 @@ def _mark_settled_winner(conn: sqlite3.Connection, market_id: str, side: str, se
 
 
 def _mark_settled_loser(conn: sqlite3.Connection, market_id: str, side: str, settled_at: str) -> int:
-    rowcount = conn.execute(
-        """
-        UPDATE executed_trades
-        SET status = 'SETTLED',
-            settled_at = ?,
-            pnl = ROUND(0.0 - COALESCE(spent_usdc, best_ask, 0.0), 6)
-        WHERE market_id = ?
-          AND recommended_side = ?
-          AND status = 'RESOLVED'
-        """,
-        (settled_at, market_id, side),
-    ).rowcount
+    total = 0
+    if "executed_trades" in _table_names(conn):
+        total += int(
+            conn.execute(
+                """
+                UPDATE executed_trades
+                SET status = 'SETTLED',
+                    settled_at = ?,
+                    pnl = ROUND(0.0 - COALESCE(spent_usdc, best_ask, 0.0), 6)
+                WHERE market_id = ?
+                  AND recommended_side = ?
+                  AND status = 'RESOLVED'
+                """,
+                (settled_at, market_id, side),
+            ).rowcount
+            or 0
+        )
+    if "positions" in _table_names(conn):
+        total += int(
+            conn.execute(
+                """
+                UPDATE positions
+                SET status = 'SETTLED',
+                    settled_at = ?,
+                    pnl = ROUND(0.0 - (price * size), 6)
+                WHERE market_id = ?
+                  AND UPPER(TRIM(side)) = ?
+                  AND UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+                """,
+                (settled_at, market_id, side.upper()),
+            ).rowcount
+            or 0
+        )
     conn.commit()
-    return int(rowcount or 0)
+    return total
 
 
 def _estimate_recoverable_usdc(conn: sqlite3.Connection, market_id: str, side: str) -> float:
-    row = conn.execute(
-        """
-        SELECT COALESCE(SUM(COALESCE(matched_size, requested_size, 0.0)), 0.0)
-        FROM executed_trades
-        WHERE market_id = ?
-          AND recommended_side = ?
-          AND status = 'RESOLVED'
-        """,
-        (market_id, side),
-    ).fetchone()
-    return float(row[0]) if row and row[0] is not None else 0.0
+    s = 0.0
+    if "executed_trades" in _table_names(conn):
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(COALESCE(matched_size, requested_size, 0.0)), 0.0)
+            FROM executed_trades
+            WHERE market_id = ?
+              AND recommended_side = ?
+              AND status = 'RESOLVED'
+            """,
+            (market_id, side),
+        ).fetchone()
+        s += float(row[0]) if row and row[0] is not None else 0.0
+    if "positions" in _table_names(conn):
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(price * size), 0.0)
+            FROM positions
+            WHERE market_id = ?
+              AND UPPER(TRIM(side)) = ?
+              AND UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+            """,
+            (market_id, side.upper()),
+        ).fetchone()
+        s += float(row[0]) if row and row[0] is not None else 0.0
+    return s
 
 
 def _mark_skipped_dust(conn: sqlite3.Connection, market_id: str, side: str, settled_at: str) -> int:
-    rowcount = conn.execute(
-        """
-        UPDATE executed_trades
-        SET status = 'SKIPPED_DUST',
-            settled_at = ?,
-            pnl = COALESCE(pnl, 0.0)
-        WHERE market_id = ?
-          AND recommended_side = ?
-          AND status = 'RESOLVED'
-        """,
-        (settled_at, market_id, side),
-    ).rowcount
+    total = 0
+    if "executed_trades" in _table_names(conn):
+        total += int(
+            conn.execute(
+                """
+                UPDATE executed_trades
+                SET status = 'SKIPPED_DUST',
+                    settled_at = ?,
+                    pnl = COALESCE(pnl, 0.0)
+                WHERE market_id = ?
+                  AND recommended_side = ?
+                  AND status = 'RESOLVED'
+                """,
+                (settled_at, market_id, side),
+            ).rowcount
+            or 0
+        )
+    if "positions" in _table_names(conn):
+        total += int(
+            conn.execute(
+                """
+                UPDATE positions
+                SET status = 'SKIPPED_DUST',
+                    settled_at = ?,
+                    pnl = COALESCE(pnl, 0.0)
+                WHERE market_id = ?
+                  AND UPPER(TRIM(side)) = ?
+                  AND UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+                """,
+                (settled_at, market_id, side.upper()),
+            ).rowcount
+            or 0
+        )
     conn.commit()
-    return int(rowcount or 0)
+    return total
 
 
 def _fetch_market_question(market_id: str) -> str:
@@ -301,15 +483,30 @@ def _fetch_market_question(market_id: str) -> str:
 
 
 def _sum_stake_resolved(conn: sqlite3.Connection, market_id: str, side: str) -> float:
-    row = conn.execute(
-        """
-        SELECT COALESCE(SUM(COALESCE(spent_usdc, 0.0)), 0.0)
-        FROM executed_trades
-        WHERE market_id = ? AND recommended_side = ? AND status = 'RESOLVED'
-        """,
-        (market_id, side),
-    ).fetchone()
-    return float(row[0] if row and row[0] is not None else 0.0)
+    s = 0.0
+    if "executed_trades" in _table_names(conn):
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(COALESCE(spent_usdc, 0.0)), 0.0)
+            FROM executed_trades
+            WHERE market_id = ? AND recommended_side = ? AND status = 'RESOLVED'
+            """,
+            (market_id, side),
+        ).fetchone()
+        s += float(row[0] if row and row[0] is not None else 0.0)
+    if "positions" in _table_names(conn):
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(price * size), 0.0)
+            FROM positions
+            WHERE market_id = ?
+              AND UPPER(TRIM(side)) = ?
+              AND UPPER(TRIM(COALESCE(status, ''))) = 'RESOLVED'
+            """,
+            (market_id, side.upper()),
+        ).fetchone()
+        s += float(row[0] if row and row[0] is not None else 0.0)
+    return s
 
 
 def _station_for_resolved(conn: sqlite3.Connection, market_id: str, side: str) -> str:
@@ -362,6 +559,7 @@ def run(dry_run: bool = False) -> int:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
+    cashout_tag = _telegram_cashout_context_tag(_portfolio_db_path())
     pol_balance = float(get_pol_balance())
     if pol_balance < MIN_POL_GAS_BALANCE and not dry_run:
         send_alert(
@@ -460,6 +658,7 @@ def run(dry_run: bool = False) -> int:
                         stake_usdc=stake,
                         detail=f"Côté gagnant du marché : {state.winning_side}",
                         emoji="🔴",
+                        cashout_context_tag=cashout_tag,
                     )
                 _upsert_attempt(
                     conn,
@@ -505,6 +704,7 @@ def run(dry_run: bool = False) -> int:
                             f"&lt; seuil {DUST_MIN_RECOVERABLE_USDC:.2f} USDC."
                         ),
                         emoji="📎",
+                        cashout_context_tag=cashout_tag,
                     )
                 skipped += max(1, changed)
                 LOG.info(
@@ -594,6 +794,7 @@ def run(dry_run: bool = False) -> int:
                         f"solde ~{usdc_after:.2f} USDC · tx {tx_short}"
                     ),
                     emoji="🟢",
+                    cashout_context_tag=cashout_tag,
                 )
                 LOG.info(
                     "Redeem SUCCESS market_id=%s side=%s tx=%s event=%s "
@@ -669,16 +870,39 @@ def run(dry_run: bool = False) -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Settler: traite les positions RESOLVED, redeem, vérifie USDC et marque SETTLED."
+        description="Settler: traite les positions RESOLVED, redeem, vérifie USDC et marque SETTLED.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Exemples:\n"
+            "  %(prog)s --portfolio-sqlite data/bots/realtime/portfolio_rt.sqlite\n"
+            "  %(prog)s --dry-run --portfolio-sqlite data/bots/realtime/portfolio_rt.sqlite\n"
+            "  %(prog)s --portfolio-sqlite data/bots/bot_2_realtime/portfolio_rt.sqlite\n"
+            "\n"
+            "Sans --portfolio-sqlite : utilise PORTFOLIO_SQLITE_PATH / core.bot1_data_paths (batch bot1).\n"
+            "Bot 2 RT : même script, table ``positions`` (RESOLVED -> redeem -> SETTLED)."
+        ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Simulation sans transaction on-chain.",
     )
+    parser.add_argument(
+        "--portfolio-sqlite",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Base SQLite (executed_trades et/ou positions en RESOLVED). "
+            "Bot1 RT : ex. data/bots/realtime/portfolio_rt.sqlite. "
+            "Bot2 RT METAR : ex. data/bots/bot_2_realtime/portfolio_rt.sqlite. "
+            "Défaut sans ce flag : portfolio batch (PORTFOLIO_SQLITE_PATH)."
+        ),
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
+    set_portfolio_sqlite_path(args.portfolio_sqlite)
     raise SystemExit(run(dry_run=bool(args.dry_run)))

@@ -10,7 +10,7 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # .../POLYMARKET/bots/bot1/execution/settlement_watcher.py -> .../POLYMARKET
 _ROOT = Path(__file__).resolve().parents[3]
@@ -24,9 +24,24 @@ LOG = logging.getLogger("settlement_watcher")
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 HTTP_TIMEOUT_SEC = 20
 
+# Surcharge CLI (ex. bot 1 temps réel : ``portfolio_rt.sqlite``).
+_portfolio_sqlite_override: Optional[Path] = None
+
+
+def set_portfolio_sqlite_path(path: Optional[Path]) -> None:
+    """Fixe la base SQLite (API programmatique ; sinon ``--portfolio-sqlite`` / défaut bot1)."""
+    global _portfolio_sqlite_override
+    if path is None:
+        _portfolio_sqlite_override = None
+    else:
+        _portfolio_sqlite_override = path.expanduser().resolve()
+
 
 def _portfolio_db_path() -> Path:
-    p = portfolio_sqlite_path()
+    if _portfolio_sqlite_override is not None:
+        p = _portfolio_sqlite_override
+    else:
+        p = portfolio_sqlite_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -39,8 +54,22 @@ def _http_get_json(url: str) -> Any:
     return bot1_http_get_json(url, timeout=float(HTTP_TIMEOUT_SEC))
 
 
-def _open_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_portfolio_db_path()))
+def _table_names(conn: sqlite3.Connection) -> set[str]:
+    return {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+
+
+def _is_bot2_rt_portfolio_path(path: Path) -> bool:
+    """Base bot 2 RT (``data/bots/bot_2_realtime/…``) : table ``positions``, pas ``executed_trades`` seule."""
+    return "bot_2_realtime" in str(path).replace("\\", "/")
+
+
+def _ensure_executed_trades_schema(conn: sqlite3.Connection) -> None:
+    """Schéma batch / bot1 RT (``executed_trades``)."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS executed_trades (
@@ -88,20 +117,58 @@ def _open_db() -> sqlite3.Connection:
         """
     )
     conn.commit()
+
+
+def _open_db() -> sqlite3.Connection:
+    """
+    Connexion à la base pointée par ``--portfolio-sqlite`` / défaut.
+
+    - Bot 1 (batch / RT classique) : ``executed_trades``.
+    - Bot 2 temps réel : ``positions`` (``core.bot2_portfolio_schema``), sans créer
+      ``executed_trades`` sur une base vide dédiée bot2.
+    """
+    path = _portfolio_db_path()
+    conn = sqlite3.connect(str(path))
+    tables = _table_names(conn)
+    bot2 = _is_bot2_rt_portfolio_path(path)
+
+    if "executed_trades" in tables or not bot2:
+        _ensure_executed_trades_schema(conn)
+
+    if bot2 or "positions" in tables:
+        from core.bot2_portfolio_schema import ensure_bot2_positions_table  # noqa: WPS433
+
+        ensure_bot2_positions_table(conn)
+
     return conn
 
 
 def _load_open_markets(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        """
-        SELECT DISTINCT market_id
-        FROM executed_trades
-        WHERE status = 'OPEN'
-          AND market_id IS NOT NULL
-          AND market_id != ''
-        """
-    ).fetchall()
-    return [str(r[0]) for r in rows]
+    """Union des ``market_id`` OPEN dans ``executed_trades`` et/ou ``positions`` (bot2)."""
+    ids: set[str] = set()
+    if "executed_trades" in _table_names(conn):
+        rows = conn.execute(
+            """
+            SELECT DISTINCT market_id
+            FROM executed_trades
+            WHERE status = 'OPEN'
+              AND market_id IS NOT NULL
+              AND market_id != ''
+            """
+        ).fetchall()
+        ids.update(str(r[0]) for r in rows if r and r[0])
+    if "positions" in _table_names(conn):
+        rows = conn.execute(
+            """
+            SELECT DISTINCT market_id
+            FROM positions
+            WHERE UPPER(TRIM(COALESCE(status, ''))) = 'OPEN'
+              AND market_id IS NOT NULL
+              AND market_id != ''
+            """
+        ).fetchall()
+        ids.update(str(r[0]) for r in rows if r and r[0])
+    return sorted(ids)
 
 
 def _fetch_market_payload(market_id: str) -> dict[str, Any] | None:
@@ -138,17 +205,35 @@ def _is_market_resolved_or_closed(market: dict[str, Any]) -> bool:
 
 
 def _mark_market_resolved(conn: sqlite3.Connection, market_id: str) -> int:
-    rowcount = conn.execute(
-        """
-        UPDATE executed_trades
-        SET status = 'RESOLVED'
-        WHERE market_id = ?
-          AND status = 'OPEN'
-        """,
-        (market_id,),
-    ).rowcount
+    total = 0
+    if "executed_trades" in _table_names(conn):
+        total += int(
+            conn.execute(
+                """
+                UPDATE executed_trades
+                SET status = 'RESOLVED'
+                WHERE market_id = ?
+                  AND status = 'OPEN'
+                """,
+                (market_id,),
+            ).rowcount
+            or 0
+        )
+    if "positions" in _table_names(conn):
+        total += int(
+            conn.execute(
+                """
+                UPDATE positions
+                SET status = 'RESOLVED'
+                WHERE market_id = ?
+                  AND UPPER(TRIM(COALESCE(status, ''))) = 'OPEN'
+                """,
+                (market_id,),
+            ).rowcount
+            or 0
+        )
     conn.commit()
-    return int(rowcount or 0)
+    return total
 
 
 def run_once() -> int:
@@ -203,7 +288,15 @@ def run_loop(interval_sec: int, startup_delay_sec: int) -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Watcher settlement: OPEN -> RESOLVED quand le marché est clos/résolu."
+        description="Watcher settlement: OPEN -> RESOLVED quand le marché est clos/résolu.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Exemples:\n"
+            "  %(prog)s --portfolio-sqlite data/bots/realtime/portfolio_rt.sqlite\n"
+            "  %(prog)s --loop --portfolio-sqlite data/bots/realtime/portfolio_rt.sqlite\n"
+            "\n"
+            "Sans --portfolio-sqlite : utilise PORTFOLIO_SQLITE_PATH / core.bot1_data_paths (batch bot1)."
+        ),
     )
     parser.add_argument(
         "--loop",
@@ -222,11 +315,24 @@ def _parse_args() -> argparse.Namespace:
         default=900,
         help="Décalage initial pour désynchroniser du bot de trading (défaut: 900).",
     )
+    parser.add_argument(
+        "--portfolio-sqlite",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Base SQLite des lignes OPEN (tables executed_trades et/ou positions). "
+            "Bot1 RT : ex. data/bots/realtime/portfolio_rt.sqlite. "
+            "Bot2 RT METAR : ex. data/bots/bot_2_realtime/portfolio_rt.sqlite. "
+            "Défaut sans ce flag : portfolio batch (PORTFOLIO_SQLITE_PATH)."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
+    set_portfolio_sqlite_path(args.portfolio_sqlite)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",

@@ -158,6 +158,52 @@ Après modification : `sudo systemctl daemon-reload && sudo systemctl restart po
 - `logs/settlement_watcher.log` — `settlement_watcher` (chaîne OPEN → RESOLVED)
 - `logs/exit_engine.log` — `exit_engine` (redeem, RESOLVED → SETTLED)
 - `logs/update_bot_cycle.log` — une ligne JSON par cycle (`step_exit_codes`, `aggregated_exit_code`)
+- `logs/update_bot_rt_cycle.log` — sortie agrégée du script `update_bot_rt.sh` (Phase 6, bot RT)
+
+## Bot 1 temps réel (METAR, `update_bot_rt.sh`)
+
+Chaîne parallèle au batch NOAA : `produce_rt_signals.py` → `finance_engine_rt.py` → settlement sur `portfolio_rt.sqlite`. Unités : `deploy/install-systemd-bot1-rt.sh`, templates `polymarket-bot1-rt*.service` / `*.timer`.
+
+| Fichier | Rôle |
+|---------|------|
+| **`polymarket-bot1-rt.service`** | Boucle : `deploy/bot1_rt_daemon.sh` (`BOT1_RT_CYCLE_INTERVAL_SEC`, défaut 300 s). |
+| **`polymarket-bot1-rt-cycle.timer`** + **`polymarket-bot1-rt-cycle.service`** | Un cycle `update_bot_rt.sh` à intervalle fixe (ex. toutes les 5 min). |
+| **`polymarket-bot1-rt-metar.timer`** + **`polymarket-bot1-rt-metar.service`** | Cycles aux minutes **:52, :55, :58** (horloge **du serveur**). |
+
+Ne pas activer en parallèle plusieurs modes sur le même hôte (double exécution des cycles RT).
+
+### Timer METAR et fuseau du serveur
+
+Les `OnCalendar` systemd utilisent l’**horloge système** du serveur (souvent **UTC** en production). Les déclenchements **:52, :55, :58** sont donc ces minutes-là **sur cette horloge** — pas automatiquement « l’heure locale » d’un aéroport donné. En pratique, une grille serrée plusieurs fois par heure permet quand même de rafraîchir souvent après les passages METAR typiques ; pour viser un fuseau précis (ex. États-Unis), soit le serveur est réglé / pensé dans ce contexte, soit on ajuste les `OnCalendar` (équivalents UTC) ou on s’appuie sur le timer **intervalle** (`polymarket-bot1-rt-cycle.timer`).
+
+### Wallet proxy et liquidité (batch + temps réel)
+
+Le batch NOAA (`update_bot.sh` / `finance_engine.py`) et le temps réel (`update_bot_rt.sh` / `finance_engine_rt.py`) utilisent en général le **même** compte Polymarket (même clé / **même funder proxy**) → le même **USDC** disponible pour passer des ordres.
+
+**Risque partagé** : si le batch a fortement engagé les fonds le matin (prévisions GFS), le scalping RT l’après-midi peut manquer d’USDC pour des opportunités « sûres ».
+
+**Mesure opérationnelle** : maintenir une **réserve de liquidité** (non allouée au batch, ou plafonds distincts suivis à la main) pour que les deux pipelines ne se fient pas au même solde « zéro marge ».
+
+### Phase 6 — `polymarket-bot-rt` (scalping METAR, bot2 par défaut)
+
+| Fichier | Rôle |
+|---------|------|
+| **`polymarket-bot-rt.timer`** + **`polymarket-bot-rt.service`** | Un cycle `update_bot_rt.sh` aux minutes **:51, :53, :55, :57, :59** (horloge **du serveur**). |
+| **`deploy/install-systemd-bot-rt.sh`** | Installe les unités (2ᵉ argument = utilisateur Unix, ex. `social_content_check`). |
+
+`update_bot_rt.sh` enchaîne par défaut le pipeline **bot 2** (`bots/bot2_realtime/…`, données sous `data/bots/bot_2_realtime/`). Pour l’ancien bot1 RT : `UPDATE_BOT_RT_PIPELINE=bot1`.
+
+- **Journal principal** : `logs/update_bot_rt_cycle.log` (stdout/stderr du script).
+- **Settlement** : synchrone par défaut ; `UPDATE_BOT_RT_ASYNC_SETTLEMENT=1` pour lancer `run_settlement_chain_rt.sh` en arrière-plan ; `UPDATE_BOT_RT_SKIP_SETTLEMENT=1` pour le désactiver.
+- **Rotation logs** : `deploy/logrotate/polymarket-bot-rt.conf` (adapter le chemin absolu, puis copier vers `/etc/logrotate.d/`).
+- **Dry-run 24 h avant prod** : `deploy/systemd/PHASE6_RT_DRY_RUN.md`.
+
+```bash
+chmod +x deploy/install-systemd-bot-rt.sh update_bot_rt.sh
+sudo ./deploy/install-systemd-bot-rt.sh "$HOME/polymarket-weather-bot" social_content_check
+sudo systemctl enable --now polymarket-bot-rt.timer
+sudo systemctl list-timers polymarket-bot-rt.timer
+```
 
 ## Sécurité
 

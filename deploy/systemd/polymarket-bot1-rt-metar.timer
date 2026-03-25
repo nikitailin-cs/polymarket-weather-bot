@@ -1,0 +1,14 @@
+[Unit]
+Description=Timer METAR — déclenche à H:52, H:55, H:58 (rapports souvent vers H+55)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+
+[Timer]
+# Minutes = horloge **système** (souvent UTC). Lire README.md section Bot 1 temps réel.
+OnCalendar=*-*-* *:52:00
+OnCalendar=*-*-* *:55:00
+OnCalendar=*-*-* *:58:00
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

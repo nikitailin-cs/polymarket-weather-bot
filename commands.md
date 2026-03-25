@@ -24,14 +24,21 @@ Sauvegarde sous **nano** : `Ctrl+O`, Entrée, puis `Ctrl+X` pour quitter.
 
 ## Bot & opportunités
 
+### Bot1 en production : `update_bot.sh` (pas `main.py`)
+
+Pour le pipeline **NOAA → signaux → finance → settlement** (bot1), la commande à utiliser est **`bash update_bot.sh`**. Ce n’est **pas** la même chose que `python main.py` (autre boucle : scanner marchés, WebSocket, `edge_detector`, voir ci-dessous).
+
+- **Un lancement** de `update_bot.sh` = **un cycle** complet (puis le script se termine).
+- Pour que le bot **tourne en continu**, il faut **relancer** ce script sur un rythme régulier : **cron** sur le serveur ou **timer systemd** (voir `deploy/systemd/README.md`). Exemple manuel répété : `while true; do bash update_bot.sh; sleep 3600; done` (à adapter : intervalle, logs, gestion d’erreur — en prod préférer cron/systemd).
+
 | Commande | Rôle (bref) |
 |----------|----------------|
-| `python main.py` | Lance boucle trading continue |
+| `python main.py` | Autre bot : boucle trading **continue** (scanner météo, WS prix, edges, ordres) — **ne remplace pas** le cycle bot1 NOAA/finance ci-dessous |
 | `python signals/edge_detector.py` | Affiche opportunités ponctuelles |
-| `bash update_bot.sh` | NOAA (`produce_trading_signals.py`) → `finance_engine` → `settlement_watcher` (OPEN→RESOLVED) → `exit_engine` (redeem, SETTLED, Telegram) ; résumé JSON par cycle dans `logs/update_bot_cycle.log` |
+| `bash update_bot.sh` | **Bot1 — cycle à lancer** : NOAA (`produce_trading_signals.py`) → `finance_engine` → `settlement_watcher` (OPEN→RESOLVED) → `exit_engine` (redeem, SETTLED, Telegram) ; résumé JSON par cycle dans `logs/update_bot_cycle.log` |
 | `python bots/bot1/noaa_nomads_live/produce_trading_signals.py` | **Producteur de signaux** bot1 (GFS/NOMADS) — équivalent historique : `run_nomads_live_test.py` |
 | Voir `bots/bot1/MODEL_SCIENCE.md` | σ / `p_win`, lien calibrateur, feuille de route GEFS |
-| Voir `deploy/systemd/README.md` | Service systemd bot1 en boucle (NOAA + finance) ou timer |
+| Voir `deploy/systemd/README.md` | Planifier des exécutions répétées de `update_bot.sh` (service ou timer systemd) |
 
 ### Chemins bot1 (NOAA → finance → settlement)
 

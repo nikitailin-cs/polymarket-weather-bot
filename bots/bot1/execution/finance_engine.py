@@ -59,6 +59,7 @@ class TradingSignal:
     delta: float
     recommended_side: str
     forecast_cycle_utc: str
+    binary_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -304,6 +305,7 @@ def _load_signals(path: Path) -> list[TradingSignal]:
                 recommended_side=side,
                 forecast_cycle_utc=str(row.get("forecast_cycle_utc") or payload_cycle).strip()
                 or "unknown_cycle",
+                binary_state=str(row.get("binary_state") or "").strip().lower(),
             )
         )
     return out
@@ -508,11 +510,39 @@ def _extract_best_ask_from_book(book: dict[str, Any]) -> Optional[BookTop]:
     )
 
 
-def _fetch_book_top(token_id: str) -> Optional[BookTop]:
-    # Endpoint public CLOB le plus courant.
+def fetch_clob_book(token_id: str) -> Optional[dict[str, Any]]:
+    """Carnet L2 brut (REST ``/book``) — même source que le client web Polymarket."""
     url = f"{CLOB_URL}/book?token_id={urllib.parse.quote(token_id)}"
     data = _http_get_json(url)
-    if not isinstance(data, dict):
+    return data if isinstance(data, dict) else None
+
+
+def ask_levels_from_book(book: dict[str, Any], *, max_levels: int = 8) -> list[tuple[float, float]]:
+    """Niveaux ask triés par prix croissant (meilleur ask en premier)."""
+    asks = book.get("asks") or book.get("sell") or book.get("ask")
+    if not isinstance(asks, list) or not asks:
+        return []
+    levels: list[tuple[float, float]] = []
+    for level in asks:
+        price = 0.0
+        size = 0.0
+        if isinstance(level, dict):
+            price = _safe_float(level.get("price"), 0.0)
+            size = _safe_float(level.get("size"), 0.0)
+        elif isinstance(level, (list, tuple)) and level:
+            price = _safe_float(level[0], 0.0)
+            if len(level) > 1:
+                size = _safe_float(level[1], 0.0)
+        if price <= 0:
+            continue
+        levels.append((price, max(0.0, size)))
+    levels.sort(key=lambda x: x[0])
+    return levels[: max(1, max_levels)]
+
+
+def _fetch_book_top(token_id: str) -> Optional[BookTop]:
+    data = fetch_clob_book(token_id)
+    if data is None:
         return None
     return _extract_best_ask_from_book(data)
 

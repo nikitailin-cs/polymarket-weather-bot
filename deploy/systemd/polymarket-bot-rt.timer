@@ -1,0 +1,20 @@
+[Unit]
+Description=Timer — déclenche polymarket-bot-rt.service (fenêtre METAR :51–:59, toutes les 2 min)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+
+[Timer]
+# Fenêtre typique de publication METAR horaire (souvent :50–:59) : mitraillage NOAA sans dormir 50 min.
+# Horloge = celle du serveur (souvent UTC) — voir README.
+OnBootSec=90s
+OnCalendar=*-*-* *:51:00
+OnCalendar=*-*-* *:53:00
+OnCalendar=*-*-* *:55:00
+OnCalendar=*-*-* *:57:00
+OnCalendar=*-*-* *:59:00
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=polymarket-bot-rt.service
+
+[Install]
+WantedBy=timers.target

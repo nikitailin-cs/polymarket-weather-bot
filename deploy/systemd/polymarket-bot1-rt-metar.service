@@ -1,0 +1,17 @@
+[Unit]
+Description=Polymarket bot 1 temps réel — un cycle calé METAR (update_bot_rt.sh)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__RUN_AS_USER__
+Group=__RUN_AS_USER__
+WorkingDirectory=__REPO_ROOT__
+
+Environment=UPDATE_BOT_RT_PIPELINE=bot1
+
+ExecStart=/bin/bash __REPO_ROOT__/update_bot_rt.sh
+StandardOutput=journal
+StandardError=journal
