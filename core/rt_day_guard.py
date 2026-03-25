@@ -3,6 +3,11 @@ Garde jour calendaire pour les contrats RT (bot2 METAR).
 
 - **Jour unique** : ``target_date`` (YYYY-MM-DD) vs date locale lieu.
 - **Plage** : ``target_date_start`` … ``target_date_end`` inclus (même format).
+
+**Fuseau** : la comparaison utilise le champ ``timezone`` (IANA) du **lieu du contrat /
+observation** (ex. ``America/New_York`` pour l’aéroport), pas le fuseau du trader.
+Ainsi « prématuré » signifie : la date civile **au lieu du marché** n’est pas encore
+le ``target_date`` — même si chez le trader il est encore la veille en Californie.
 """
 from __future__ import annotations
 

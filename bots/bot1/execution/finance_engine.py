@@ -27,8 +27,14 @@ from py_clob_client.constants import POLYGON  # noqa: E402
 from config.settings import (  # noqa: E402
     FEE_BPS,
     MAX_BET_USD,
+    MAX_PORTFOLIO_USD,
     finance_engine_is_dry_run,
     resolve_trading_private_key,
+)
+from core.barbell_strategy import (  # noqa: E402
+    barbell_enabled,
+    cap_stake_to_bucket,
+    classify_barbell_leg,
 )
 from core.client import invoke_clob_post_order, resolve_clob_funder  # noqa: E402
 from core.bot1_data_paths import (  # noqa: E402
@@ -564,14 +570,34 @@ def _normalize_price_to_tick(price: float, tick_size: Optional[float]) -> float:
         return price
 
 
-def _barbell_condition(p_win_side: float, best_ask: float) -> Optional[str]:
-    # Condition A: steamroller/sécurité
-    if p_win_side > 0.90 and best_ask < (p_win_side - 0.05):
-        return "A"
-    # Condition B: sniper asymétrique/loto
-    if p_win_side > 0.15 and best_ask <= 0.05:
-        return "B"
-    return None
+def _barbell_bankroll_usdc() -> float:
+    """Référence budgets jambe (85/15) — ``BARBELL_BANKROLL_USDC`` ou ``MAX_PORTFOLIO_USD``."""
+    raw = (os.getenv("BARBELL_BANKROLL_USDC") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return max(0.0, float(MAX_PORTFOLIO_USD))
+
+
+def _noaa_barbell_inputs(side: str, our_yes: float, best_ask: float) -> tuple[float, float]:
+    """
+    ``market_yes_prob`` implicite + edge net (même coût que ``edge_detector.TOTAL_COST``)
+    pour :func:`classify_barbell_leg`.
+    """
+    spread_cost = 0.025
+    taker_fee = FEE_BPS / 10_000
+    total_cost = taker_fee + spread_cost
+    su = (side or "").upper()
+    if su == "YES":
+        myp = max(0.0, min(1.0, float(best_ask)))
+        raw_edge = abs(float(our_yes) - myp)
+    else:
+        myp = max(0.0, min(1.0, 1.0 - float(best_ask)))
+        raw_edge = abs((1.0 - float(our_yes)) - float(best_ask))
+    net_edge = raw_edge - total_cost
+    return myp, net_edge
 
 
 def _clob_order_accepted(resp: dict[str, Any]) -> tuple[bool, str]:
@@ -826,6 +852,9 @@ def run(order_size_usdc: Optional[float] = None) -> int:
     executed = 0
     dry_simulated = 0
     skipped = 0
+    deployed_safe = 0.0
+    deployed_asym = 0.0
+    barbell_bankroll = _barbell_bankroll_usdc()
     try:
         for sig in signals:
             if _already_traded_for_cycle(conn, sig.market_id, sig.forecast_cycle_utc):
@@ -863,12 +892,59 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                 )
                 continue
 
-            effective_p_win = sig.p_win if sig.recommended_side == "YES" else (1.0 - sig.p_win)
+            side_u = (sig.recommended_side or "").upper()
+            effective_p_win = sig.p_win if side_u == "YES" else (1.0 - sig.p_win)
             ev = effective_p_win - best_ask
-            cond = _barbell_condition(effective_p_win, best_ask)
+            myp, net_edge = _noaa_barbell_inputs(side_u, sig.p_win, best_ask)
+
+            barbell_tag: str
+            budget_for_order: float
+            if barbell_enabled():
+                leg = classify_barbell_leg(side_u, sig.p_win, myp, net_edge)
+                if leg is None:
+                    skipped += 1
+                    LOG.info(
+                        "SKIP barbell: aucune jambe (safe/asymmetric) market_id=%s net_edge=%.4f",
+                        sig.market_id,
+                        net_edge,
+                    )
+                    continue
+                budget_for_order = cap_stake_to_bucket(
+                    budget_usdc,
+                    leg,
+                    barbell_bankroll,
+                    deployed_safe,
+                    deployed_asym,
+                )
+                if budget_for_order + 1e-9 < MIN_ORDER_NOTIONAL_USDC:
+                    skipped += 1
+                    LOG.info(
+                        "SKIP barbell: budget jambe épuisé ou < min notionnel market_id=%s leg=%s",
+                        sig.market_id,
+                        leg,
+                    )
+                    continue
+                barbell_tag = leg
+            else:
+                try:
+                    min_ev = float(os.getenv("FINANCE_NOAA_MIN_EV", "0.0"))
+                except ValueError:
+                    min_ev = 0.0
+                if ev <= min_ev:
+                    skipped += 1
+                    LOG.info(
+                        "SKIP NOAA: ev=%.4f <= FINANCE_NOAA_MIN_EV=%.4f market_id=%s",
+                        ev,
+                        min_ev,
+                        sig.market_id,
+                    )
+                    continue
+                budget_for_order = budget_usdc
+                barbell_tag = "off"
 
             LOG.info(
-                "Signal market_id=%s side=%s p=%.3f ask=%.3f ask_size=%.3f tick=%s ev=%.3f cond=%s",
+                "Signal market_id=%s side=%s p=%.3f ask=%.3f ask_size=%.3f tick=%s ev=%.3f "
+                "net_edge=%.4f barbell=%s budget=%.4f",
                 sig.market_id,
                 sig.recommended_side,
                 effective_p_win,
@@ -876,15 +952,13 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                 book_top.best_ask_size,
                 f"{book_top.tick_size:.6f}" if book_top.tick_size else "n/a",
                 ev,
-                cond or "-",
+                net_edge,
+                barbell_tag,
+                budget_for_order,
             )
 
-            if cond is None:
-                skipped += 1
-                continue
-
             # Budget USDC -> nombre de tokens (shares) : le SDK BUY attend size en tokens, pas en $.
-            size_shares = budget_usdc / best_ask
+            size_shares = budget_for_order / best_ask
             if book_top.best_ask_size > 0:
                 size_shares = min(size_shares, book_top.best_ask_size)
             notional_usdc = size_shares * best_ask
@@ -915,11 +989,16 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                     size_shares,
                     best_ask,
                     notional_usdc,
-                    cond,
+                    barbell_tag,
                     ev,
                     token_id[:18],
                 )
                 dry_simulated += 1
+                if barbell_enabled() and barbell_tag in ("safe", "asymmetric"):
+                    if barbell_tag == "safe":
+                        deployed_safe += notional_usdc
+                    else:
+                        deployed_asym += notional_usdc
                 continue
 
             resp = _place_limit_buy(token_id=token_id, price=best_ask, size=size_shares)
@@ -959,13 +1038,19 @@ def run(order_size_usdc: Optional[float] = None) -> int:
                 effective_p_win=effective_p_win,
                 best_ask=best_ask,
                 ev=ev,
-                barbell_cond=cond,
+                barbell_cond=barbell_tag,
                 token_id=token_id,
                 order_resp=resp,
                 requested_size=size_shares,
                 matched_size=matched_size,
             )
             executed += 1
+            if barbell_enabled() and barbell_tag in ("safe", "asymmetric"):
+                fill_notional = float(matched_size) * float(best_ask)
+                if barbell_tag == "safe":
+                    deployed_safe += fill_notional
+                else:
+                    deployed_asym += fill_notional
             LOG.info(
                 "EXECUTED market_id=%s side=%s token=%s ask=%.3f",
                 sig.market_id,

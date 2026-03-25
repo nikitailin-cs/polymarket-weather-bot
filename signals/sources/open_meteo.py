@@ -55,12 +55,21 @@ def geocode(city: str) -> Optional[tuple[float, float]]:
         return None
 
 
-def _fetch_daily_temp_max(api_url: str, lat: float, lon: float,
-                          date_str: str, city: str,
-                          max_retries: int = 2) -> Optional[float]:
+def _fetch_daily_temp_max(
+    api_url: str,
+    lat: float,
+    lon: float,
+    date_str: str,
+    city: str,
+    max_retries: int = 2,
+    model: Optional[str] = None,
+) -> Optional[float]:
     """
     Appel générique forecast ou archive pour temperature_2m_max.
     Réessaie jusqu à max_retries fois en cas d échec réseau (timeout, 5xx).
+
+    ``model`` : id Open-Meteo (ex. ``ecmwf_ifs04``, ``gfs_hrrr``) — uniquement pour
+    l'endpoint **forecast** ; l'archive est appelée sans modèle.
     """
     import time as _time
     url = (
@@ -70,6 +79,8 @@ def _fetch_daily_temp_max(api_url: str, lat: float, lon: float,
         f"&timezone=auto"
         f"&start_date={date_str}&end_date={date_str}"
     )
+    if model and "archive" not in api_url.lower():
+        url += f"&models={urllib.parse.quote(model)}"
     for attempt in range(1, max_retries + 1):
         try:
             data  = _get(url)
@@ -86,12 +97,15 @@ def _fetch_daily_temp_max(api_url: str, lat: float, lon: float,
     return None
 
 
-def get_max_temp(city: str, date_str: str) -> Optional[float]:
+def get_max_temp(city: str, date_str: str, model: Optional[str] = None) -> Optional[float]:
     """
     Température max prévue ou observée (°C) pour une ville à une date YYYY-MM-DD.
 
     Stratégie : forecast d'abord, archive en fallback systématique.
     Pas de logique de date côté client : l'API sait quelles données elle a.
+
+    ``model`` : modèle Open-Meteo forcé sur le **forecast** (ex. ``ecmwf_ifs04``,
+    ``gfs_hrrr``). None = comportement API par défaut (best match).
 
     Raison : avec timezone=auto, Open-Meteo interprète les dates en heure locale.
     Pour une ville UTC+8 comme Singapore, la date J peut déjà être «aujourd'hui»
@@ -104,12 +118,12 @@ def get_max_temp(city: str, date_str: str) -> Optional[float]:
     lat, lon = coords
 
     # 1. Forecast (couvre jusqu'à J+16)
-    result = _fetch_daily_temp_max(FORECAST_URL, lat, lon, date_str, city)
+    result = _fetch_daily_temp_max(FORECAST_URL, lat, lon, date_str, city, model=model)
     if result is not None:
         return result
 
     # 2. Archive (couvre J-2 et avant, délai de publication ~2-5 jours selon station)
-    result = _fetch_daily_temp_max(ARCHIVE_URL, lat, lon, date_str, city)
+    result = _fetch_daily_temp_max(ARCHIVE_URL, lat, lon, date_str, city, model=None)
     return result
 
 

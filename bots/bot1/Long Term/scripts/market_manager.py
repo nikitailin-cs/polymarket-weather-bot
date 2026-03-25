@@ -36,6 +36,7 @@ SANITY_HINT_BBOXES: dict[str, tuple[float, float, float, float]] = {
 class ActiveMarket:
     market_id: str
     station_code: str
+    # Après chargement JSON : toujours normalisé (icao / wmo_station / …), jamais « noaa » seul ambigu.
     oracle_source: str
     question: str
     operator: str
@@ -47,6 +48,7 @@ class ActiveMarket:
     target_date: Optional[str] = None  # YYYY-MM-DD (jour contrat ; GFS bot1)
     target_date_start: Optional[str] = None  # RT plage multi-jours (inclus)
     target_date_end: Optional[str] = None
+    # IANA du lieu du contrat / mesure (pas le fuseau du trader) — garde jour J cohérente.
     locality_tz: Optional[str] = None  # IANA (ex. America/New_York)
     end_date_iso: Optional[str] = None  # Gamma / spec
     end_date_utc_iso: Optional[str] = None  # Clôture marché UTC (ISO Z)
@@ -174,6 +176,30 @@ def _looks_like_wmo(code: str) -> bool:
     return bool(re.fullmatch(r"\d{5}", code))
 
 
+def normalize_oracle_source_for_registry(oracle_source: str, station_code: str) -> str:
+    """
+    Valeurs ambiguës (vide, ``noaa``, ``unknown``) → type reconnu par
+    :func:`resolve_station_lat_lon_strict`.
+
+    Historiquement le JSON utilisait ``oracle_source: noaa`` ou un défaut ``noaa``,
+    qui ne correspond à **aucune** branche du résolveur (contrairement à
+    ``noaa_ghcnd``, ``icao``, ``wmo_station``, etc.).
+    """
+    raw = (oracle_source or "").strip().lower()
+    code = (station_code or "").strip().upper()
+    if raw not in ("", "noaa", "unknown"):
+        return raw
+    if _looks_like_wmo(code):
+        return "wmo_station"
+    if _looks_like_icao(code):
+        return "icao"
+    if _looks_like_icao_or_faa(code):
+        return "icao"
+    if len(code) >= 5 and re.fullmatch(r"[A-Z0-9]+", code):
+        return "noaa_ghcnd"
+    return "icao"
+
+
 def _normalize_wmo_id(code: str) -> Optional[str]:
     digits = "".join(ch for ch in (code or "") if ch.isdigit())
     if 1 <= len(digits) <= 5:
@@ -202,7 +228,7 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
     for i, raw in enumerate(items):
         obj = _require_dict(raw, f"markets[{i}]")
         market_id = str(obj.get("market_id", "")).strip()
-        oracle_source = str(obj.get("oracle_source", "") or "noaa").strip().lower()
+        oracle_source_raw = str(obj.get("oracle_source", "") or "").strip().lower()
         question = str(obj.get("question", "") or "").strip()
         # Nomenclature ContractSpec: operator=gt/gte/lt/lte/eq/between, variable normalisée.
         operator = str(obj.get("operator", "")).strip()
@@ -266,6 +292,15 @@ def load_active_markets(json_path: Path) -> list[ActiveMarket]:
             raise ValueError(f"markets[{i}].market_id vide")
         if not station:
             raise ValueError(f"markets[{i}].station/icao vide")
+        oracle_source = normalize_oracle_source_for_registry(oracle_source_raw, station)
+        if oracle_source_raw != oracle_source:
+            _LOG.info(
+                "markets[%s] oracle_source %r → %r (station=%s)",
+                i,
+                oracle_source_raw or "(vide)",
+                oracle_source,
+                station,
+            )
         out.append(
             ActiveMarket(
                 market_id=market_id,
@@ -371,7 +406,7 @@ def resolve_station_lat_lon_strict(
       - CAS C GHCND/non géré: rejet immédiat
       - aucun fallback croisé autorisé
     """
-    src = (market.oracle_source or "unknown").lower()
+    src = normalize_oracle_source_for_registry(market.oracle_source or "", market.station_code).lower()
     code = market.station_code
 
     if src in ("icao", "adds", "aviation"):

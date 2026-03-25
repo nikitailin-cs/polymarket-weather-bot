@@ -59,6 +59,26 @@
           "type": "string",
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
           "description": "Fin de plage (inclus) avec target_date_start."
+        },
+        "weather_variable": {
+          "type": "string",
+          "description": "temp_max | temp_min | temp_avg (défaut temp_max dans produce_rt_signals)."
+        },
+        "range_scalp_mode": {
+          "type": "string",
+          "description": "Plage uniquement : every_day_in_range | first_day_only | last_day_only (défaut every_day_in_range)."
+        },
+        "metar_interpretation": {
+          "type": "string",
+          "description": "metar_instant | proxy_daily_high | document_only (voir core.rt_polymarket_alignment)."
+        },
+        "observation_interpretation": {
+          "type": "string",
+          "description": "Alias optionnel de metar_interpretation."
+        },
+        "resolution_notes": {
+          "type": "string",
+          "description": "Notes libres (avertissement log si présent)."
         }
       }
     }

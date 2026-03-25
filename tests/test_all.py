@@ -500,6 +500,66 @@ class TestEdgeDetector(unittest.TestCase):
         self.assertGreater(total_cost, 0)
 
 
+class TestForecastModelRouter(unittest.TestCase):
+    """Routage modèles ECMWF / HRRR blend / HKO — :mod:`core.forecast_model_router`."""
+
+    def test_hk_routes_hko(self):
+        from datetime import datetime, timedelta, timezone
+
+        from core.forecast_model_router import route_max_temp_forecast
+
+        t = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+        r = route_max_temp_forecast("Hong Kong", t, lat=22.3, lon=114.2)
+        self.assertEqual(r.primary, "hko")
+
+    def test_us_short_routes_gfs_hrrr(self):
+        from datetime import datetime, timedelta, timezone
+
+        from core.forecast_model_router import route_max_temp_forecast
+
+        t = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+        r = route_max_temp_forecast("NYC", t, lat=40.7, lon=-74.0)
+        self.assertEqual(r.primary, "open_meteo")
+        self.assertEqual(r.open_meteo_model, "gfs_hrrr")
+
+    def test_europe_medium_ecmwf(self):
+        from datetime import datetime, timedelta, timezone
+
+        from core.forecast_model_router import route_max_temp_forecast
+
+        t = (datetime.now(timezone.utc) + timedelta(days=5)).strftime("%Y-%m-%d")
+        r = route_max_temp_forecast("Paris", t, lat=48.86, lon=2.35)
+        self.assertEqual(r.open_meteo_model, "ecmwf_ifs04")
+
+
+class TestBarbellStrategy(unittest.TestCase):
+    """Stratégie haltère — :mod:`core.barbell_strategy`."""
+
+    def test_classify_safe_no_high_token(self):
+        from core.barbell_strategy import classify_barbell_leg
+
+        # NO à ~0,95 $ → market_yes ~0,05 ; modèle très confiant NO → our_yes faible
+        leg = classify_barbell_leg("NO", 0.03, 0.05, net_edge=0.02)
+        self.assertEqual(leg, "safe")
+
+    def test_classify_asymmetric_cheap_yes(self):
+        from core.barbell_strategy import classify_barbell_leg
+
+        leg = classify_barbell_leg("YES", 0.35, 0.05, net_edge=0.08)
+        self.assertEqual(leg, "asymmetric")
+
+    def test_classify_rejects_mid_price(self):
+        from core.barbell_strategy import classify_barbell_leg
+
+        leg = classify_barbell_leg("YES", 0.45, 0.45, net_edge=0.02)
+        self.assertIsNone(leg)
+
+    def test_bucket_cap(self):
+        from core.barbell_strategy import cap_stake_to_bucket
+
+        c = cap_stake_to_bucket(50.0, "safe", bankroll=100.0, already_deployed_safe=80.0, already_deployed_asym=0.0)
+        self.assertLessEqual(c, 5.0 + 1e-6)
+
 
 # ── UMAOracle — phases et séquence temporelle ─────────────────────────────────
 
@@ -1097,6 +1157,35 @@ class TestIntegration(unittest.TestCase):
             self.assertEqual(spec.effective_edge_multiplier, 0.0, f"failed for {status}")
 
 
+class TestNormalizeOracleSource(unittest.TestCase):
+    """Registre : noaa / vide → icao | wmo_station pour resolve_station_lat_lon_strict."""
+
+    @staticmethod
+    def _mm():
+        import sys
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        scripts = root / "bots/bot1/Long Term/scripts"
+        for p in (str(root), str(scripts)):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        import market_manager
+        return market_manager
+
+    def test_ambiguous_noaa_to_icao(self):
+        m = self._mm()
+        self.assertEqual(m.normalize_oracle_source_for_registry("noaa", "KJFK"), "icao")
+        self.assertEqual(m.normalize_oracle_source_for_registry("", "LFPG"), "icao")
+
+    def test_wmo_five_digits(self):
+        m = self._mm()
+        self.assertEqual(m.normalize_oracle_source_for_registry("noaa", "07156"), "wmo_station")
+
+    def test_explicit_preserved(self):
+        m = self._mm()
+        self.assertEqual(m.normalize_oracle_source_for_registry("noaa_ghcnd", "KJFK"), "noaa_ghcnd")
+
+
 class TestProduceRtDayGuard(unittest.TestCase):
     """Garde jour J — :mod:`core.rt_day_guard` (bot2 RT)."""
 
@@ -1161,6 +1250,74 @@ class TestProduceRtDayGuard(unittest.TestCase):
             ),
             "invalid",
         )
+
+
+class TestRtRangePolicy(unittest.TestCase):
+    def test_last_day_only(self):
+        from core.rt_range_policy import narrow_range_scalp_day
+
+        nd, sub = narrow_range_scalp_day(
+            date(2026, 3, 26),
+            has_range=True,
+            target_date_start="2026-03-25",
+            target_date_end="2026-03-28",
+            range_scalp_mode="last_day_only",
+        )
+        self.assertEqual(nd, "premature")
+        self.assertEqual(sub, "range_mode_last_day_only")
+
+        nd2, sub2 = narrow_range_scalp_day(
+            date(2026, 3, 28),
+            has_range=True,
+            target_date_start="2026-03-25",
+            target_date_end="2026-03-28",
+            range_scalp_mode="last_day_only",
+        )
+        self.assertEqual(nd2, "jour_j")
+        self.assertIsNone(sub2)
+
+    def test_every_day_default(self):
+        from core.rt_range_policy import narrow_range_scalp_day
+
+        nd, sub = narrow_range_scalp_day(
+            date(2026, 3, 26),
+            has_range=True,
+            target_date_start="2026-03-25",
+            target_date_end="2026-03-28",
+            range_scalp_mode="",
+        )
+        self.assertEqual(nd, "jour_j")
+
+
+class TestRtMetarInterpretation(unittest.TestCase):
+    def test_defaults(self):
+        from core.rt_polymarket_alignment import MetarInterpretation, resolve_metar_interpretation
+
+        a = resolve_metar_interpretation({})
+        self.assertEqual(a.interpretation, MetarInterpretation.METAR_INSTANT)
+        self.assertFalse(a.blocks_automated_scalp)
+
+    def test_document_only(self):
+        from core.rt_polymarket_alignment import MetarInterpretation, resolve_metar_interpretation
+
+        a = resolve_metar_interpretation({"metar_interpretation": "document_only"})
+        self.assertEqual(a.interpretation, MetarInterpretation.DOCUMENT_ONLY)
+        self.assertTrue(a.blocks_automated_scalp)
+
+
+class TestRtSignalHealth(unittest.TestCase):
+    def test_summarize(self):
+        from core.rt_signal_health import summarize_signals_health
+
+        h = summarize_signals_health(
+            {
+                "m1": {"binary_state": "met"},
+                "m2": {"binary_state": "dead"},
+                "_meta": {},
+            }
+        )
+        self.assertEqual(h["markets_total"], 2)
+        self.assertEqual(h["health_status"], "ok")
 
 
 class TestGfsHorizons(unittest.TestCase):
@@ -1566,7 +1723,9 @@ if __name__ == "__main__":
                     TestUMAOracle, TestUMADisputer, TestCTFManager,
                     TestFeatureStore, TestModelInterface, TestModelRegistry,
                     TestPnLBankroll, TestOnchainLogger,
-                    TestIntegration, TestProduceRtDayGuard, TestGfsHorizons):
+                    TestIntegration, TestNormalizeOracleSource, TestProduceRtDayGuard,
+                    TestRtRangePolicy, TestRtMetarInterpretation, TestRtSignalHealth,
+                    TestForecastModelRouter, TestBarbellStrategy, TestGfsHorizons):
             suite.addTests(loader.loadTestsFromTestCase(cls))
         runner  = unittest.TextTestRunner(verbosity=2)
         result  = runner.run(suite)

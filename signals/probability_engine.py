@@ -16,9 +16,11 @@ import re, math, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict
+from core.forecast_model_router import forecast_model_routing_enabled
 from signals.sources.aggregator import (
     get_max_temp_consensus,
     get_max_temp_contract_aligned,
+    get_max_temp_model_routed,
     get_precip_contract_aligned,
     get_precip_consensus,
 )
@@ -296,6 +298,8 @@ def compute_yes_prob(
             # Source inconnue/non supportée => ne pas trader à l'aveugle.
             if forecast_c is None:
                 return None
+        elif forecast_model_routing_enabled():
+            forecast_c, forecast_conf, sources = get_max_temp_model_routed(city, date_str)
         else:
             forecast_c, forecast_conf, sources = get_max_temp_consensus(city, date_str)
 

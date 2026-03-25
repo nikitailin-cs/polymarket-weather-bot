@@ -90,6 +90,8 @@ class TradeSignal:
     edge:            float
     kelly_stake_usd: float
     token_id:        str
+    # Stratégie haltère (``core.barbell_strategy``) — None si désactivée ou hors jambe.
+    barbell_leg:     Optional[str] = None
 
 
 @dataclass

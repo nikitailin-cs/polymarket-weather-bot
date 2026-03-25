@@ -244,6 +244,40 @@ def is_contract_source_supported(oracle_source: str, weather_variable: str) -> b
     return False
 
 
+def get_max_temp_model_routed(city: str, date_str: str) -> tuple[Optional[float], float, dict]:
+    """
+    Température max via :mod:`core.forecast_model_router` (HKO, ECMWF, HRRR blend US, etc.)
+    au lieu d'une moyenne pondérée multi-sources.
+
+    Activation côté moteur de probabilité : ``FORECAST_MODEL_ROUTING=1``.
+    """
+    from core.forecast_model_router import route_max_temp_forecast
+
+    r = route_max_temp_forecast(city, date_str)
+    detail: dict[str, Any] = {"router": r.reason}
+
+    if r.primary == "hko":
+        from signals.sources import hko_observatory as hko
+
+        t = hko.get_max_temp(city, date_str)
+        if t is not None:
+            detail["hko"] = t
+            return t, 0.88, detail
+        # Fallback : Open-Meteo ECMWF si HKO indisponible
+        t2 = open_meteo.get_max_temp(city, date_str, model="ecmwf_ifs04")
+        detail["fallback"] = "open_meteo_ecmwf_after_hko_fail"
+        if t2 is not None:
+            detail["open_meteo_ecmwf_ifs04"] = t2
+        return t2, 0.78 if t2 is not None else 0.0, detail
+
+    model = r.open_meteo_model
+    t = open_meteo.get_max_temp(city, date_str, model=model)
+    key = model or "open_meteo_default"
+    detail[key] = t
+    conf = 0.82 if t is not None else 0.0
+    return t, conf, detail
+
+
 def get_precip_consensus(city: str, date_str: str) -> tuple[Optional[float], float, dict]:
     """Précipitations consensuelles (mm) + confiance."""
     results: dict[str, float] = {}

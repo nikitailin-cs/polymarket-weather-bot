@@ -26,8 +26,13 @@ def _repo_root() -> Path:
 
 
 ROOT = _repo_root()
+_SCRIPTS = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+import market_manager as _mm  # noqa: E402
 
 from config.settings import CONTRACT_SPECS_FILE  # noqa: E402
 from core.contract_dates import infer_target_date_yyyy_mm_dd  # noqa: E402
@@ -48,7 +53,9 @@ def _fmt_end_utc_iso(dt: Optional[datetime]) -> Optional[str]:
 
 
 def _to_market_record(market: Any, spec: Any) -> dict[str, Any]:
-    oracle_source = str(getattr(spec, "oracle_source", "") or "unknown").strip().lower()
+    _raw = str(getattr(spec, "oracle_source", "") or "unknown").strip().lower()
+    sid = str(getattr(spec, "oracle_station_id", "") or "").strip().upper()
+    oracle_source = _mm.normalize_oracle_source_for_registry(_raw, sid)
     end_iso = str(getattr(spec, "end_date_iso", "") or getattr(market, "end_date_iso_raw", "") or "")
     target_date = infer_target_date_yyyy_mm_dd(
         question=market.question,

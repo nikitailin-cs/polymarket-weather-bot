@@ -2,15 +2,29 @@
   "markets": [
     {
       "market_id": "nyc_temp_over_20c",
+      "station": "KJFK",
       "icao": "KJFK",
+      "oracle_source": "icao",
+      "question": "Will NYC high temp exceed 20°C on 2026-03-26?",
+      "variable": "temp_max",
+      "operator": "gte",
       "threshold": 20.0,
+      "unit": "c",
+      "oracle_rounding": 1,
       "target_date": "2026-03-26",
       "timezone": "America/New_York"
     },
     {
       "market_id": "paris_temp_over_18c",
+      "station": "LFPG",
       "icao": "LFPG",
+      "oracle_source": "icao",
+      "question": "Will Paris CDG high temp exceed 18°C on 2026-03-26?",
+      "variable": "temp_max",
+      "operator": "gte",
       "threshold": 18.0,
+      "unit": "c",
+      "oracle_rounding": 1,
       "target_date": "2026-03-26",
       "timezone": "Europe/Paris"
     }

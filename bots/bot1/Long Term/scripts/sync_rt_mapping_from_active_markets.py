@@ -73,6 +73,7 @@ def _active_to_rt_entry(m: mm.ActiveMarket) -> dict[str, Any] | None:
         "timezone": tz,
         "deadline_local_hhmm": "23:59",
         "dead_min_gap": 15.0,
+        "weather_variable": var,
     }
     if tds and tde:
         rec["target_date_start"] = tds
