@@ -9,6 +9,91 @@ Chemins type : `~/polymarket-weather-bot`. Préfixer par `cd` + activer le venv 
 | `git pull` | Met à jour code distant |
 | `pip install -r requirements.txt` | Installe dépendances Python |
 
+## Après `git pull` : restart Bot long terme + Bot RT + vérif logs (un bloc)
+
+`git pull` ne recharge pas le code déjà en mémoire. Redémarrer les unités systemd, puis lire tout de suite les logs / health.
+
+- **Bot long terme** : `polymarket-bot1-adaptive.service`
+- **Bot temps réel / scalping** : `polymarket-bot-rt.timer` (déclenche `polymarket-bot-rt.service` en oneshot)
+
+**Première installation du timer RT** (une seule fois sur la machine) : voir `deploy/systemd/README.md` ou  
+`chmod +x deploy/install-systemd-bot-rt.sh update_bot_rt.sh` puis  
+`sudo ./deploy/install-systemd-bot-rt.sh "$HOME/polymarket-weather-bot" VOTRE_USER` puis  
+`sudo systemctl enable --now polymarket-bot-rt.timer`.
+
+```bash
+cd ~/polymarket-weather-bot
+git pull
+sudo systemctl daemon-reload
+sudo systemctl restart polymarket-bot1-adaptive.service
+sudo systemctl restart polymarket-bot-rt.timer
+
+echo "=== systemd (doit afficher active) ==="
+systemctl is-active polymarket-bot1-adaptive.service
+systemctl is-active polymarket-bot-rt.timer
+systemctl status polymarket-bot1-adaptive.service --no-pager -l | head -n 15
+systemctl status polymarket-bot-rt.timer --no-pager -l | head -n 12
+
+echo "=== Bot1 — derniers cycles (fiable) ==="
+tail -n 30 logs/bot1_adaptive_daemon.log
+tail -n 8 logs/update_bot_cycle.log
+
+echo "=== Bot2 RT — santé fichiers signaux ==="
+source .venv/bin/activate
+python bots/bot2_realtime/scripts/rt_health_check.py
+
+echo "=== Bot2 RT — dernier run service (journald, toujours dispo) ==="
+journalctl -u polymarket-bot-rt.service -n 50 --no-pager
+
+echo "=== Bot2 RT — fichier log optionnel ==="
+test -f logs/update_bot_rt.log && tail -n 40 logs/update_bot_rt.log || echo "(pas de logs/update_bot_rt.log — normal si seul journalctl est utilisé)"
+
+echo "=== CLOB / wallet (sanity) ==="
+python bots/bot1/execution/status_live.py
+```
+
+Interprétation rapide : Bot1 OK si le `tail` de `bot1_adaptive_daemon.log` montre des lignes récentes `cycle start` / `cycle end` sans `ModuleNotFoundError`. Bot2 OK si `rt_health_check` ne commence pas par `ERROR` et l’âge du meta reste sous le TTL affiché. Pas d’ordre Polymarket garanti à chaque cycle : absence de trade peut être normale (filtres / fenêtres).
+
+**Bot2 RT manuel** (debug ponctuel, pas prod continue) :
+
+```bash
+python bots/bot2_realtime/metar_live/produce_rt_signals.py
+python bots/bot2_realtime/scripts/rt_health_check.py
+python bots/bot2_realtime/execution/finance_engine_rt.py
+```
+
+## Telegram — commandes interactives (rapport live)
+
+Un second processus écoute **Telegram en long polling** et répond aux commandes `/…` (même `TELEGRAM_BOT_TOKEN` et `TELEGRAM_CHAT_ID` que les alertes). **Seul** le chat `TELEGRAM_CHAT_ID` est autorisé.
+
+Lancer sur le serveur (tmux, screen, ou service systemd dédié) :
+
+```bash
+cd ~/polymarket-weather-bot
+source .venv/bin/activate
+python monitoring/telegram_command_bot.py
+```
+
+Test rapide (un seul poll puis quitte) :
+
+```bash
+python monitoring/telegram_command_bot.py --once
+```
+
+| Commande | Contenu |
+|----------|---------|
+| `/help` | Liste des commandes |
+| `/ping` | Test |
+| `/health` ou `/status` | `systemctl` bot1-adaptive + timer RT, santé Bot2, extrait meta NOAA |
+| `/lastcycle` | Fin de `logs/update_bot_cycle.log` |
+| `/daemon` | Fin de `logs/bot1_adaptive_daemon.log` |
+| `/bot1meta` | `trading_signals_meta.json` |
+| `/bot2meta` | `realtime_signals_meta.json` (Bot2) |
+| `/positions` | Derniers trades SQLite bot1 (`executed_trades`) |
+| `/positions2` | Dernières lignes `positions` bot2 RT |
+| `/rt` | Santé signaux temps réel (âge + health) |
+| `/markets` | Scan Gamma météo (peut prendre ~10–30 s, charge API) |
+
 ## Fichier `.env` (secrets, proxy, clés)
 
 Depuis la racine du repo (`cd ~/polymarket-weather-bot`) :
