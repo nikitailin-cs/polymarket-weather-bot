@@ -11,6 +11,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 
 def _db_path() -> Path:
@@ -110,4 +111,4 @@ def get_status(limit: int = 10) -> None:
 
 
 if __name__ == "__main__":
-    get_status(limit=10)
+    raise SystemExit(run_guarded("bot1.status", lambda: (get_status(limit=10) or 0)))

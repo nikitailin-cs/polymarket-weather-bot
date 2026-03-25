@@ -18,6 +18,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from core.bot2_data_paths import REALTIME_SIGNALS_MAX_AGE_SEC, get_rt_paths  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 
 def main() -> int:
@@ -70,4 +71,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot2.rt_health_check", main))

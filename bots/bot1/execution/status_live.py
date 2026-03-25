@@ -19,6 +19,8 @@ from py_clob_client.client import ClobClient  # noqa: E402
 from py_clob_client.constants import POLYGON  # noqa: E402
 from config.settings import resolve_trading_private_key  # noqa: E402
 from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
+from core.client import resolve_clob_funder  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
@@ -37,8 +39,8 @@ def _load_env() -> tuple[str, str, str]:
     load_dotenv(dotenv_path=_ROOT / ".env", override=False)
     rpc = os.getenv("POLYGON_RPC_URL", "").strip()
     pk = resolve_trading_private_key() or ""
-    addr = os.getenv("PUBLIC_ADDRESS", "").strip()
-    return rpc, pk, addr
+    funder = resolve_clob_funder() or ""
+    return rpc, pk, funder
 
 
 def _get_usdc_onchain_safe(wallet_address: str = "") -> tuple[float, float, float]:
@@ -60,17 +62,26 @@ def _get_usdc_onchain_safe(wallet_address: str = "") -> tuple[float, float, floa
 
 
 def _build_client() -> Optional[ClobClient]:
-    rpc, pk, addr = _load_env()
+    rpc, pk, funder = _load_env()
     apply_proxy_env_for_clob()
-    if not pk or not addr:
-        print("ENV manquant: PRIVATE_KEY ou POLYMARKET_PKEY / PUBLIC_ADDRESS", flush=True)
+    if not pk or not funder:
+        print(
+            "ENV manquant: PRIVATE_KEY ou POLYMARKET_PKEY / "
+            "POLYMARKET_PROXY_ADDRESS|POLYMARKET_FUNDER|FUNDER_ADDRESS|PUBLIC_ADDRESS",
+            flush=True,
+        )
         return None
+    sig_type_raw = os.getenv("POLYMARKET_SIGNATURE_TYPE", "1").strip()
+    try:
+        signature_type = int(sig_type_raw)
+    except ValueError:
+        signature_type = 1
     kwargs: dict[str, Any] = {
         "host": CLOB_HOST,
         "key": pk,
         "chain_id": POLYGON,
-        "funder": addr,
-        "signature_type": 1,
+        "funder": funder,
+        "signature_type": signature_type,
     }
     params = set(inspect.signature(ClobClient).parameters.keys())
     if "host_rpc" in params and rpc:
@@ -143,11 +154,13 @@ def _fetch_clob_balance(client: ClobClient) -> tuple[str, Any]:
 
 
 def main() -> int:
-    rpc, _, addr = _load_env()
+    rpc, _, funder = _load_env()
+    public_addr = os.getenv("PUBLIC_ADDRESS", "").strip()
     print("=== POLYMETEO LIVE STATUS ===")
-    print("wallet           :", addr or "-")
+    print("wallet(public)   :", public_addr or "-")
+    print("wallet(funder)   :", funder or "-")
     print("rpc_configured   :", "yes" if bool(rpc) else "no")
-    usdc_total, usdc_bridged, usdc_native = _get_usdc_onchain_safe(addr)
+    usdc_total, usdc_bridged, usdc_native = _get_usdc_onchain_safe(funder)
     print("usdc_onchain     :", f"{usdc_total:.4f}")
     print("usdc_bridged     :", f"{usdc_bridged:.4f}")
     print("usdc_native      :", f"{usdc_native:.4f}")
@@ -200,4 +213,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot1.status_live", main))

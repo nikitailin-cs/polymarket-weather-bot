@@ -61,6 +61,7 @@ if str(_NOMADS_DIR) not in sys.path:
 import gfs_horizons  # noqa: E402
 import noaa_engine  # noqa: E402
 import market_manager  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 try:
     from signals.sources.model_calibrator import get_sigma_hint_for_key  # noqa: E402
@@ -1476,4 +1477,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(run_guarded("bot1.noaa_nomads_live", main))

@@ -25,6 +25,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
+_ROOT = Path(__file__).resolve().parents[4]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from monitoring.error_guard import run_guarded  # noqa: E402
+
 DEFAULT_SOURCE_URL = "https://aviationweather.gov/data/cache/stations.cache.xml.gz"
 DEFAULT_DB_PATH = Path("data/master_stations.sqlite3")
 DEFAULT_TIMEOUT_SEC = 60.0
@@ -202,4 +207,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot1.sync_master_stations", main))

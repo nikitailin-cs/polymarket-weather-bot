@@ -40,6 +40,7 @@ from core.contract_dates import infer_target_date_yyyy_mm_dd  # noqa: E402
 from core.models import ContractSpecCache  # noqa: E402
 from core.station_timezone import resolve_iana_timezone  # noqa: E402
 from scanners.market_scanner import fetch_gamma_active_markets_full, scan_weather_markets  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 
 DEFAULT_OUTPUT_JSON = ROOT / "data" / "active_markets.json"
@@ -229,4 +230,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot1.generate_markets", main))

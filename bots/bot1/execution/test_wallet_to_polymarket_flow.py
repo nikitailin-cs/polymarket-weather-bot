@@ -27,6 +27,7 @@ from core.polymarket_proxy import (  # noqa: E402
     audit_polymarket_network,
     build_socks5_proxy_url,
 )
+from monitoring.error_guard import run_guarded  # noqa: E402
 import requests  # noqa: E402
 
 try:
@@ -417,9 +418,10 @@ def run() -> int:
     )
 
     # 1) ENV
+    funder = resolve_clob_funder() or ""
     env_presence = {
         "PRIVATE_KEY": bool(resolve_trading_private_key()),
-        "PUBLIC_ADDRESS": bool(os.getenv("PUBLIC_ADDRESS")),
+        "FUNDER_ADDRESS_EFFECTIVE": bool(funder),
         "POLYGON_RPC_URL": bool(os.getenv("POLYGON_RPC_URL")),
     }
     step("env_variables_present", all(env_presence.values()), **env_presence)
@@ -429,11 +431,12 @@ def run() -> int:
 
     # 2) Wallet balances on-chain
     try:
-        usdc = get_usdc_balances()
-        pol = get_pol_balance()
+        usdc = get_usdc_balances(funder or None)
+        pol = get_pol_balance(funder or None)
         step(
             "wallet_onchain_balances",
             True,
+            wallet_funder=funder or None,
             usdc_total=usdc.get("total", 0.0),
             usdc_bridged=usdc.get("bridged", 0.0),
             usdc_native=usdc.get("native", 0.0),
@@ -573,4 +576,4 @@ def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(run_guarded("bot1.test_wallet_to_polymarket_flow", run))

@@ -63,6 +63,7 @@ from core.bot2_portfolio_schema import (  # noqa: E402
 from core.bot_rt_env import apply_rt_signing_env  # noqa: E402
 from core.client import resolve_clob_funder  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 from monitoring.telegram_alert import alert_bot2_rt_scalp_success  # noqa: E402
 
 LOG = logging.getLogger("finance_engine_rt.bot2")
@@ -806,4 +807,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot2.finance_engine_rt", main))

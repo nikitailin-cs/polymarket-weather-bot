@@ -29,6 +29,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import market_manager as mm  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 
 def _yes_if_above_for_temp(variable: str, operator: str) -> bool:
@@ -140,4 +141,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot1.sync_rt_mapping_from_active_markets", main))

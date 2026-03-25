@@ -19,6 +19,7 @@ if str(_ROOT) not in sys.path:
 
 from core.bot1_data_paths import portfolio_sqlite_path  # noqa: E402
 from core.bot1_http import bot1_http_get_json  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 LOG = logging.getLogger("settlement_watcher")
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
@@ -343,4 +344,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot1.settlement_watcher", main))

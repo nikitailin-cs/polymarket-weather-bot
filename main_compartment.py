@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from monitoring.error_guard import run_guarded
 
 
 def _set_isolated_paths(name: str) -> None:
@@ -114,4 +115,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_guarded("main.compartment", lambda: (main() or 0)))

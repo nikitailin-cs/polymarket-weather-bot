@@ -45,6 +45,7 @@ from core.bot1_data_paths import (  # noqa: E402
 from core.bot1_http import bot1_http_get_json  # noqa: E402
 from core.polymarket_proxy import apply_proxy_env_for_clob  # noqa: E402
 from monitoring.telegram_alert import alert_bot1_position_open  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 
 LOG = logging.getLogger("finance_engine")
@@ -1098,4 +1099,4 @@ def run(order_size_usdc: Optional[float] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(run_guarded("bot1.finance_engine", run))

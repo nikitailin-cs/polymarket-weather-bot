@@ -31,6 +31,7 @@ from monitoring.telegram_alert import (  # noqa: E402
     alert_error,
     send_alert,
 )
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 LOG = logging.getLogger("exit_engine")
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
@@ -905,4 +906,4 @@ def _parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = _parse_args()
     set_portfolio_sqlite_path(args.portfolio_sqlite)
-    raise SystemExit(run(dry_run=bool(args.dry_run)))
+    raise SystemExit(run_guarded("bot1.exit_engine", lambda: run(dry_run=bool(args.dry_run))))

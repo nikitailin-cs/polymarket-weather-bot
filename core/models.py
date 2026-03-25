@@ -10,7 +10,9 @@ from typing import Any, Optional, List, Tuple
 from datetime import datetime, timezone
 from enum import Enum
 import json
+import os
 import threading
+import tempfile
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -266,9 +268,22 @@ class ContractSpecCache:
         with self._lock:
             data = {mid: spec.to_dict() for mid, spec in self._specs.items()}
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(self._path)
+            # IMPORTANT: nom temporaire unique pour éviter collisions inter-processus.
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f"{self._path.stem}.",
+                suffix=".tmp",
+                dir=str(self._path.parent),
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(data, indent=2, ensure_ascii=False))
+                os.replace(tmp_name, str(self._path))
+            finally:
+                try:
+                    if os.path.exists(tmp_name):
+                        os.unlink(tmp_name)
+                except Exception:
+                    pass
 
     def get(self, market_id: str) -> Optional[ContractSpec]:
         with self._lock:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from monitoring.error_guard import run_guarded
 
 _SIGNAL_PRODUCER = Path(__file__).resolve().parent / "run_nomads_live_test.py"
 
@@ -28,4 +29,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot1.produce_trading_signals", main))

@@ -1,0 +1,10 @@
+{
+    "timestamp": 1774405967,
+    "generated_at_unix": 1774405967,
+    "date_utc": "2026-03-25T02:32:47.473027Z",
+    "generated_at_utc": "2026-03-25T02:32:47Z",
+    "status": "ok",
+    "markets_processed": 2,
+    "bot2_science": "binary_p_win",
+    "signals_ttl_sec": 180
+}

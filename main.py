@@ -16,6 +16,7 @@ if os.getenv("MAIN_DEPLOY_BANNER", "").strip().lower() in ("1", "true", "yes", "
         "MAIN_DEPLOY_BANNER=1 — message historique de déploiement (anciennement print stdout)"
     )
 from monitoring.telegram_alert import alert_start, alert_stop, alert_error
+from monitoring.error_guard import run_guarded
 from monitoring.pnl_tracker import print_open_positions, print_pnl_summary
 from monitoring.onchain_logger import print_onchain_summary
 from signals.model_registry import print_model_info
@@ -129,4 +130,4 @@ def _run_calibration() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    raise SystemExit(run_guarded("main.bot", lambda: (run() or 0)))

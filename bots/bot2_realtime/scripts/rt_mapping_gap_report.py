@@ -22,6 +22,7 @@ if str(_LT) not in sys.path:
     sys.path.insert(0, str(_LT))
 
 import market_manager as mm  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 
 def _rt_eligible(m: mm.ActiveMarket) -> bool:
@@ -80,4 +81,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_guarded("bot2.rt_mapping_gap_report", main))

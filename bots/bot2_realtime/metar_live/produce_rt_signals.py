@@ -40,6 +40,7 @@ from core.rt_polymarket_alignment import (  # noqa: E402
 from core.rt_range_policy import narrow_range_scalp_day  # noqa: E402
 from core.rt_signal_health import summarize_signals_health  # noqa: E402
 from bots.bot2_realtime.metar_live.realtime_metar_registry import RealTimeMetarRegistry  # noqa: E402
+from monitoring.error_guard import run_guarded  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -390,4 +391,4 @@ def run_realtime_signals() -> None:
 
 
 if __name__ == "__main__":
-    run_realtime_signals()
+    raise SystemExit(run_guarded("bot2.produce_rt_signals", lambda: (run_realtime_signals() or 0)))
