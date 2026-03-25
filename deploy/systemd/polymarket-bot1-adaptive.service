@@ -1,0 +1,31 @@
+[Unit]
+Description=Polymarket bot1 — daemon adaptatif (slow + burst fenêtre GFS)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_AS_USER__
+Group=__RUN_AS_USER__
+WorkingDirectory=__REPO_ROOT__
+
+# Cadence adaptative:
+# - mode sleep (hors fenêtre) -> intervalle long
+# - mode alert (fenêtre intensive) -> intervalle court
+Environment=BOT1_CYCLE_INTERVAL_SLEEP_SEC=600
+Environment=BOT1_CYCLE_INTERVAL_ALERT_SEC=25
+Environment=BOT1_CYCLE_INTERVAL_JITTER_SEC=3
+
+Environment=NOMADS_ALLOW_OUTSIDE_WINDOW=0
+Environment=NOMADS_FORCE=0
+
+ExecStart=/bin/bash __REPO_ROOT__/deploy/bot1_adaptive_daemon.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

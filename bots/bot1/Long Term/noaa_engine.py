@@ -119,6 +119,7 @@ import random
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -184,6 +185,13 @@ GFS_POLL_JITTER_SLEEP_SEC = (1.0, 5.0)
 # 403 répétés sur NOMADS → cooldown puis priorité S3
 ANTIBAN_MAX_CONSECUTIVE_403 = 3
 ANTIBAN_COOLDOWN_SEC = 300.0
+
+# Garde-fou HTTP global (toutes requêtes NOAA/NOMADS de ce module).
+# Valeurs prudentes pour éviter les pics réseau (y compris pipelines GEFS).
+NOAA_HTTP_MAX_REQ_PER_MIN = float(os.getenv("NOAA_HTTP_MAX_REQ_PER_MIN", "60") or "60")
+NOAA_HTTP_CIRCUIT_BREAKER_ERRORS = int(os.getenv("NOAA_HTTP_CIRCUIT_BREAKER_ERRORS", "4") or "4")
+NOAA_HTTP_COOLDOWN_SEC = float(os.getenv("NOAA_HTTP_COOLDOWN_SEC", "180") or "180")
+NOAA_HTTP_MAX_RETRIES = int(os.getenv("NOAA_HTTP_MAX_RETRIES", "2") or "2")
 
 
 @dataclass(frozen=True)
@@ -269,6 +277,61 @@ class AntiBanGovernor:
         self._consecutive_403 = 0
         self._force_s3_only = False
         self._last_idx_source = source
+
+
+@dataclass
+class HttpRequestGovernor:
+    """
+    Gouverneur HTTP global pour limiter les risques de ban/ratelimit NOAA.
+    """
+
+    max_req_per_min: float = NOAA_HTTP_MAX_REQ_PER_MIN
+    circuit_breaker_errors: int = NOAA_HTTP_CIRCUIT_BREAKER_ERRORS
+    cooldown_sec: float = NOAA_HTTP_COOLDOWN_SEC
+    _lock: Any = field(default_factory=threading.Lock, repr=False)
+    _next_allowed_at: float = field(default=0.0, repr=False)
+    _cooldown_until: float = field(default=0.0, repr=False)
+    _consecutive_errors: int = field(default=0, repr=False)
+
+    def _min_interval_sec(self) -> float:
+        rpm = max(1.0, float(self.max_req_per_min))
+        return 60.0 / rpm
+
+    def before_request(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            wait = 0.0
+            if now < self._cooldown_until:
+                wait = self._cooldown_until - now
+            else:
+                wait = max(0.0, self._next_allowed_at - now)
+                self._next_allowed_at = max(now, self._next_allowed_at) + self._min_interval_sec()
+        if wait > 0:
+            time.sleep(wait)
+
+    def after_success(self) -> None:
+        with self._lock:
+            self._consecutive_errors = 0
+
+    def after_error(self, status_code: int | None = None) -> None:
+        # Seuls les codes transients/noaa-limit font avancer le breaker.
+        if status_code is not None and status_code not in (403, 429, 500, 502, 503, 504):
+            return
+        with self._lock:
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= max(1, int(self.circuit_breaker_errors)):
+                self._cooldown_until = max(
+                    self._cooldown_until,
+                    time.monotonic() + max(0.0, float(self.cooldown_sec)),
+                )
+                self._consecutive_errors = 0
+
+
+_HTTP_GOVERNOR = HttpRequestGovernor()
+
+
+def _retryable_http_status(code: int) -> bool:
+    return code in (403, 429, 500, 502, 503, 504)
 
 
 def _normalize_cycle(cycle: str) -> str:
@@ -646,32 +709,54 @@ def head_detail(
     Aucun corps de fichier téléchargé.
     """
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": user_agent})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            code = resp.getcode()
-            lm = resp.headers.get("Last-Modified")
+    last_http_err: Optional[urllib.error.HTTPError] = None
+    for attempt in range(max(1, NOAA_HTTP_MAX_RETRIES) + 1):
+        try:
+            _HTTP_GOVERNOR.before_request()
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                _HTTP_GOVERNOR.after_success()
+                code = resp.getcode()
+                lm = resp.headers.get("Last-Modified")
+                return HeadDetail(
+                    status_code=code,
+                    ok=200 <= code < 300,
+                    last_modified=_parse_last_modified(lm),
+                    is_service_unavailable=(code == 503),
+                )
+        except urllib.error.HTTPError as e:
+            last_http_err = e
+            _HTTP_GOVERNOR.after_error(e.code)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES) and _retryable_http_status(e.code):
+                time.sleep(0.4 * (2**attempt) + random.uniform(0.0, 0.3))
+                continue
+            lm = e.headers.get("Last-Modified") if e.headers else None
+            code = e.code
             return HeadDetail(
                 status_code=code,
                 ok=200 <= code < 300,
                 last_modified=_parse_last_modified(lm),
                 is_service_unavailable=(code == 503),
             )
-    except urllib.error.HTTPError as e:
-        lm = e.headers.get("Last-Modified") if e.headers else None
-        code = e.code
+        except Exception:
+            _HTTP_GOVERNOR.after_error(None)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES):
+                time.sleep(0.4 * (2**attempt) + random.uniform(0.0, 0.3))
+                continue
+            break
+    if last_http_err is not None:
+        lm = last_http_err.headers.get("Last-Modified") if last_http_err.headers else None
         return HeadDetail(
-            status_code=code,
-            ok=200 <= code < 300,
-            last_modified=_parse_last_modified(lm),
-            is_service_unavailable=(code == 503),
-        )
-    except Exception:
-        return HeadDetail(
-            status_code=0,
+            status_code=last_http_err.code,
             ok=False,
-            last_modified=None,
-            is_service_unavailable=False,
+            last_modified=_parse_last_modified(lm),
+            is_service_unavailable=(last_http_err.code == 503),
         )
+    return HeadDetail(
+        status_code=0,
+        ok=False,
+        last_modified=None,
+        is_service_unavailable=False,
+    )
 
 
 def head_ok(
@@ -838,8 +923,25 @@ def get_range_bytes(
         method="GET",
         headers=_http_range_get_headers(start, end, user_agent=user_agent),
     )
-    with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-        return resp.read()
+    for attempt in range(max(1, NOAA_HTTP_MAX_RETRIES) + 1):
+        try:
+            _HTTP_GOVERNOR.before_request()
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                _HTTP_GOVERNOR.after_success()
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            _HTTP_GOVERNOR.after_error(e.code)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES) and _retryable_http_status(e.code):
+                time.sleep(0.5 * (2**attempt) + random.uniform(0.0, 0.4))
+                continue
+            raise
+        except Exception:
+            _HTTP_GOVERNOR.after_error(None)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES):
+                time.sleep(0.5 * (2**attempt) + random.uniform(0.0, 0.4))
+                continue
+            raise
+    raise RuntimeError("get_range_bytes: retries exhausted")
 
 
 def get_range_bytes_io(
@@ -869,18 +971,30 @@ def head_get_content_length(
     Utile pour calculer la fin du dernier enregistrement GRIB après parsing du .idx.
     """
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": user_agent})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            cl = resp.headers.get("Content-Length")
-            return int(cl) if cl else None
-    except urllib.error.HTTPError as e:
-        cl = e.headers.get("Content-Length") if e.headers else None
+    for attempt in range(max(1, NOAA_HTTP_MAX_RETRIES) + 1):
         try:
-            return int(cl) if cl else None
-        except (TypeError, ValueError):
+            _HTTP_GOVERNOR.before_request()
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                _HTTP_GOVERNOR.after_success()
+                cl = resp.headers.get("Content-Length")
+                return int(cl) if cl else None
+        except urllib.error.HTTPError as e:
+            _HTTP_GOVERNOR.after_error(e.code)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES) and _retryable_http_status(e.code):
+                time.sleep(0.4 * (2**attempt) + random.uniform(0.0, 0.3))
+                continue
+            cl = e.headers.get("Content-Length") if e.headers else None
+            try:
+                return int(cl) if cl else None
+            except (TypeError, ValueError):
+                return None
+        except Exception:
+            _HTTP_GOVERNOR.after_error(None)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES):
+                time.sleep(0.4 * (2**attempt) + random.uniform(0.0, 0.3))
+                continue
             return None
-    except Exception:
-        return None
+    return None
 
 
 def fetch_idx_text(
@@ -895,8 +1009,31 @@ def fetch_idx_text(
     À n’appeler qu’après :func:`probe_idx_hybrid` / HEAD OK sur le même URL.
     """
     req = urllib.request.Request(url, method="GET", headers={"User-Agent": user_agent})
-    with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-        data = resp.read(max_bytes + 1)
+    last_exc: Optional[BaseException] = None
+    data: bytes = b""
+    for attempt in range(max(1, NOAA_HTTP_MAX_RETRIES) + 1):
+        try:
+            _HTTP_GOVERNOR.before_request()
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                _HTTP_GOVERNOR.after_success()
+                data = resp.read(max_bytes + 1)
+                break
+        except urllib.error.HTTPError as e:
+            last_exc = e
+            _HTTP_GOVERNOR.after_error(e.code)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES) and _retryable_http_status(e.code):
+                time.sleep(0.5 * (2**attempt) + random.uniform(0.0, 0.4))
+                continue
+            raise
+        except Exception as e:
+            last_exc = e
+            _HTTP_GOVERNOR.after_error(None)
+            if attempt < max(1, NOAA_HTTP_MAX_RETRIES):
+                time.sleep(0.5 * (2**attempt) + random.uniform(0.0, 0.4))
+                continue
+            raise
+    if last_exc is not None and not data:
+        raise last_exc
     if len(data) > max_bytes:
         raise ValueError(f".idx trop volumineux (> {max_bytes} octets) — augmenter max_bytes ou vérifier l’URL")
     return data.decode("utf-8", errors="replace")

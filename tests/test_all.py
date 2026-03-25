@@ -532,6 +532,28 @@ class TestForecastModelRouter(unittest.TestCase):
         self.assertEqual(r.open_meteo_model, "ecmwf_ifs04")
 
 
+class TestEnsembleProb(unittest.TestCase):
+    def test_empirical_prob_from_operator(self):
+        from core.ensemble_prob import empirical_prob_from_operator
+
+        vals = [34.0, 35.0, 36.0, 37.0, 33.5]
+        self.assertAlmostEqual(empirical_prob_from_operator(vals, "gte", 35.0), 3 / 5)
+        self.assertAlmostEqual(empirical_prob_from_operator(vals, "lt", 35.0), 2 / 5)
+
+    def test_quantile_linear(self):
+        from core.ensemble_prob import quantile
+
+        vals = [1.0, 2.0, 3.0, 4.0]
+        self.assertAlmostEqual(quantile(vals, 0.5), 2.5)
+        self.assertAlmostEqual(quantile(vals, 0.1), 1.3)
+
+    def test_blend_prob(self):
+        from core.ensemble_prob import blend_prob
+
+        self.assertAlmostEqual(blend_prob(0.8, 0.2, alpha=1.0), 0.8)
+        self.assertAlmostEqual(blend_prob(0.8, 0.2, alpha=0.25), 0.35)
+
+
 class TestBarbellStrategy(unittest.TestCase):
     """Stratégie haltère — :mod:`core.barbell_strategy`."""
 
@@ -1730,7 +1752,7 @@ if __name__ == "__main__":
                     TestPnLBankroll, TestOnchainLogger,
                     TestIntegration, TestNormalizeOracleSource, TestProduceRtDayGuard,
                     TestRtRangePolicy, TestRtMetarInterpretation, TestRtSignalHealth,
-                    TestForecastModelRouter, TestBarbellStrategy, TestGfsHorizons):
+                    TestForecastModelRouter, TestEnsembleProb, TestBarbellStrategy, TestGfsHorizons):
             suite.addTests(loader.loadTestsFromTestCase(cls))
         runner  = unittest.TextTestRunner(verbosity=2)
         result  = runner.run(suite)

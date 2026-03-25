@@ -18,9 +18,10 @@ Les appels sont **idempotents** : plusieurs passages watcher / exit_engine reste
 | Fichier | Mode |
 |---------|------|
 | **`polymarket-bot1.service`** | Processus **long** : `deploy/bot1_daemon.sh` boucle avec `sleep` (`BOT1_CYCLE_INTERVAL_SEC`, défaut 900). |
+| **`polymarket-bot1-adaptive.service`** | Processus **long adaptatif** : `deploy/bot1_adaptive_daemon.sh` cadence lente hors fenêtre GFS et cadence rapide en mode `alert`. |
 | **`polymarket-bot1-cycle.timer`** + **`polymarket-bot1-cycle.service`** | **Timer systemd** : un cycle `update_bot.sh` toutes les 15 min (sans processus bash `while`). |
 
-Ne pas activer **les deux** (`polymarket-bot1.service` et `polymarket-bot1-cycle.timer`) en même temps sur la même machine (double exécution des cycles).
+Ne pas activer en parallèle plusieurs modes (`polymarket-bot1.service`, `polymarket-bot1-adaptive.service`, `polymarket-bot1-cycle.timer`) sur la même machine (double exécution des cycles).
 
 ## Option — settlement seul (sans NOAA/finance)
 
@@ -70,6 +71,7 @@ REPO="$HOME/polymarket-weather-bot"
 USER="$(whoami)"
 
 for f in polymarket-bot1.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer \
+  polymarket-bot1-adaptive.service \
   polymarket-bot1-settlement-chain.service polymarket-bot1-settlement-chain.timer; do
   sed -e "s|__REPO_ROOT__|${REPO}|g" -e "s|__RUN_AS_USER__|${USER}|g" \
     "${REPO}/deploy/systemd/${f}" | sudo tee "/etc/systemd/system/${f}" >/dev/null
@@ -107,6 +109,18 @@ systemctl list-timers --all | grep polymarket
 journalctl -u polymarket-bot1-cycle.service -f
 ```
 
+## Mode C — daemon adaptatif (slow + burst)
+
+Ce mode est recommandé pour réagir plus vite aux fenêtres de publication GFS sans marteler NOAA en continu.
+
+```bash
+sudo systemctl disable --now polymarket-bot1.service polymarket-bot1-cycle.timer 2>/dev/null || true
+sudo systemctl daemon-reload
+sudo systemctl enable --now polymarket-bot1-adaptive.service
+sudo systemctl status polymarket-bot1-adaptive.service
+journalctl -u polymarket-bot1-adaptive.service -f
+```
+
 ## Variables d’environnement (unités systemd)
 
 Éditer le fichier sous `/etc/systemd/system/` ou utiliser `systemctl edit polymarket-bot1` (drop-in) :
@@ -114,6 +128,9 @@ journalctl -u polymarket-bot1-cycle.service -f
 | Variable | Effet |
 |----------|--------|
 | `BOT1_CYCLE_INTERVAL_SEC` | Secondes entre deux cycles (**service boucle** uniquement). Défaut 900. |
+| `BOT1_CYCLE_INTERVAL_SLEEP_SEC` | Intervalle hors fenêtre GFS pour `polymarket-bot1-adaptive.service` (défaut 600). |
+| `BOT1_CYCLE_INTERVAL_ALERT_SEC` | Intervalle en fenêtre `alert` pour `polymarket-bot1-adaptive.service` (défaut 25). |
+| `BOT1_CYCLE_INTERVAL_JITTER_SEC` | Jitter aléatoire ajouté à chaque pause adaptative (défaut 3). |
 | `NOMADS_ALLOW_OUTSIDE_WINDOW=1` | Passe `--allow-outside-window` au script NOAA (voir `update_bot.sh`). |
 | `NOMADS_FORCE=1` | Passe aussi `--force` au NOAA (ignore l’intervalle min entre runs ; à utiliser avec prudence). |
 | `BOT1_DAEMON_LOG` | Chemin absolu du log daemon (défaut : `logs/bot1_daemon.log` dans le repo). |

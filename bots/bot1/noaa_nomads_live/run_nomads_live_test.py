@@ -36,6 +36,7 @@ import math
 import os
 import shutil
 import sys
+import threading
 import time
 from datetime import date as date_cls
 from datetime import datetime, timezone
@@ -73,6 +74,7 @@ from core.bot1_data_paths import (  # noqa: E402
     trading_signals_path,
 )
 from core.models import ContractSpec  # noqa: E402
+from core.ensemble_prob import blend_prob, empirical_prob_from_operator, quantile  # noqa: E402
 
 T = TypeVar("T")
 
@@ -323,6 +325,99 @@ def _retry(name: str, fn: Callable[[], T], *, tries: int = 3, base_sleep: float 
     raise last_exc
 
 
+def _is_transient_http_error(exc: BaseException) -> bool:
+    s = str(exc).lower()
+    return any(
+        tok in s
+        for tok in (
+            "http error 403",
+            "http error 429",
+            "http error 502",
+            "http error 503",
+            "http error 504",
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+        )
+    )
+
+
+class _GefsRequestGuard:
+    """
+    Garde-fou anti-ban pour la branche GEFS:
+    - limite débit global (req/min) même en mode multi-thread batch
+    - circuit-breaker sur erreurs HTTP transientes (403/429/5xx)
+    - cooldown avant reprise
+    """
+
+    def __init__(self) -> None:
+        try:
+            rpm = float(os.getenv("BOT1_GEFS_MAX_REQ_PER_MIN", "60") or "60")
+        except ValueError:
+            rpm = 60.0
+        self._min_interval_sec = 60.0 / max(1.0, rpm)
+        try:
+            self._cooldown_sec = float(os.getenv("BOT1_GEFS_CIRCUIT_COOLDOWN_SEC", "180") or "180")
+        except ValueError:
+            self._cooldown_sec = 180.0
+        try:
+            self._trip_after = int(os.getenv("BOT1_GEFS_CIRCUIT_BREAKER_ERRORS", "3") or "3")
+        except ValueError:
+            self._trip_after = 3
+        self._lock = threading.Lock()
+        self._next_allowed_at = 0.0
+        self._cooldown_until = 0.0
+        self._consecutive_errors = 0
+        self.requests_total = 0
+        self.errors_total = 0
+        self.cooldowns_triggered = 0
+        self.sleep_total_sec = 0.0
+
+    def before_request(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if now < self._cooldown_until:
+                sleep_s = self._cooldown_until - now
+                self.sleep_total_sec += sleep_s
+            else:
+                sleep_s = max(0.0, self._next_allowed_at - now)
+                self._next_allowed_at = max(now, self._next_allowed_at) + self._min_interval_sec
+                self.requests_total += 1
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+        with self._lock:
+            now2 = time.monotonic()
+            if now2 < self._cooldown_until:
+                # encore en cooldown (réveil anticipé improbable) => attendre le reste
+                rem = self._cooldown_until - now2
+                self.sleep_total_sec += rem
+                time.sleep(rem)
+
+    def after_success(self) -> None:
+        with self._lock:
+            self._consecutive_errors = 0
+
+    def after_error(self, exc: BaseException) -> None:
+        if not _is_transient_http_error(exc):
+            return
+        with self._lock:
+            self.errors_total += 1
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= self._trip_after:
+                self._cooldown_until = max(self._cooldown_until, time.monotonic() + self._cooldown_sec)
+                self._consecutive_errors = 0
+                self.cooldowns_triggered += 1
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "gefs_req_total": self.requests_total,
+            "gefs_error_total": self.errors_total,
+            "gefs_cooldowns": self.cooldowns_triggered,
+            "gefs_sleep_sec": round(self.sleep_total_sec, 3),
+            "gefs_min_interval_sec": round(self._min_interval_sec, 3),
+        }
+
+
 def _convert_value_to_contract_unit(*, variable: str, unit: str, raw_value: float) -> float:
     """
     Conversion stricte des unités NOAA/NOMADS -> unité contrat.
@@ -408,6 +503,119 @@ def _aggregate_observed_value(raw_values: list[float], target: market_manager.Ma
     if v == "precip":
         return sum(raw_values)
     return raw_values[-1]
+
+
+def _gefs_member_indices() -> tuple[int, ...]:
+    raw = (os.getenv("BOT1_GEFS_MEMBER_INDICES") or "").strip()
+    if not raw:
+        return tuple(range(noaa_engine.GEFS_MEMBER_COUNT))
+    out: list[int] = []
+    for tok in raw.split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        if "-" in t:
+            a, b = t.split("-", 1)
+            ia, ib = int(a), int(b)
+            step = 1 if ia <= ib else -1
+            out.extend(range(ia, ib + step, step))
+        else:
+            out.append(int(t))
+    # dédup en conservant l'ordre
+    seen: set[int] = set()
+    uniq: list[int] = []
+    for i in out:
+        if i in seen:
+            continue
+        seen.add(i)
+        uniq.append(i)
+    return tuple(uniq)
+
+
+def _build_gefs_member_urls(
+    day: object,
+    cycle_utc: object,
+    fh_i: int,
+    member_idx: int,
+) -> list[tuple[str, str, str]]:
+    """
+    Retourne une liste de candidats ``(idx_url, pgrb2_url, label)`` pour un membre GEFS.
+    """
+    d = str(day).strip()
+    c = int(cycle_utc)
+    fhs = f"{int(fh_i):03d}"
+    bases_raw = (
+        os.getenv("BOT1_GEFS_BASE_URLS")
+        or (
+            "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gens/prod/,"
+            "https://noaa-gefs-pds.s3.amazonaws.com/"
+        )
+    )
+    bases = [b.strip().rstrip("/") + "/" for b in bases_raw.split(",") if b.strip()]
+    if member_idx == 0:
+        ids = ("gec00", "gep00")
+    else:
+        ids = (f"gep{member_idx:02d}",)
+    out: list[tuple[str, str, str]] = []
+    for base in bases:
+        for mid in ids:
+            p = (
+                f"{base}gefs.{d}/{c:02d}/atmos/pgrb2ap5/"
+                f"{mid}.t{c:02d}z.pgrb2a.0p50.f{fhs}"
+            )
+            out.append((p + ".idx", p, f"{base}|{mid}"))
+    return out
+
+
+def _fetch_gefs_member_chunk(
+    *,
+    day: object,
+    cycle_utc: object,
+    fh_i: int,
+    member_idx: int,
+    match_sub: str,
+    max_chunk: int,
+    log: logging.Logger,
+    guard: _GefsRequestGuard,
+) -> bytes | None:
+    """
+    Télécharge le chunk GRIB d’un membre GEFS pour le champ ciblé.
+    """
+    for idx_url, pgrb2_url, label in _build_gefs_member_urls(day, cycle_utc, fh_i, member_idx):
+        try:
+            guard.before_request()
+            idx_text = _retry(
+                f"gefs fetch_idx_text m{member_idx} f{fh_i:03d}",
+                lambda idx_url=idx_url: noaa_engine.fetch_idx_text(idx_url),
+                tries=2,
+            )
+            guard.after_success()
+            guard.before_request()
+            total_i = noaa_engine.head_get_content_length(pgrb2_url)
+            guard.after_success()
+            span_i = noaa_engine.byte_range_for_idx_line_containing(
+                idx_text, match_sub, pgrb2_total_bytes=total_i
+            )
+            if span_i is None:
+                continue
+            a_i, b_i = span_i
+            if (b_i - a_i + 1) > max_chunk:
+                continue
+            guard.before_request()
+            out = _retry(
+                f"gefs get_range_bytes m{member_idx} f{fh_i:03d}",
+                lambda pgrb2_url=pgrb2_url, a_i=a_i, b_i=b_i: noaa_engine.get_range_bytes(
+                    pgrb2_url, a_i, b_i
+                ),
+                tries=2,
+            )
+            guard.after_success()
+            return out
+        except Exception as exc:
+            guard.after_error(exc)
+            continue
+    log.debug("GEFS introuvable membre=%s f%03d", member_idx, fh_i)
+    return None
 
 
 def _configure_logging(*, http_debug: bool) -> logging.Logger:
@@ -920,6 +1128,7 @@ def main() -> int:
         failed_targets = 0
         compared_targets = 0
         trading_signals: list[dict] = []
+        gefs_guard = _GefsRequestGuard()
         for target in targets:
             match_sub = _match_substring_for_variable(target.variable)
             if not match_sub:
@@ -950,6 +1159,31 @@ def main() -> int:
                 fh, target, run_start_utc=run_start_utc
             )
             raw_samples: list[float] = []
+            gefs_member_values: list[float] = []
+            use_gefs = os.getenv("BOT1_USE_GEFS_ENSEMBLE", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            try:
+                gefs_min_members = int(os.getenv("BOT1_GEFS_MIN_VALID_MEMBERS", "20"))
+            except ValueError:
+                gefs_min_members = 20
+            try:
+                gefs_alpha = float(os.getenv("BOT1_GEFS_BLEND_ALPHA", "1.0"))
+            except ValueError:
+                gefs_alpha = 1.0
+            try:
+                gefs_batch = int(os.getenv("BOT1_GEFS_MEMBER_BATCH_SIZE", str(noaa_engine.GEFS_DEFAULT_MEMBER_BATCH_SIZE)))
+            except ValueError:
+                gefs_batch = noaa_engine.GEFS_DEFAULT_MEMBER_BATCH_SIZE
+            gefs_parallel = os.getenv("BOT1_GEFS_PARALLEL_IN_BATCH", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
             for fh_i in fh_series:
                 try:
                     pgrb2_url_i = noaa_engine.build_gfs_pgrb2_url(
@@ -1003,6 +1237,61 @@ def main() -> int:
                     raw_samples.append(val)
                 elif code != 0:
                     wgrib_code = code
+
+            # GEFS ensemble (optionnel) : p(win)=succès_membres / membres_valides.
+            if use_gefs:
+                member_indices = _gefs_member_indices()
+
+                def _process_member(member_i: int) -> float | None:
+                    member_raw: list[float] = []
+                    for fh_gefs in fh_series:
+                        if not _gfs_fh_matches_target_calendar_day(run_start_utc, fh_gefs, target):
+                            continue
+                        chunk_member = _fetch_gefs_member_chunk(
+                            day=chosen_run.day,
+                            cycle_utc=chosen_run.cycle_utc,
+                            fh_i=fh_gefs,
+                            member_idx=member_i,
+                            match_sub=match_sub,
+                            max_chunk=max_chunk,
+                            log=log,
+                            guard=gefs_guard,
+                        )
+                        if not chunk_member:
+                            continue
+                        code_m, val_m, _out_m, _err_m = _retry(
+                            f"wgrib2 gefs m{member_i} f{fh_gefs:03d}",
+                            lambda chunk_member=chunk_member: noaa_engine.run_wgrib2_scalpel_at_point(
+                                chunk_member,
+                                lon=target.longitude,
+                                lat=target.latitude,
+                                match_substring=match_sub,
+                                timeout_sec=120.0,
+                            ),
+                            tries=2,
+                        )
+                        if code_m == 0 and val_m is not None:
+                            member_raw.append(val_m)
+                    if not member_raw:
+                        return None
+                    try:
+                        raw_agg = _aggregate_observed_value(member_raw, target)
+                        return _convert_value_to_contract_unit(
+                            variable=target.variable,
+                            unit=target.unit,
+                            raw_value=raw_agg,
+                        )
+                    except Exception:
+                        return None
+
+                member_outputs = noaa_engine.run_gefs_members_batched(
+                    _process_member,
+                    member_indices=member_indices,
+                    batch_size=max(1, gefs_batch),
+                    parallel_in_batch=gefs_parallel,
+                )
+                gefs_member_values = [float(v) for v in member_outputs if v is not None]
+
             compared_targets += 1
             if not raw_samples:
                 failed_targets += 1
@@ -1036,19 +1325,35 @@ def main() -> int:
             sigma_eff, sigma_base, sigma_mult = _resolve_sigma_for_target(
                 target, horizon_hours=fh_horizon
             )
-            pwin = calculate_probability(delta, sigma=sigma_eff)
+            pwin_sigma = calculate_probability(delta, sigma=sigma_eff)
+            pwin = pwin_sigma
+            pwin_gefs: float | None = None
+            if use_gefs and len(gefs_member_values) >= max(1, gefs_min_members):
+                pwin_gefs = empirical_prob_from_operator(
+                    gefs_member_values, target.operator, target.threshold
+                )
+                pwin = blend_prob(pwin_gefs, pwin_sigma, alpha=gefs_alpha)
             recommended_side = "YES" if pwin >= 0.5 else "NO"
-            trading_signals.append(
-                {
-                    "market_id": target.market_id,
-                    "station": target.station_code,
-                    "p_win": round(pwin, 3),
-                    "delta": round(delta, 2),
-                    "recommended_side": recommended_side,
-                }
-            )
+            sig_row = {
+                "market_id": target.market_id,
+                "station": target.station_code,
+                "p_win": round(pwin, 3),
+                "delta": round(delta, 2),
+                "recommended_side": recommended_side,
+                "prob_model": "sigma",
+            }
+            if pwin_gefs is not None:
+                sig_row["prob_model"] = "gefs_blend" if gefs_alpha < 0.999 else "gefs_empirical"
+                sig_row["p_win_sigma"] = round(pwin_sigma, 4)
+                sig_row["p_win_gefs"] = round(pwin_gefs, 4)
+                sig_row["ensemble_n"] = len(gefs_member_values)
+                sig_row["ensemble_successes"] = int(round(pwin_gefs * len(gefs_member_values)))
+                sig_row["ensemble_p10"] = round(quantile(gefs_member_values, 0.10), 3)
+                sig_row["ensemble_p50"] = round(quantile(gefs_member_values, 0.50), 3)
+                sig_row["ensemble_p90"] = round(quantile(gefs_member_values, 0.90), 3)
+            trading_signals.append(sig_row)
             log.info(
-                "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f sigma=%.3f (base=%.3f mult=%.3f fh_max=%.0f) result=%s (%.3fs)",
+                "  decision market_id=%s station=%s source=%s var=%s unit=%s op=%s samples=%s lat=%.5f lon=%.5f raw=%.3f conv=%.3f thr=%.3f delta=%+.3f pwin=%.4f sigma=%.3f (base=%.3f mult=%.3f fh_max=%.0f) gefs_n=%s gefs_p=%s result=%s (%.3fs)",
                 target.market_id,
                 target.station_code,
                 target.oracle_source,
@@ -1067,6 +1372,8 @@ def main() -> int:
                 sigma_base,
                 sigma_mult,
                 fh_horizon,
+                len(gefs_member_values),
+                f"{pwin_gefs:.4f}" if pwin_gefs is not None else "-",
                 decision,
                 time.monotonic() - t4,
             )
@@ -1130,8 +1437,19 @@ def main() -> int:
             extra={
                 "trading_signals_json_unchanged": False,
                 "stale_policy": "ok",
+                "gefs_network_guard": gefs_guard.as_dict(),
             },
         )
+        gs = gefs_guard.as_dict()
+        if (os.getenv("BOT1_USE_GEFS_ENSEMBLE", "").strip().lower() in ("1", "true", "yes", "on")):
+            log.info(
+                "GEFS guard: req=%s err=%s cooldowns=%s sleep=%.3fs interval=%.3fs",
+                gs["gefs_req_total"],
+                gs["gefs_error_total"],
+                gs["gefs_cooldowns"],
+                gs["gefs_sleep_sec"],
+                gs["gefs_min_interval_sec"],
+            )
         _write_last_noaa_run(
             {
                 "skipped": False,

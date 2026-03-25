@@ -12,6 +12,7 @@ if [[ ! -d "${REPO_ROOT}/deploy/systemd" ]]; then
 fi
 
 chmod +x "${REPO_ROOT}/deploy/bot1_daemon.sh" 2>/dev/null || true
+chmod +x "${REPO_ROOT}/deploy/bot1_adaptive_daemon.sh" 2>/dev/null || true
 chmod +x "${REPO_ROOT}/update_bot.sh" 2>/dev/null || true
 chmod +x "${REPO_ROOT}/bots/bot1/execution/run_settlement_chain.sh" 2>/dev/null || true
 chmod +x "${REPO_ROOT}/bots/bot1/noaa_nomads_live/produce_trading_signals.py" 2>/dev/null || true
@@ -27,7 +28,7 @@ if [[ "${EUID:-0}" -ne 0 ]]; then
   echo "  sudo REPO_ROOT='${REPO_ROOT}' RUN_AS_USER='${RUN_AS_USER}' $0" >&2
   echo "" >&2
   echo "Sortie sur stdout (à rediriger vers /etc/systemd/system/) :" >&2
-  for f in polymarket-bot1.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer \
+  for f in polymarket-bot1.service polymarket-bot1-adaptive.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer \
     polymarket-bot1-settlement-chain.service polymarket-bot1-settlement-chain.timer; do
     echo "### ${f}"
     _sed_unit "${f}"
@@ -36,7 +37,7 @@ if [[ "${EUID:-0}" -ne 0 ]]; then
   exit 0
 fi
 
-for f in polymarket-bot1.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer \
+for f in polymarket-bot1.service polymarket-bot1-adaptive.service polymarket-bot1-cycle.service polymarket-bot1-cycle.timer \
   polymarket-bot1-settlement-chain.service polymarket-bot1-settlement-chain.timer; do
   _sed_unit "${f}" >"/etc/systemd/system/${f}"
   echo "Écrit /etc/systemd/system/${f}"
@@ -44,6 +45,7 @@ done
 
 systemctl daemon-reload
 echo "OK. Puis : sudo systemctl enable --now polymarket-bot1.service"
+echo "   ou  : sudo systemctl enable --now polymarket-bot1-adaptive.service"
 echo "   ou  : sudo systemctl enable --now polymarket-bot1-cycle.timer"
 echo "   (option) settlement seul si pas update_bot sur cet hôte :"
 echo "   sudo systemctl enable --now polymarket-bot1-settlement-chain.timer"
