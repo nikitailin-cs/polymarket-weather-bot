@@ -85,16 +85,24 @@ def _finance_rt_is_dry_run() -> bool:
 
 def apply_bot2_clob_signing_env() -> None:
     """
-    Signature CLOB compatible proxy Polymarket : ``POLYMARKET_IS_CONTRACT``,
-    ``POLYMARKET_SIGNATURE_TYPE=1``, ``FUNDER_ADDRESS`` = proxy si ``POLYMARKET_PROXY_ADDRESS``
-    est défini (sans écraser un ``.env`` déjà chargé). À appeler après ``load_dotenv``, **avant**
-    le premier ``_get_clob_client()`` (y compris phase L2).
+    Signature CLOB pour **proxy Polymarket** (POLY_PROXY, type **1**) : impose les variables
+    **après** ``load_dotenv`` et **avant** tout ``_get_clob_client()`` (L2 inclus).
+
+    Utiliser ``setdefault`` seul pour ``POLYMARKET_SIGNATURE_TYPE`` laissait une valeur ``2``
+    (ou autre) déjà présente dans le ``.env`` — d’où des ``invalid signature`` dès que le
+    dry-run est désactivé. Ici on **force** contract + type 1 pour ce processus.
     """
     apply_rt_signing_env()
-    os.environ.setdefault("POLYMARKET_SIGNATURE_TYPE", "1")
+    os.environ["POLYMARKET_IS_CONTRACT"] = "true"
+    os.environ["TYPE"] = "1"
+    os.environ["POLYMARKET_SIGNATURE_TYPE"] = "1"
     proxy = (os.getenv("POLYMARKET_PROXY_ADDRESS") or "").strip()
     if proxy:
         os.environ.setdefault("FUNDER_ADDRESS", proxy)
+    LOG.info(
+        "bot2 RT: env signature CLOB forcé — POLYMARKET_IS_CONTRACT=true, TYPE=1, "
+        "POLYMARKET_SIGNATURE_TYPE=1 (avant ClobClient)"
+    )
 
 
 @dataclass(frozen=True)
