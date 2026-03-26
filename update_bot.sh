@@ -90,7 +90,6 @@ if [[ "${scan_skipped}" == "false" && "${scan_ec}" -eq 0 ]]; then
     set +e
     "${PYTHON_BIN}" "bots/bot1/Long Term/scripts/sync_rt_mapping_from_active_markets.py" >> "logs/sync_rt_mapping.log" 2>&1
     set -e
-    _min_iv="${BOT1_NEW_MARKETS_MIN_RUN_INTERVAL_SEC:-60}"
     _has_allow_outside=0
     for _x in "${NOMADS_EXTRA[@]}"; do
       if [[ "${_x}" == "--allow-outside-window" ]]; then
@@ -101,8 +100,21 @@ if [[ "${scan_skipped}" == "false" && "${scan_ec}" -eq 0 ]]; then
     if [[ "${_has_allow_outside}" -eq 0 ]]; then
       NOMADS_EXTRA+=(--allow-outside-window)
     fi
-    NOMADS_EXTRA+=(--min-run-interval-sec "${_min_iv}")
   fi
+fi
+
+# Un seul --min-run-interval-sec : évite les doublons argparse.
+# Défaut Python = 900s → avec daemon adaptatif (cycles ~25s en mode alert), le manifeste reste
+# skipped_watchdog_interval et finance_engine ne tourne jamais. Définir BOT1_NOAA_MIN_RUN_INTERVAL_SEC
+# (ex. 20–30) pour l’aligner sur BOT1_CYCLE_INTERVAL_ALERT_SEC.
+_noaa_min_interval=""
+if [[ "${BOT1_ADDED_MARKETS_COUNT}" -gt 0 && "${BOT1_BOOTSTRAP}" -eq 0 ]]; then
+  _noaa_min_interval="${BOT1_NEW_MARKETS_MIN_RUN_INTERVAL_SEC:-60}"
+elif [[ -n "${BOT1_NOAA_MIN_RUN_INTERVAL_SEC:-}" ]]; then
+  _noaa_min_interval="${BOT1_NOAA_MIN_RUN_INTERVAL_SEC}"
+fi
+if [[ -n "${_noaa_min_interval}" ]]; then
+  NOMADS_EXTRA+=(--min-run-interval-sec "${_noaa_min_interval}")
 fi
 
 set +e

@@ -16,6 +16,8 @@ WorkingDirectory=__REPO_ROOT__
 Environment=BOT1_CYCLE_INTERVAL_SLEEP_SEC=600
 Environment=BOT1_CYCLE_INTERVAL_ALERT_SEC=25
 Environment=BOT1_CYCLE_INTERVAL_JITTER_SEC=3
+# NOAA défaut 900s entre runs : sans ça, chaque cycle alert écrit skipped_watchdog_interval → meta ≠ ok → pas de finance.
+Environment=BOT1_NOAA_MIN_RUN_INTERVAL_SEC=25
 
 Environment=NOMADS_ALLOW_OUTSIDE_WINDOW=0
 Environment=NOMADS_FORCE=0

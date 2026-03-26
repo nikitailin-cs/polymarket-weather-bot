@@ -131,6 +131,7 @@ journalctl -u polymarket-bot1-adaptive.service -f
 | `BOT1_CYCLE_INTERVAL_SLEEP_SEC` | Intervalle hors fenêtre GFS pour `polymarket-bot1-adaptive.service` (défaut 600). |
 | `BOT1_CYCLE_INTERVAL_ALERT_SEC` | Intervalle en fenêtre `alert` pour `polymarket-bot1-adaptive.service` (défaut 25). |
 | `BOT1_CYCLE_INTERVAL_JITTER_SEC` | Jitter aléatoire ajouté à chaque pause adaptative (défaut 3). |
+| `BOT1_NOAA_MIN_RUN_INTERVAL_SEC` | Passe `--min-run-interval-sec` au NOAA. **Indispensable** avec `polymarket-bot1-adaptive` si la cadence alert (&lt; 900 s) est plus courte que l’intervalle NOAA par défaut (900 s) : sans ça, le manifeste reste `skipped_watchdog_interval` et `finance_engine` ne s’exécute pas. Le unit adaptatif fixe **25** par défaut ; ajuster si `BOT1_CYCLE_INTERVAL_ALERT_SEC` change. |
 | `NOMADS_ALLOW_OUTSIDE_WINDOW=1` | Passe `--allow-outside-window` au script NOAA (voir `update_bot.sh`). |
 | `NOMADS_FORCE=1` | Passe aussi `--force` au NOAA (ignore l’intervalle min entre runs ; à utiliser avec prudence). |
 | `BOT1_REFRESH_ACTIVE_MARKETS_FROM_GAMMA=1` | Avant NOAA, régénère `data/active_markets.json` via scanner live (`generate_markets.py`). |

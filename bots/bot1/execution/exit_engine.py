@@ -854,10 +854,19 @@ def run(dry_run: bool = False) -> int:
                     details.payout_event_found,
                     usdc_delta,
                 )
-                alert_error(
-                    f"Redeem {result.value} market={pos.market_id[:24]}… "
-                    f"side={pos.side} err={details.error[:120]}"
-                )
+                # NOT_RESOLVED = payout pas encore prêt on-chain (souvent des heures) : ne pas spammer Telegram.
+                if result == RedeemResult.NOT_RESOLVED:
+                    LOG.info(
+                        "Redeem NOT_RESOLVED (attente résolution CTF) market_id=%s side=%s — "
+                        "pas d'alerte Telegram",
+                        pos.market_id,
+                        pos.side,
+                    )
+                else:
+                    alert_error(
+                        f"Redeem {result.value} market={pos.market_id[:24]}… "
+                        f"side={pos.side} err={details.error[:120]}"
+                    )
     finally:
         conn.close()
     LOG.info(
