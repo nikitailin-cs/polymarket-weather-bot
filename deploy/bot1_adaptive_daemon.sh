@@ -42,6 +42,10 @@ echo "$(_ts) [bot1_adaptive] démarrage repo=${ROOT_DIR} slow=${SLOW_SEC}s alert
 while true; do
   mode="$(_current_mode)"
   echo "$(_ts) [bot1_adaptive] --- cycle start mode=${mode} ---" | tee -a "${LOG_FILE}"
+  # Si le unit systemd n’exporte pas BOT1_NOAA_MIN_RUN_INTERVAL_SEC, update_bot ne peut pas
+  # « pré-source » avant .env → un .env à 900 gagne et le manifeste reste skipped_watchdog_interval.
+  # Aligner par défaut sur la cadence alert (même défaut que BOT1_CYCLE_INTERVAL_ALERT_SEC).
+  export BOT1_NOAA_MIN_RUN_INTERVAL_SEC="${BOT1_NOAA_MIN_RUN_INTERVAL_SEC:-${BOT1_CYCLE_INTERVAL_ALERT_SEC:-25}}"
   set +e
   bash "${ROOT_DIR}/update_bot.sh" >>"${LOG_FILE}" 2>&1
   ec=$?
