@@ -737,6 +737,13 @@ def _format_forecast_cycle_utc(day: object, cycle_utc: object) -> str:
     return f"{day_fmt}T{cyc:02d}:00:00Z"
 
 
+def _argv_has_min_run_interval_sec(argv: list[str]) -> bool:
+    """True si --min-run-interval-sec est passé explicitement (évite d'écraser le flag)."""
+    return any(
+        a == "--min-run-interval-sec" or a.startswith("--min-run-interval-sec=") for a in argv
+    )
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=(
@@ -765,7 +772,10 @@ def main() -> int:
         "--min-run-interval-sec",
         type=int,
         default=900,
-        help="Intervalle minimal entre 2 runs complets (défaut 900s).",
+        help=(
+            "Intervalle minimal entre 2 runs complets (défaut 900s). "
+            "Sans ce flag, BOT1_NOAA_MIN_RUN_INTERVAL_SEC (ex. systemd) remplace le défaut."
+        ),
     )
     p.add_argument(
         "--allow-outside-window",
@@ -778,6 +788,13 @@ def main() -> int:
         help="Ignore les garde-fous watchdog (debug uniquement).",
     )
     args = p.parse_args()
+    if not _argv_has_min_run_interval_sec(sys.argv[1:]):
+        env_val = os.environ.get("BOT1_NOAA_MIN_RUN_INTERVAL_SEC")
+        if env_val is not None and str(env_val).strip() != "":
+            try:
+                args.min_run_interval_sec = max(0, int(env_val))
+            except ValueError:
+                pass
 
     log = _configure_logging(http_debug=args.http_debug)
     fh = max(0, int(args.forecast_hours))
