@@ -14,11 +14,16 @@ fi
 
 # Le shell n’utilise pas load_dotenv (Python) : sans ça, BOT1_NOAA_MIN_RUN_INTERVAL_SEC dans .env
 # n’est jamais vue par bash → NOAA garde 900s et le manifeste reste skipped_watchdog_interval.
+# Si systemd (ou le shell parent) a déjà défini la variable, .env ne doit pas l’écraser (ex. .env=900 vs unit=25).
+_PRE_SOURCE_BOT1_NOAA_MIN="${BOT1_NOAA_MIN_RUN_INTERVAL_SEC:-}"
 if [[ -f "${ROOT_DIR}/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
   source "${ROOT_DIR}/.env"
   set +a
+fi
+if [[ -n "${_PRE_SOURCE_BOT1_NOAA_MIN}" ]]; then
+  export BOT1_NOAA_MIN_RUN_INTERVAL_SEC="${_PRE_SOURCE_BOT1_NOAA_MIN}"
 fi
 # Si absent : défaut 25s (aligné BOT1_CYCLE_INTERVAL_ALERT_SEC typique). Sans ça, argparse NOAA = 900s
 # → skipped_watchdog_interval quasi permanent avec daemon adaptatif. Forcer 900 explicitement si besoin.
@@ -116,18 +121,14 @@ if [[ "${scan_skipped}" == "false" && "${scan_ec}" -eq 0 ]]; then
 fi
 
 # Un seul --min-run-interval-sec : évite les doublons argparse.
-# Défaut Python = 900s → avec daemon adaptatif (cycles ~25s en mode alert), le manifeste reste
-# skipped_watchdog_interval et finance_engine ne tourne jamais. Définir BOT1_NOAA_MIN_RUN_INTERVAL_SEC
-# (ex. 20–30) pour l’aligner sur BOT1_CYCLE_INTERVAL_ALERT_SEC.
+# Toujours passer un intervalle (sinon défaut Python = 900s → skipped_watchdog_interval permanent).
 _noaa_min_interval=""
 if [[ "${BOT1_ADDED_MARKETS_COUNT}" -gt 0 && "${BOT1_BOOTSTRAP}" -eq 0 ]]; then
   _noaa_min_interval="${BOT1_NEW_MARKETS_MIN_RUN_INTERVAL_SEC:-60}"
-elif [[ -n "${BOT1_NOAA_MIN_RUN_INTERVAL_SEC:-}" ]]; then
-  _noaa_min_interval="${BOT1_NOAA_MIN_RUN_INTERVAL_SEC}"
+else
+  _noaa_min_interval="${BOT1_NOAA_MIN_RUN_INTERVAL_SEC:-25}"
 fi
-if [[ -n "${_noaa_min_interval}" ]]; then
-  NOMADS_EXTRA+=(--min-run-interval-sec "${_noaa_min_interval}")
-fi
+NOMADS_EXTRA+=(--min-run-interval-sec "${_noaa_min_interval}")
 
 set +e
 "${PYTHON_BIN}" "bots/bot1/noaa_nomads_live/produce_trading_signals.py" "${NOMADS_EXTRA[@]}"
