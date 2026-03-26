@@ -20,6 +20,9 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
   source "${ROOT_DIR}/.env"
   set +a
 fi
+# Si absent : défaut 25s (aligné BOT1_CYCLE_INTERVAL_ALERT_SEC typique). Sans ça, argparse NOAA = 900s
+# → skipped_watchdog_interval quasi permanent avec daemon adaptatif. Forcer 900 explicitement si besoin.
+export BOT1_NOAA_MIN_RUN_INTERVAL_SEC="${BOT1_NOAA_MIN_RUN_INTERVAL_SEC:-25}"
 
 # Export chemins bot1 (absolus) pour tous les Python du cycle — voir core/bot1_data_paths.py
 _export_bot1_path() {
