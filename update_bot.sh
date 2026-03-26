@@ -12,6 +12,15 @@ if ! flock -n 200; then
   exit 0
 fi
 
+# Le shell n’utilise pas load_dotenv (Python) : sans ça, BOT1_NOAA_MIN_RUN_INTERVAL_SEC dans .env
+# n’est jamais vue par bash → NOAA garde 900s et le manifeste reste skipped_watchdog_interval.
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+
 # Export chemins bot1 (absolus) pour tous les Python du cycle — voir core/bot1_data_paths.py
 _export_bot1_path() {
   local n="$1" d="$2"
