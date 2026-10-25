@@ -17,7 +17,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -284,12 +284,15 @@ def market_rows(
         lead_val = resolution_value(lead_c, unit) if lead_c is not None else None
         gap = None
         if res_val is not None and bucket is not None:
+            # positive gap: bucket not reached yet (max must rise / min must fall);
+            # negative gap: the extreme already moved past the bucket (dead)
+            rises = var != "temp_min"
             if bucket.contains(res_val):
                 gap = 0.0
             elif bucket.low is not None and res_val < bucket.low:
-                gap = round(bucket.low - res_val, 1)
+                gap = round(bucket.low - res_val, 1) if rises else round(res_val - bucket.low, 1)
             elif bucket.high is not None and res_val > bucket.high:
-                gap = round(bucket.high - res_val, 1)  # negative: already past the bucket
+                gap = round(bucket.high - res_val, 1) if rises else round(res_val - bucket.high, 1)
         elif extreme is not None and threshold is not None:
             gap = round(threshold - extreme, 1) if yes_if_above else round(extreme - threshold, 1)
         p_win = sig.get("p_win")
@@ -351,61 +354,115 @@ def market_rows(
 # -- Polymarket prices (Gamma) ----------------------------------------------------------
 
 class GammaPrices:
-    """Cached YES prices per condition id from gamma-api.polymarket.com."""
+    """
+    YES prices per condition id from gamma-api.polymarket.com, refreshed in a
+    background thread so a page request never waits on Polymarket: ``get`` returns
+    whatever is cached and schedules a refresh when the cache is older than ``ttl``.
+    """
 
-    def __init__(self, ttl_sec: float = 20.0, base_url: Optional[str] = None) -> None:
+    def __init__(self, ttl_sec: float = 60.0, base_url: Optional[str] = None, workers: int = 8) -> None:
         self.ttl = ttl_sec
         self.base_url = (base_url or os.getenv("GAMMA_API_URL") or "https://gamma-api.polymarket.com").rstrip("/")
         self.enabled = (os.getenv("UI_POLYMARKET_PRICES") or "1").strip() != "0"
+        self.workers = max(1, workers)
         self._cache: dict[str, dict[str, Any]] = {}
         self._at = 0.0
         self._lock = threading.Lock()
+        self._refreshing = False
+        self.last_error = ""
 
     def get(self, market_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not self.enabled or not market_ids:
             return {}
         with self._lock:
-            if time.monotonic() - self._at < self.ttl and all(m in self._cache for m in market_ids):
-                return {m: self._cache[m] for m in market_ids if m in self._cache}
-            try:
-                self._cache.update(self._fetch(market_ids))
-            except Exception as e:  # noqa: BLE001 - prices are decoration, never block the page
-                LOG.warning("gamma prices unavailable: %s", e)
-            self._at = time.monotonic()
+            stale = time.monotonic() - self._at > self.ttl or any(m not in self._cache for m in market_ids)
+            if stale and not self._refreshing:
+                self._refreshing = True
+                threading.Thread(target=self._refresh, args=(list(market_ids),), daemon=True).start()
             return {m: self._cache[m] for m in market_ids if m in self._cache}
+
+    def fetch_now(self, market_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Synchronous fetch (tests, scripts)."""
+        self._refresh(list(market_ids))
+        with self._lock:
+            return {m: self._cache[m] for m in market_ids if m in self._cache}
+
+    def _refresh(self, market_ids: list[str]) -> None:
+        try:
+            fetched = self._fetch(market_ids)
+            with self._lock:
+                self._cache.update(fetched)
+                self._at = time.monotonic()
+                self.last_error = ""
+        except Exception as e:  # noqa: BLE001 - prices are decoration, never block the page
+            with self._lock:
+                self.last_error = str(e)
+                self._at = time.monotonic()
+            LOG.warning("gamma prices unavailable: %s", e)
+        finally:
+            with self._lock:
+                self._refreshing = False
 
     def _fetch(self, market_ids: list[str]) -> dict[str, dict[str, Any]]:
         import httpx
+        from concurrent.futures import ThreadPoolExecutor
 
-        out: dict[str, dict[str, Any]] = {}
         ids = [m for m in market_ids if m.startswith("0x")]
-        for i in range(0, len(ids), 20):
-            chunk = ids[i : i + 20]
-            params = [("condition_ids", c) for c in chunk]
-            r = httpx.get(f"{self.base_url}/markets", params=params, timeout=8.0)
-            r.raise_for_status()
-            for m in r.json() or []:
-                cid = str(m.get("conditionId") or "")
-                if not cid:
-                    continue
-                prices = m.get("outcomePrices")
+        chunks = [ids[i : i + 20] for i in range(0, len(ids), 20)]
+        out: dict[str, dict[str, Any]] = {}
+
+        def one(chunk: list[str]) -> dict[str, dict[str, Any]]:
+            res: dict[str, dict[str, Any]] = {}
+            for attempt in range(2):
                 try:
-                    plist = json.loads(prices) if isinstance(prices, str) else (prices or [])
-                    yes = float(plist[0]) if plist else None
-                except (ValueError, TypeError, IndexError):
-                    yes = None
-                out[cid] = {
-                    "yes": yes,
-                    "best_bid": _f(m.get("bestBid")),
-                    "best_ask": _f(m.get("bestAsk")),
-                    "spread": _f(m.get("spread")),
-                    "liquidity": _f(m.get("liquidityNum") or m.get("liquidity")),
-                    "volume_24h": _f(m.get("volume24hr")),
-                    "question": m.get("question"),
-                    "slug": m.get("slug"),
-                    "closed": bool(m.get("closed")),
-                }
+                    r = httpx.get(f"{self.base_url}/markets", params=[("condition_ids", c) for c in chunk], timeout=20.0)
+                    r.raise_for_status()
+                    for m in r.json() or []:
+                        cid = str(m.get("conditionId") or "")
+                        if cid:
+                            res[cid] = _price_row(m)
+                    return res
+                except Exception as e:  # noqa: BLE001
+                    if attempt == 1:
+                        LOG.debug("gamma chunk failed: %s", e)
+            return res
+
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            for res in pool.map(one, chunks):
+                out.update(res)
         return out
+
+
+def _price_row(m: dict[str, Any]) -> dict[str, Any]:
+    prices = m.get("outcomePrices")
+    try:
+        plist = json.loads(prices) if isinstance(prices, str) else (prices or [])
+        yes = float(plist[0]) if plist else None
+    except (ValueError, TypeError, IndexError):
+        yes = None
+    return {
+        "yes": yes,
+        "best_bid": _f(m.get("bestBid")),
+        "best_ask": _f(m.get("bestAsk")),
+        "spread": _f(m.get("spread")),
+        "liquidity": _f(m.get("liquidityNum") or m.get("liquidity")),
+        "volume_24h": _f(m.get("volume24hr")),
+        "question": m.get("question"),
+        "slug": m.get("slug"),
+        "closed": bool(m.get("closed")),
+    }
+
+
+def _is_near_term(cfg: Any, now: datetime) -> bool:
+    """Markets whose target date is today or tomorrow in the station's local zone."""
+    if not isinstance(cfg, dict):
+        return False
+    try:
+        target = date.fromisoformat(str(cfg.get("target_date") or cfg.get("target_date_start") or ""))
+    except ValueError:
+        return True  # manual entries without a parseable date keep their prices
+    today = _local_now(str(cfg.get("timezone") or "UTC"), now).date()
+    return today <= target <= today + timedelta(days=1)
 
 
 def _f(v: Any) -> Optional[float]:
@@ -458,7 +515,7 @@ class Dashboard:
             mapping = {}
         sig_path, meta_path = signals_paths()
         signals, meta = load_signals(sig_path, meta_path)
-        ids = [k for k in mapping if isinstance(k, str) and not k.startswith("_")]
+        ids = [k for k in mapping if isinstance(k, str) and not k.startswith("_") and _is_near_term(mapping[k], now)]
         prices = self.prices.get(ids)
         rows = market_rows(mapping, signals, read_snapshot(self.snapshot_file), prices, now)
         gen = meta.get("generated_at_utc") or meta.get("last_run_utc")
