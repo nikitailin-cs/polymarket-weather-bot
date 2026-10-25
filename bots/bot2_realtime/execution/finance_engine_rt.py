@@ -524,7 +524,15 @@ def fetch_l2_orderbook(token_id: str) -> Optional[dict[str, Any]]:
 
 
 def _analyze_one_target(t: BinaryTarget, cap: float) -> Optional[L2BookSnapshot]:
-    """Best ask for one target (token resolution + L2 book); None when nothing usable."""
+    """Best ask for one target (token resolution + L2 book); None when nothing usable or on any error."""
+    try:
+        return _analyze_one_target_unsafe(t, cap)
+    except Exception as exc:  # noqa: BLE001 - one unreachable book must not abort the whole cycle
+        LOG.warning("L2: échec pour market=%s… (%s: %s)", t.market_id[:20], type(exc).__name__, str(exc)[:160])
+        return None
+
+
+def _analyze_one_target_unsafe(t: BinaryTarget, cap: float) -> Optional[L2BookSnapshot]:
     tid = _token_id_for_outcome(t.market_id, t.outcome_side)
     if not tid:
         LOG.warning("L2: token_ids introuvables market_id=%s…", t.market_id[:24])
