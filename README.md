@@ -67,6 +67,17 @@ the `temp_max` / `temp_min` signals of both RT bots are decided on that running 
 of the instantaneous reading (`core/rt_daily_extrema.py`): a max that crossed the threshold is
 final, a "stays below" market only wins at end of day, and it dies the moment the max crosses.
 
+### 🖥️ Ops dashboard (read-only)
+
+`python -m ui.server` serves a single-page dashboard on `http://127.0.0.1:8765/` built only
+from files the daemon and the RT cycle already write (standard library, no extra
+dependencies): stream health with per-station freshness against the station's scheduled
+report minute, the daily max/min board with SPECI provenance and a sample sparkline, and
+the market table joining `icao_mapping.json`, the RT signals, the daily extreme and the
+Polymarket YES price (Gamma API) into gap, state and edge. Live refresh through
+Server-Sent Events when the snapshot or the signals change. `UI_TOKEN` is required to bind
+anything but loopback. Nothing in the UI can place or cancel an order.
+
 ## 🧠 The edge: why this bot is different
 
 Most open-source Polymarket weather bots stop at the National Weather Service or Open-Meteo. Those sources are fine for casual use, but two structural limits make them weak as a trading edge:

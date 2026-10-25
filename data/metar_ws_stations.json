@@ -1,70 +1,551 @@
 {
-  "_note": "Resolution stations served by stream.metar.ws (channel = metar.obs.<icao lower-case>). report_minutes = minutes past the hour when the routine METAR is issued. Source: METAR.ws station list, 2026-10-25.",
+  "_note": "Resolution stations served by stream.metar.ws (channel = metar.obs.<icao lower-case>). report_minutes = minutes past the hour when the routine METAR is issued. Source: METAR.ws station list, 2026-10-25. timezone = IANA zone of the station, used for the local-day boundary when the market mapping has none.",
   "stations": {
-    "CYYZ": {"name": "Toronto Pearson International Airport", "city": "Toronto", "report_minutes": [0]},
-    "DNMM": {"name": "Murtala Muhammed International Airport", "city": "Lagos", "report_minutes": [0]},
-    "EDDM": {"name": "Munich Airport", "city": "Munich", "report_minutes": [20, 50]},
-    "EFHK": {"name": "Helsinki-Vantaa Airport", "city": "Helsinki", "report_minutes": [20, 50]},
-    "EGLC": {"name": "London City Airport", "city": "London", "report_minutes": [20, 50]},
-    "EHAM": {"name": "Amsterdam Airport Schiphol", "city": "Amsterdam", "report_minutes": [25, 55]},
-    "EPWA": {"name": "Warsaw Chopin Airport", "city": "Warsaw", "report_minutes": [0, 30]},
-    "FACT": {"name": "Cape Town International Airport", "city": "Cape Town", "report_minutes": [0]},
-    "KATL": {"name": "Hartsfield-Jackson Atlanta International", "city": "Atlanta", "report_minutes": [52]},
-    "KAUS": {"name": "Austin-Bergstrom International Airport", "city": "Austin", "report_minutes": [53]},
-    "KBKF": {"name": "Buckley Space Force Base", "city": "Denver", "report_minutes": [58]},
-    "KBNA": {"name": "Nashville International Airport", "city": "Nashville", "report_minutes": [53]},
-    "KBOS": {"name": "Boston Logan International Airport", "city": "Boston", "report_minutes": [54]},
-    "KCLT": {"name": "Charlotte Douglas International Airport", "city": "Charlotte", "report_minutes": [52]},
-    "KDAL": {"name": "Dallas Love Field", "city": "Dallas", "report_minutes": [53]},
-    "KDCA": {"name": "Ronald Reagan Washington National Airport", "city": "Washington", "report_minutes": [50]},
-    "KDEN": {"name": "Denver International Airport", "city": "Denver", "report_minutes": [50]},
-    "KDFW": {"name": "Dallas/Fort Worth International Airport", "city": "Dallas", "report_minutes": [50]},
-    "KDTW": {"name": "Detroit Metropolitan Wayne County Airport", "city": "Detroit", "report_minutes": [53]},
-    "KHOU": {"name": "William P. Hobby Airport", "city": "Houston", "report_minutes": [53]},
-    "KLAS": {"name": "Harry Reid International Airport", "city": "Las Vegas", "report_minutes": [50]},
-    "KLAX": {"name": "Los Angeles International Airport", "city": "Los Angeles", "report_minutes": [53]},
-    "KLGA": {"name": "LaGuardia Airport", "city": "New York City", "report_minutes": [51]},
-    "KMDW": {"name": "Chicago Midway International Airport", "city": "Chicago", "report_minutes": [50]},
-    "KMIA": {"name": "Miami International Airport", "city": "Miami", "report_minutes": [53]},
-    "KMSP": {"name": "Minneapolis-Saint Paul International Airport", "city": "Minneapolis", "report_minutes": [53]},
-    "KOKC": {"name": "Will Rogers World Airport", "city": "Oklahoma City", "report_minutes": [50]},
-    "KORD": {"name": "O'Hare International Airport", "city": "Chicago", "report_minutes": [51]},
-    "KPHL": {"name": "Philadelphia International Airport", "city": "Philadelphia", "report_minutes": [50]},
-    "KPHX": {"name": "Phoenix Sky Harbor International Airport", "city": "Phoenix", "report_minutes": [51]},
-    "KSAT": {"name": "San Antonio International Airport", "city": "San Antonio", "report_minutes": [50]},
-    "KSEA": {"name": "Seattle-Tacoma International Airport", "city": "Seattle", "report_minutes": [53]},
-    "KSFO": {"name": "San Francisco International Airport", "city": "San Francisco", "report_minutes": [56]},
-    "LEMD": {"name": "Adolfo Suarez Madrid-Barajas Airport", "city": "Madrid", "report_minutes": [0, 30]},
-    "LFPB": {"name": "Paris Le Bourget", "city": "Paris", "report_minutes": [0, 30]},
-    "LIMC": {"name": "Milan Malpensa Airport", "city": "Milan", "report_minutes": [20, 50]},
-    "LLBG": {"name": "Ben Gurion International Airport", "city": "Tel Aviv", "report_minutes": [20, 50]},
-    "LTAC": {"name": "Esenboga International Airport", "city": "Ankara", "report_minutes": [20, 50]},
-    "LTFM": {"name": "Istanbul Airport", "city": "Istanbul", "report_minutes": [20, 50]},
-    "MMMX": {"name": "Benito Juarez International Airport", "city": "Mexico City", "report_minutes": [47]},
-    "MPMG": {"name": "Marcos A. Gelabert International Airport", "city": "Panama City", "report_minutes": [0]},
-    "NZWN": {"name": "Wellington International Airport", "city": "Wellington", "report_minutes": [0, 30]},
-    "OEJN": {"name": "King Abdulaziz International Airport", "city": "Jeddah", "report_minutes": [0]},
-    "OMDB": {"name": "Dubai International Airport", "city": "Dubai", "report_minutes": [0, 30]},
-    "OPMA": {"name": "Jinnah International Airport", "city": "Karachi", "report_minutes": [0, 30]},
-    "RCSS": {"name": "Taipei Songshan Airport", "city": "Taipei", "report_minutes": [0, 30]},
-    "RJTT": {"name": "Tokyo Haneda Airport", "city": "Tokyo", "report_minutes": [0, 30]},
-    "RKPK": {"name": "Gimhae International Airport", "city": "Busan", "report_minutes": [0]},
-    "RKSI": {"name": "Incheon International Airport", "city": "Seoul", "report_minutes": [0, 30]},
-    "RPLL": {"name": "Ninoy Aquino International Airport", "city": "Manila", "report_minutes": [0]},
-    "SAEZ": {"name": "Ministro Pistarini International Airport", "city": "Buenos Aires", "report_minutes": [0, 30]},
-    "SBGR": {"name": "Guarulhos International Airport", "city": "Sao Paulo", "report_minutes": [0]},
-    "UUWW": {"name": "Vnukovo International Airport", "city": "Moscow", "report_minutes": [0, 30]},
-    "VILK": {"name": "Chaudhary Charan Singh International Airport", "city": "Lucknow", "report_minutes": [0, 30]},
-    "WIHH": {"name": "Halim Perdanakusuma International Airport", "city": "Jakarta", "report_minutes": [0, 30]},
-    "WMKK": {"name": "Kuala Lumpur International Airport", "city": "Kuala Lumpur", "report_minutes": [0, 30]},
-    "WSSS": {"name": "Singapore Changi Airport", "city": "Singapore", "report_minutes": [0, 30]},
-    "ZBAA": {"name": "Beijing Capital International Airport", "city": "Beijing", "report_minutes": [0, 30]},
-    "ZGGG": {"name": "Guangzhou Baiyun International Airport", "city": "Guangzhou", "report_minutes": [0, 30]},
-    "ZGSZ": {"name": "Shenzhen Bao'an International Airport", "city": "Shenzhen", "report_minutes": [0]},
-    "ZHHH": {"name": "Wuhan Tianhe International Airport", "city": "Wuhan", "report_minutes": [0]},
-    "ZSPD": {"name": "Shanghai Pudong International Airport", "city": "Shanghai", "report_minutes": [0, 30]},
-    "ZSQD": {"name": "Qingdao Jiaodong International Airport", "city": "Qingdao", "report_minutes": [0]},
-    "ZUCK": {"name": "Chongqing Jiangbei International Airport", "city": "Chongqing", "report_minutes": [0]},
-    "ZUUU": {"name": "Chengdu Shuangliu International Airport", "city": "Chengdu", "report_minutes": [0]}
+    "CYYZ": {
+      "name": "Toronto Pearson International Airport",
+      "city": "Toronto",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "America/Toronto"
+    },
+    "DNMM": {
+      "name": "Murtala Muhammed International Airport",
+      "city": "Lagos",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Africa/Lagos"
+    },
+    "EDDM": {
+      "name": "Munich Airport",
+      "city": "Munich",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Europe/Berlin"
+    },
+    "EFHK": {
+      "name": "Helsinki-Vantaa Airport",
+      "city": "Helsinki",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Europe/Helsinki"
+    },
+    "EGLC": {
+      "name": "London City Airport",
+      "city": "London",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Europe/London"
+    },
+    "EHAM": {
+      "name": "Amsterdam Airport Schiphol",
+      "city": "Amsterdam",
+      "report_minutes": [
+        25,
+        55
+      ],
+      "timezone": "Europe/Amsterdam"
+    },
+    "EPWA": {
+      "name": "Warsaw Chopin Airport",
+      "city": "Warsaw",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Europe/Warsaw"
+    },
+    "FACT": {
+      "name": "Cape Town International Airport",
+      "city": "Cape Town",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Africa/Johannesburg"
+    },
+    "KATL": {
+      "name": "Hartsfield-Jackson Atlanta International",
+      "city": "Atlanta",
+      "report_minutes": [
+        52
+      ],
+      "timezone": "America/New_York"
+    },
+    "KAUS": {
+      "name": "Austin-Bergstrom International Airport",
+      "city": "Austin",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KBKF": {
+      "name": "Buckley Space Force Base",
+      "city": "Denver",
+      "report_minutes": [
+        58
+      ],
+      "timezone": "America/Denver"
+    },
+    "KBNA": {
+      "name": "Nashville International Airport",
+      "city": "Nashville",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KBOS": {
+      "name": "Boston Logan International Airport",
+      "city": "Boston",
+      "report_minutes": [
+        54
+      ],
+      "timezone": "America/New_York"
+    },
+    "KCLT": {
+      "name": "Charlotte Douglas International Airport",
+      "city": "Charlotte",
+      "report_minutes": [
+        52
+      ],
+      "timezone": "America/New_York"
+    },
+    "KDAL": {
+      "name": "Dallas Love Field",
+      "city": "Dallas",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KDCA": {
+      "name": "Ronald Reagan Washington National Airport",
+      "city": "Washington",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/New_York"
+    },
+    "KDEN": {
+      "name": "Denver International Airport",
+      "city": "Denver",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/Denver"
+    },
+    "KDFW": {
+      "name": "Dallas/Fort Worth International Airport",
+      "city": "Dallas",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KDTW": {
+      "name": "Detroit Metropolitan Wayne County Airport",
+      "city": "Detroit",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Detroit"
+    },
+    "KHOU": {
+      "name": "William P. Hobby Airport",
+      "city": "Houston",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KLAS": {
+      "name": "Harry Reid International Airport",
+      "city": "Las Vegas",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/Los_Angeles"
+    },
+    "KLAX": {
+      "name": "Los Angeles International Airport",
+      "city": "Los Angeles",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Los_Angeles"
+    },
+    "KLGA": {
+      "name": "LaGuardia Airport",
+      "city": "New York City",
+      "report_minutes": [
+        51
+      ],
+      "timezone": "America/New_York"
+    },
+    "KMDW": {
+      "name": "Chicago Midway International Airport",
+      "city": "Chicago",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KMIA": {
+      "name": "Miami International Airport",
+      "city": "Miami",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/New_York"
+    },
+    "KMSP": {
+      "name": "Minneapolis-Saint Paul International Airport",
+      "city": "Minneapolis",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KOKC": {
+      "name": "Will Rogers World Airport",
+      "city": "Oklahoma City",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KORD": {
+      "name": "O'Hare International Airport",
+      "city": "Chicago",
+      "report_minutes": [
+        51
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KPHL": {
+      "name": "Philadelphia International Airport",
+      "city": "Philadelphia",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/New_York"
+    },
+    "KPHX": {
+      "name": "Phoenix Sky Harbor International Airport",
+      "city": "Phoenix",
+      "report_minutes": [
+        51
+      ],
+      "timezone": "America/Phoenix"
+    },
+    "KSAT": {
+      "name": "San Antonio International Airport",
+      "city": "San Antonio",
+      "report_minutes": [
+        50
+      ],
+      "timezone": "America/Chicago"
+    },
+    "KSEA": {
+      "name": "Seattle-Tacoma International Airport",
+      "city": "Seattle",
+      "report_minutes": [
+        53
+      ],
+      "timezone": "America/Los_Angeles"
+    },
+    "KSFO": {
+      "name": "San Francisco International Airport",
+      "city": "San Francisco",
+      "report_minutes": [
+        56
+      ],
+      "timezone": "America/Los_Angeles"
+    },
+    "LEMD": {
+      "name": "Adolfo Suarez Madrid-Barajas Airport",
+      "city": "Madrid",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Europe/Madrid"
+    },
+    "LFPB": {
+      "name": "Paris Le Bourget",
+      "city": "Paris",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Europe/Paris"
+    },
+    "LIMC": {
+      "name": "Milan Malpensa Airport",
+      "city": "Milan",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Europe/Rome"
+    },
+    "LLBG": {
+      "name": "Ben Gurion International Airport",
+      "city": "Tel Aviv",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Asia/Jerusalem"
+    },
+    "LTAC": {
+      "name": "Esenboga International Airport",
+      "city": "Ankara",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Europe/Istanbul"
+    },
+    "LTFM": {
+      "name": "Istanbul Airport",
+      "city": "Istanbul",
+      "report_minutes": [
+        20,
+        50
+      ],
+      "timezone": "Europe/Istanbul"
+    },
+    "MMMX": {
+      "name": "Benito Juarez International Airport",
+      "city": "Mexico City",
+      "report_minutes": [
+        47
+      ],
+      "timezone": "America/Mexico_City"
+    },
+    "MPMG": {
+      "name": "Marcos A. Gelabert International Airport",
+      "city": "Panama City",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "America/Panama"
+    },
+    "NZWN": {
+      "name": "Wellington International Airport",
+      "city": "Wellington",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Pacific/Auckland"
+    },
+    "OEJN": {
+      "name": "King Abdulaziz International Airport",
+      "city": "Jeddah",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Riyadh"
+    },
+    "OMDB": {
+      "name": "Dubai International Airport",
+      "city": "Dubai",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Dubai"
+    },
+    "OPMA": {
+      "name": "Jinnah International Airport",
+      "city": "Karachi",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Karachi"
+    },
+    "RCSS": {
+      "name": "Taipei Songshan Airport",
+      "city": "Taipei",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Taipei"
+    },
+    "RJTT": {
+      "name": "Tokyo Haneda Airport",
+      "city": "Tokyo",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Tokyo"
+    },
+    "RKPK": {
+      "name": "Gimhae International Airport",
+      "city": "Busan",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Seoul"
+    },
+    "RKSI": {
+      "name": "Incheon International Airport",
+      "city": "Seoul",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Seoul"
+    },
+    "RPLL": {
+      "name": "Ninoy Aquino International Airport",
+      "city": "Manila",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Manila"
+    },
+    "SAEZ": {
+      "name": "Ministro Pistarini International Airport",
+      "city": "Buenos Aires",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "America/Argentina/Buenos_Aires"
+    },
+    "SBGR": {
+      "name": "Guarulhos International Airport",
+      "city": "Sao Paulo",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "America/Sao_Paulo"
+    },
+    "UUWW": {
+      "name": "Vnukovo International Airport",
+      "city": "Moscow",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Europe/Moscow"
+    },
+    "VILK": {
+      "name": "Chaudhary Charan Singh International Airport",
+      "city": "Lucknow",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Kolkata"
+    },
+    "WIHH": {
+      "name": "Halim Perdanakusuma International Airport",
+      "city": "Jakarta",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Jakarta"
+    },
+    "WMKK": {
+      "name": "Kuala Lumpur International Airport",
+      "city": "Kuala Lumpur",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Kuala_Lumpur"
+    },
+    "WSSS": {
+      "name": "Singapore Changi Airport",
+      "city": "Singapore",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Singapore"
+    },
+    "ZBAA": {
+      "name": "Beijing Capital International Airport",
+      "city": "Beijing",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Shanghai"
+    },
+    "ZGGG": {
+      "name": "Guangzhou Baiyun International Airport",
+      "city": "Guangzhou",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Shanghai"
+    },
+    "ZGSZ": {
+      "name": "Shenzhen Bao'an International Airport",
+      "city": "Shenzhen",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Shanghai"
+    },
+    "ZHHH": {
+      "name": "Wuhan Tianhe International Airport",
+      "city": "Wuhan",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Shanghai"
+    },
+    "ZSPD": {
+      "name": "Shanghai Pudong International Airport",
+      "city": "Shanghai",
+      "report_minutes": [
+        0,
+        30
+      ],
+      "timezone": "Asia/Shanghai"
+    },
+    "ZSQD": {
+      "name": "Qingdao Jiaodong International Airport",
+      "city": "Qingdao",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Shanghai"
+    },
+    "ZUCK": {
+      "name": "Chongqing Jiangbei International Airport",
+      "city": "Chongqing",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Chongqing"
+    },
+    "ZUUU": {
+      "name": "Chengdu Shuangliu International Airport",
+      "city": "Chengdu",
+      "report_minutes": [
+        0
+      ],
+      "timezone": "Asia/Shanghai"
+    }
   }
 }

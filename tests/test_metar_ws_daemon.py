@@ -122,7 +122,7 @@ class TestDaemon(unittest.TestCase):
             day = data["days"]["KORD"]
             self.assertEqual(len(day), 1)
             (st,) = day.values()
-            self.assertEqual(st["timezone"], "UTC")
+            self.assertEqual(st["timezone"], "America/Chicago")  # from data/metar_ws_stations.json
             self.assertEqual((st["max_c"], st["min_c"], st["obs_count"]), (23.0, 21.0, 3))
             self.assertEqual(MetarWsSnapshotRegistry(path=snap, max_age_sec=3600).fetch_day_state("KORD", st["local_date"]).max_c, 23.0)
 

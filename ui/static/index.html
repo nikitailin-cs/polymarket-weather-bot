@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Bot Ops</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #161c24; --panel-2: #1c242e; --line: #263040;
+    --fg: #e6edf3; --muted: #8b98a8; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+    --accent: #58a6ff; --speci: #c084fc; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+  .kv { color: var(--muted); font-size: 12px; }
+  .kv b { color: var(--fg); font-weight: 600; }
+  main { padding: 16px; display: grid; gap: 16px; max-width: 1500px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  section > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: center; }
+  section > h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .03em; border: 1px solid transparent; }
+  .ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+  .bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  .info { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  .speci { color: var(--speci); border-color: color-mix(in srgb, var(--speci) 40%, transparent); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); } .dot.off { background: var(--bad); }
+  .scroll { overflow: auto; max-height: 60vh; }
+  .empty { padding: 18px 14px; color: var(--muted); }
+  svg.spark { width: 140px; height: 28px; display: block; }
+  .spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+  .spark circle { fill: var(--speci); }
+  .raw { max-width: 520px; overflow: hidden; text-overflow: ellipsis; }
+  .edge-pos { color: var(--ok); font-weight: 600; } .edge-neg { color: var(--bad); }
+  .gap-pos { color: var(--warn); } .gap-hit { color: var(--ok); font-weight: 600; }
+  .filters { margin-left: auto; display: flex; gap: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .filters label { cursor: pointer; }
+  @media (max-width: 800px) { .raw { max-width: 220px; } header { gap: 8px 14px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Weather Bot Ops</h1>
+  <span class="kv"><span id="conn-dot" class="dot off"></span><b id="conn">stream: unknown</b></span>
+  <span class="kv">plan <b id="plan">–</b></span>
+  <span class="kv">channels <b id="chan">–</b></span>
+  <span class="kv">reconnects <b id="reconn">–</b></span>
+  <span class="kv">snapshot age <b id="snap-age">–</b></span>
+  <span class="kv">signals age <b id="sig-age">–</b> <span id="sig-src" class="pill info"></span></span>
+  <span class="kv" style="margin-left:auto">updated <b id="updated">–</b> <span id="live" class="pill muted">polling</span></span>
+</header>
+<main>
+  <section>
+    <h2>Markets <span class="sub muted" id="mk-sub"></span>
+      <span class="filters"><label><input type="checkbox" id="f-open" checked> open only</label><label><input type="checkbox" id="f-edge"> with edge</label></span>
+    </h2>
+    <div class="scroll"><table id="markets"><thead><tr>
+      <th>Market</th><th>Station</th><th>Var</th><th class="num">Threshold</th><th class="num">Day extreme</th><th class="num">Gap</th>
+      <th>State</th><th class="num">p_win</th><th>Side</th><th class="num">YES price</th><th class="num">Edge</th><th>Model</th><th class="num">To deadline</th><th>Local</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>Stations · daily extremes <span class="sub muted" id="st-sub"></span></h2>
+    <div class="scroll"><table id="stations"><thead><tr>
+      <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num">Last</th><th>Last report</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>Stream · freshness <span class="sub muted" id="fr-sub"></span></h2>
+    <div class="scroll"><table id="stream"><thead><tr>
+      <th>Station</th><th>Status</th><th>Schedule</th><th>Last obs (UTC)</th><th class="num">Age</th><th>Next expected</th><th class="num">Lag</th><th>Raw</th>
+    </tr></thead><tbody></tbody></table></div>
+    <div id="failed" class="empty" hidden></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const fmt = (v, d=1) => (v === null || v === undefined || Number.isNaN(v)) ? "–" : Number(v).toFixed(d);
+  const hhmm = (iso) => iso ? iso.slice(11, 16) + "Z" : "–";
+  const age = (s) => s === null || s === undefined ? "–" : s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s/60)}m` : `${(s/3600).toFixed(1)}h`;
+  const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
+  const stateCls = (s) => ({met:"ok", attack:"ok", dead:"bad", flee:"bad", open:"info", standby:"info", metar_unavailable:"warn", premature:"muted", past_target:"muted"}[s] || "muted");
+  const srcPill = (src) => src === "speci" ? pill("SPECI", "speci") : src === "rmk_6h" ? pill("6h", "warn") : "";
+
+  function spark(samples) {
+    if (!samples || samples.length < 2) return "";
+    const vals = samples.map(s => s[1]);
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = (hi - lo) || 1;
+    const W = 140, H = 28, n = samples.length;
+    const pts = samples.map((s, i) => [ (i / (n - 1)) * (W - 4) + 2, H - 3 - ((s[1] - lo) / span) * (H - 6) ]);
+    const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const dots = samples.map((s, i) => s[2] ? `<circle cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="2.2"/>` : "").join("");
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}"><path d="${d}"/>${dots}</svg>`;
+  }
+
+  function renderStream(st) {
+    $("#conn").textContent = st.available ? (st.connected ? "stream: connected" : "stream: disconnected") : "stream: no snapshot";
+    $("#conn-dot").className = "dot " + (st.connected ? "on" : "off");
+    const c = st.client || {};
+    $("#plan").textContent = c.plan ? `${c.plan} (${(c.limits||{}).max_channels ?? "?"} ch)` : "–";
+    $("#chan").textContent = `${(c.subscribed||[]).length}/${(c.wanted_channels||[]).length}`;
+    $("#reconn").textContent = c.reconnects ?? "–";
+    $("#snap-age").textContent = age(st.snapshot_age_sec);
+    const cnt = st.counts || {};
+    $("#fr-sub").textContent = `${cnt.ok||0} ok · ${cnt.late||0} late · ${cnt.no_data||0} no data`;
+    const tb = $("#stream tbody");
+    tb.innerHTML = (st.stations||[]).map(s => `<tr>
+      <td><b>${esc(s.icao)}</b> <span class="muted">${esc(s.city||s.name||"")}</span>${s.served ? "" : " " + pill("not served", "bad")}</td>
+      <td>${pill(s.status === "late" ? `late ${fmt(s.late_min,0)}m` : s.status.replace("_"," "), s.status==="ok"?"ok":s.status==="late"?"bad":"warn")}</td>
+      <td class="mono muted">${(s.report_minutes||[]).map(m=>":"+String(m).padStart(2,"0")).join(" ")||"–"}</td>
+      <td class="mono">${esc(s.last_obs_utc||"–")}</td>
+      <td class="num">${s.age_min===null||s.age_min===undefined?"–":fmt(s.age_min,0)+"m"}</td>
+      <td class="mono muted">${hhmm(s.next_expected_utc)}</td>
+      <td class="num muted">${s.delivery_lag_sec===null||s.delivery_lag_sec===undefined?"–":fmt(s.delivery_lag_sec,0)+"s"}</td>
+      <td class="mono raw muted" title="${esc(s.raw||"")}">${esc(s.raw||"")}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">no stations</td></tr>`;
+    const failed = Object.entries(c.failed_channels||{});
+    const f = $("#failed"); f.hidden = !failed.length;
+    f.innerHTML = failed.length ? "Rejected channels: " + failed.map(([ch,code]) => `<span class="mono">${esc(ch)}</span> ${pill(code,"bad")}`).join("  ") : "";
+  }
+
+  function renderStations(rows) {
+    $("#st-sub").textContent = `${rows.length} stations`;
+    $("#stations tbody").innerHTML = rows.map(r => {
+      const d = r.day;
+      return `<tr>
+        <td><b>${esc(r.icao)}</b> <span class="muted">${esc(r.city||r.name||"")}</span></td>
+        <td class="mono">${esc(r.local_time)} <span class="muted">${esc(r.local_date)}</span></td>
+        <td class="num">${d ? `<b>${fmt(d.max_c)}°C</b> <span class="muted">${fmt(d.max_f)}°F</span>` : "–"}</td>
+        <td class="mono">${d ? hhmm(d.max_time_utc) + " " + srcPill(d.max_source) : "–"}</td>
+        <td class="num">${d ? `${fmt(d.min_c)}°C <span class="muted">${fmt(d.min_f)}°F</span>` : "–"}</td>
+        <td class="mono">${d ? hhmm(d.min_time_utc) + " " + srcPill(d.min_source) : "–"}</td>
+        <td class="num">${d ? `${d.obs_count}${d.speci_count ? ` <span class="speci">+${d.speci_count}S</span>` : ""}` : "0"}</td>
+        <td>${d ? spark(d.samples) : ""}</td>
+        <td class="num">${fmt(r.last_temp_c)}°C ${r.last_is_speci ? pill("SPECI","speci") : ""}</td>
+        <td class="mono raw muted" title="${esc(r.last_raw||"")}">${esc(r.last_raw||"")}</td></tr>`;
+    }).join("") || `<tr><td colspan="10" class="empty">no day state yet — the daemon fills this as reports arrive</td></tr>`;
+  }
+
+  let marketRows = [];
+  function renderMarkets() {
+    const openOnly = $("#f-open").checked, edgeOnly = $("#f-edge").checked;
+    const rows = marketRows.filter(r => (!openOnly || ["open","standby",null,undefined].includes(r.signal.binary_state)) && (!edgeOnly || (r.edge !== null && r.edge > 0)));
+    $("#markets tbody").innerHTML = rows.map(r => {
+      const s = r.signal, hit = r.gap !== null && r.gap <= 0;
+      const cmp = r.yes_if_above ? "≥" : "<";
+      return `<tr>
+        <td title="${esc(r.market_id)}">${esc(r.name)}</td>
+        <td><b>${esc(r.icao)}</b></td>
+        <td class="muted">${esc(r.variable.replace("temp_",""))}</td>
+        <td class="num mono">${cmp} ${fmt(r.threshold)}°${esc(r.unit[0])}</td>
+        <td class="num"><b>${fmt(r.day_extreme)}</b>${r.obs_count ? ` <span class="muted">(${r.obs_count})</span>` : ""}</td>
+        <td class="num ${hit ? "gap-hit" : "gap-pos"}">${r.gap === null ? "–" : (hit ? "hit" : fmt(r.gap))}</td>
+        <td>${s.binary_state ? pill(s.binary_state, stateCls(s.binary_state)) : pill("no signal","warn")}</td>
+        <td class="num mono">${fmt(s.p_win, 2)}</td>
+        <td>${s.recommended_side && s.recommended_side !== "NONE" ? pill(s.recommended_side, s.recommended_side==="YES"?"ok":"bad") : "–"}</td>
+        <td class="num mono">${r.price ? fmt(r.price.yes, 3) : "–"}</td>
+        <td class="num mono ${r.edge > 0 ? "edge-pos" : r.edge < 0 ? "edge-neg" : ""}">${r.edge === null ? "–" : (r.edge > 0 ? "+" : "") + fmt(r.edge, 3)}</td>
+        <td class="muted">${esc((s.resolution_model||"").replace("metar_ws_daily_extrema","daily extreme").replace("instant_metar_proxy","instant METAR"))}</td>
+        <td class="num mono">${r.minutes_to_deadline === null ? "–" : (r.minutes_to_deadline <= 0 ? "passed" : `${Math.floor(r.minutes_to_deadline/60)}h${String(r.minutes_to_deadline%60).padStart(2,"0")}`)}</td>
+        <td class="mono muted">${esc(r.local_time)} ${esc(r.target_date||"")}</td></tr>`;
+    }).join("") || `<tr><td colspan="14" class="empty">${marketRows.length ? "nothing matches the filters" : "no markets in icao_mapping.json"}</td></tr>`;
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch("/api/overview" + location.search, {cache: "no-store"});
+      const o = await r.json();
+      renderStream(o.stream);
+      renderStations(o.stations);
+      marketRows = o.markets.rows || [];
+      $("#mk-sub").textContent = `${marketRows.length} markets · ${o.markets.pipeline} · status ${o.markets.status ?? "–"}`;
+      $("#sig-age").textContent = age(o.markets.signals_age_sec);
+      $("#sig-src").textContent = o.markets.observation_source === "metar_ws" ? "METAR.ws" : "AWC poll";
+      renderMarkets();
+      $("#updated").textContent = o.now_utc.slice(11, 19) + "Z";
+    } catch (e) { $("#updated").textContent = "error"; console.error(e); }
+  }
+  $("#f-open").addEventListener("change", renderMarkets);
+  $("#f-edge").addEventListener("change", renderMarkets);
+  refresh();
+  setInterval(refresh, 30000);
+  try {
+    const es = new EventSource("/api/events" + location.search);
+    es.addEventListener("hello", () => { $("#live").textContent = "live"; $("#live").className = "pill ok"; });
+    es.addEventListener("change", refresh);
+    es.onerror = () => { $("#live").textContent = "polling"; $("#live").className = "pill muted"; };
+  } catch (e) { /* SSE unavailable: 30 s polling stays */ }
+})();
+</script>
+</body>
+</html>

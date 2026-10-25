@@ -35,6 +35,7 @@ Environment:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -437,6 +438,9 @@ class MetarWsClient:
             if obs is None:
                 return
             cached = bool(msg.get("cached", False))
+            if obs.received_at_utc is None and not cached:
+                # compact payloads carry no receipt time: a live frame's arrival is the best estimate
+                obs = dataclasses.replace(obs, received_at_utc=datetime.now(timezone.utc))
             key = obs.dedupe_key()
             if key in self._seen:
                 LOG.debug("duplicate observation %s @ %s ignored", obs.icao_id, obs.report_time_utc)

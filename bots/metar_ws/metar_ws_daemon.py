@@ -90,6 +90,16 @@ def served_stations(path: Optional[Path] = None) -> set[str]:
         return set()
 
 
+def served_timezones(path: Optional[Path] = None) -> dict[str, str]:
+    """ICAO -> IANA timezone from data/metar_ws_stations.json."""
+    path = path or (_ROOT / "data" / "metar_ws_stations.json")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(k).upper(): str(v["timezone"]) for k, v in (data.get("stations") or {}).items() if isinstance(v, dict) and v.get("timezone")}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
 def stations_from_mapping(path: Path) -> set[str]:
     """ICAO codes of every market entry (keys starting with ``_`` are notes)."""
     try:
@@ -141,7 +151,8 @@ class Daemon:
             on_state_change=self._write_snapshot,
         )
         self._tz_by_icao: dict[str, str] = {}
-        self.days = DayStateTracker(lambda icao: self._tz_by_icao.get(icao, "UTC"), keep_days=3)
+        self._served_tz = served_timezones()
+        self.days = DayStateTracker(lambda icao: self._tz_by_icao.get(icao) or self._served_tz.get(icao, "UTC"), keep_days=3)
         self._restore_days()
         self.live_observations = 0
         self.triggers_run = 0
