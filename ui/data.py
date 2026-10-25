@@ -506,9 +506,63 @@ def _f(v: Any) -> Optional[float]:
 # -- top-level assembly ------------------------------------------------------------------
 
 class Dashboard:
-    def __init__(self, *, snapshot_file: Optional[Path] = None, prices: Optional[GammaPrices] = None) -> None:
+    def __init__(self, *, snapshot_file: Optional[Path] = None, prices: Optional[GammaPrices] = None, health: Any = None) -> None:
+        from ui.health import ConnectionHealth
+
         self.snapshot_file = snapshot_file or snapshot_path()
         self.prices = prices or GammaPrices()
+        self.health = health or ConnectionHealth()
+
+    def connections(self, now: Optional[datetime] = None) -> dict[str, Any]:
+        """Topbar: METAR.ws (from the snapshot), Gamma/CLOB probes, prices cache, last cycle."""
+        from ui import history as h
+        from ui.health import metar_ws_view
+
+        now = now or datetime.now(timezone.utc)
+        cycles = h.parse_cycle_summaries(h._tail_lines(h.cycle_log_path(), 400), limit=1)
+        last = cycles[0] if cycles else None
+        last_dt = parse_utc(last["ts"]) if last else None
+        probes = self.health.view()
+        with self.prices._lock:
+            price_age = round(time.monotonic() - self.prices._at, 1) if self.prices._at else None
+            price_err = self.prices.last_error
+            cached = len(self.prices._cache)
+        return {
+            "now_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "metar_ws": metar_ws_view(read_snapshot(self.snapshot_file), now),
+            "gamma": {**probes.get("gamma", {}), "prices_cached": cached, "prices_age_sec": price_age, "prices_error": price_err},
+            "clob": probes.get("clob", {}),
+            "cycle": {
+                "last_ts": last["ts"] if last else None,
+                "age_sec": round((now - last_dt).total_seconds(), 1) if last_dt else None,
+                "ok": last["ok"] if last else None,
+                "pipeline": last["pipeline"] if last else None,
+            },
+            "mode": h.trading_mode(),
+            "observation_source": (os.getenv("METAR_SOURCE") or "awc"),
+        }
+
+    def settings(self) -> dict[str, Any]:
+        from ui import history as h
+        from ui.health import settings_view
+
+        mapping = _load_json(mapping_path()) or {}
+        entries = [v for k, v in mapping.items() if isinstance(k, str) and not k.startswith("_") and isinstance(v, dict)] if isinstance(mapping, dict) else []
+        stations = sorted({str(v.get("icao") or "") for v in entries if v.get("icao")})
+        dates = sorted({str(v.get("target_date") or "") for v in entries if v.get("target_date")})
+        refreshed = max((str(v.get("refreshed_at") or "") for v in entries), default="")
+        return settings_view(
+            paths={
+                "snapshot": str(self.snapshot_file),
+                "mapping": str(mapping_path()),
+                "signals": str(signals_paths()[0]),
+                "portfolio": str(h.portfolio_path()),
+                "cycle_log": str(h.cycle_log_path()),
+                "stations_file": str(stations_file()),
+            },
+            mapping_stats={"markets": len(entries), "stations": len(stations), "dates": dates, "refreshed_at": refreshed},
+            mode=h.trading_mode(),
+        )
 
     def watched_files(self) -> list[Path]:
         from ui.history import ALERTS_FILE, EVENTS_FILE, cycle_log_path, portfolio_path
@@ -569,4 +623,5 @@ class Dashboard:
             "stations": self.stations(now),
             "markets": self.markets(now),
             "history": self.history(now),
+            "connections": self.connections(now),
         }

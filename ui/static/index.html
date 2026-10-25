@@ -9,14 +9,39 @@
     --bg: #0f1419; --panel: #161c24; --panel-2: #1c242e; --line: #263040;
     --fg: #e6edf3; --muted: #8b98a8; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
     --accent: #58a6ff; --speci: #c084fc; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sidebar: 200px; --topbar: 48px;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
-  .kv { color: var(--muted); font-size: 12px; }
-  .kv b { color: var(--fg); font-weight: 600; }
-  main { padding: 16px; display: grid; gap: 16px; max-width: 1500px; margin: 0 auto; }
+  a { color: var(--accent); text-decoration: none; }
+
+  /* layout */
+  .app { display: grid; grid-template-columns: var(--sidebar) 1fr; grid-template-rows: var(--topbar) 1fr; min-height: 100vh; }
+  aside { grid-row: 1 / span 2; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+  .brand { height: var(--topbar); display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--line); font-weight: 700; letter-spacing: .02em; }
+  .brand .logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), var(--speci)); }
+  nav { padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+  nav a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px; color: var(--muted); font-weight: 500; }
+  nav a svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  nav a:hover { background: var(--panel-2); color: var(--fg); }
+  nav a.active { background: var(--panel-2); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+  nav a .count { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .side-foot { margin-top: auto; padding: 12px 16px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+  header.top { grid-column: 2; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; overflow-x: auto; }
+  main { grid-column: 2; padding: 16px; display: grid; gap: 16px; align-content: start; max-width: 1600px; }
+  .page { display: none; gap: 16px; }
+  .page.active { display: grid; }
+
+  /* topbar */
+  .conn { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; white-space: nowrap; cursor: default; }
+  .conn b { font-weight: 600; }
+  .conn .meta { color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.unknown { background: var(--muted); }
+  .clock { margin-left: auto; font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+  .clock small { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+
+  /* panels */
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   section > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: center; }
   section > h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; }
@@ -25,6 +50,7 @@
   th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
   tr:last-child td { border-bottom: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.wrap { white-space: normal; max-width: 640px; }
   .mono { font-family: var(--mono); font-size: 12px; }
   .muted { color: var(--muted); }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .03em; border: 1px solid transparent; }
@@ -33,9 +59,7 @@
   .bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
   .info { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
   .speci { color: var(--speci); border-color: color-mix(in srgb, var(--speci) 40%, transparent); }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
-  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); } .dot.off { background: var(--bad); }
-  .scroll { overflow: auto; max-height: 60vh; }
+  .scroll { overflow: auto; max-height: 62vh; }
   .empty { padding: 18px 14px; color: var(--muted); }
   svg.spark { width: 140px; height: 28px; display: block; }
   .spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
@@ -50,61 +74,130 @@
   .tile .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   .tile .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
   .tile .v.pos { color: var(--ok); } .tile .v.neg { color: var(--bad); }
-  td.wrap { white-space: normal; max-width: 640px; }
-  @media (max-width: 800px) { .raw { max-width: 220px; } header { gap: 8px 14px; } }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .kv-table td:first-child { color: var(--muted); width: 34%; }
+  @media (max-width: 900px) { .app { grid-template-columns: 1fr; } aside { display: none; } header.top, main { grid-column: 1; } .grid2 { grid-template-columns: 1fr; } .raw { max-width: 220px; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>Weather Bot Ops</h1>
-  <span class="kv"><span id="conn-dot" class="dot off"></span><b id="conn">stream: unknown</b></span>
-  <span class="kv">plan <b id="plan">–</b></span>
-  <span class="kv">channels <b id="chan">–</b></span>
-  <span class="kv">reconnects <b id="reconn">–</b></span>
-  <span class="kv">snapshot age <b id="snap-age">–</b></span>
-  <span class="kv">signals age <b id="sig-age">–</b> <span id="sig-src" class="pill info"></span></span>
-  <span class="kv">mode <b id="mode" class="pill warn">–</b></span>
-  <span class="kv" style="margin-left:auto">updated <b id="updated">–</b> <span id="live" class="pill muted">polling</span></span>
-</header>
-<main>
-  <section>
-    <h2>Markets <span class="sub muted" id="mk-sub"></span>
-      <span class="filters"><label><input type="checkbox" id="f-open" checked> open only</label><label><input type="checkbox" id="f-edge"> with edge</label></span>
-    </h2>
-    <div class="scroll"><table id="markets"><thead><tr>
-      <th>Market</th><th>Station</th><th>Var</th><th class="num">Bucket</th><th class="num">Day extreme</th><th class="num">Gap</th>
-      <th>State</th><th class="num">p_win</th><th class="num" title="model probability of this bucket (METAR.ws forecasts conditioned on observations)">p_model</th><th>Side</th><th class="num">YES price</th><th class="num">Edge</th><th>Model</th><th class="num">To deadline</th><th>Local</th>
-    </tr></thead><tbody></tbody></table></div>
-  </section>
+<div class="app">
+  <aside>
+    <div class="brand"><span class="logo"></span>Weather Bot</div>
+    <nav>
+      <a href="#dashboard" data-page="dashboard"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>Dashboard<span class="count" id="n-open"></span></a>
+      <a href="#markets" data-page="markets"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>Markets<span class="count" id="n-markets"></span></a>
+      <a href="#stations" data-page="stations"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>Stations<span class="count" id="n-stations"></span></a>
+      <a href="#logs" data-page="logs"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Logs<span class="count" id="n-logs"></span></a>
+      <a href="#settings" data-page="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
+    </nav>
+    <div class="side-foot"><span id="foot-mode">–</span> · <span id="foot-source">–</span><br><span id="foot-updated">waiting for data…</span></div>
+  </aside>
 
-  <section>
-    <h2>Stations · daily extremes <span class="sub muted" id="st-sub"></span></h2>
-    <div class="scroll"><table id="stations"><thead><tr>
-      <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num" title="model forecast of today's max / min (mean, range), * = run does not cover the whole day">Forecast</th><th class="num">Last</th><th>Last report</th>
-    </tr></thead><tbody></tbody></table></div>
-  </section>
+  <header class="top">
+    <span class="conn" id="c-metar" title="METAR.ws stream"><span class="dot unknown"></span><b>METAR.ws</b><span class="meta">–</span></span>
+    <span class="conn" id="c-gamma" title="Polymarket Gamma API (markets, prices)"><span class="dot unknown"></span><b>Gamma</b><span class="meta">–</span></span>
+    <span class="conn" id="c-clob" title="Polymarket CLOB (order books, orders)"><span class="dot unknown"></span><b>CLOB</b><span class="meta">–</span></span>
+    <span class="conn" id="c-cycle" title="last trading cycle"><span class="dot unknown"></span><b>Cycle</b><span class="meta">–</span></span>
+    <span class="conn" id="c-mode" title="trading mode"><b id="mode">–</b></span>
+    <span class="clock"><span id="clock">--:--:--</span><small>UTC</small></span>
+  </header>
 
-  <section>
-    <h2>History <span class="sub muted" id="hi-sub"></span>
-      <span class="filters tabs">
-        <label><input type="radio" name="htab" value="positions" checked> positions</label>
-        <label><input type="radio" name="htab" value="cycles"> cycles</label>
-        <label><input type="radio" name="htab" value="alerts"> alerts</label>
-        <label><input type="radio" name="htab" value="events"> stream events</label>
-      </span>
-    </h2>
-    <div class="tiles" id="hi-tiles"></div>
-    <div class="scroll"><table id="history"><thead></thead><tbody></tbody></table></div>
-  </section>
+  <main>
+    <!-- DASHBOARD -->
+    <div class="page" id="page-dashboard">
+      <section>
+        <h2>Overview</h2>
+        <div class="tiles" id="hi-tiles"></div>
+      </section>
+      <section>
+        <h2>Open positions <span class="sub muted" id="open-sub"></span></h2>
+        <div class="scroll"><table id="open-positions"><thead><tr>
+          <th>Opened (UTC)</th><th>Market</th><th>Station</th><th>Side</th><th class="num">Price</th><th class="num">Shares</th><th class="num">Cost</th><th class="num">Max payout</th><th class="num">YES now</th><th class="num">Mark PnL</th><th>Signal</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+      <div class="grid2">
+        <section>
+          <h2>Live signals <span class="sub muted">today, actionable or priced edge</span></h2>
+          <div class="scroll"><table id="dash-signals"><thead><tr><th>Market</th><th>Bucket</th><th class="num">Value</th><th>State</th><th class="num">p_model</th><th class="num">YES</th><th class="num">Edge</th></tr></thead><tbody></tbody></table></div>
+        </section>
+        <section>
+          <h2>Stream <span class="sub muted" id="dash-stream-sub"></span></h2>
+          <div class="scroll"><table id="dash-stream"><thead><tr><th>Station</th><th>Status</th><th>Last obs</th><th class="num">Age</th><th>Next</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
+    </div>
 
-  <section>
-    <h2>Stream · freshness <span class="sub muted" id="fr-sub"></span></h2>
-    <div class="scroll"><table id="stream"><thead><tr>
-      <th>Station</th><th>Status</th><th>Schedule</th><th>Last obs (UTC)</th><th class="num">Age</th><th>Next expected</th><th class="num">Lag</th><th>Raw</th>
-    </tr></thead><tbody></tbody></table></div>
-    <div id="failed" class="empty" hidden></div>
-  </section>
-</main>
+    <!-- MARKETS -->
+    <div class="page" id="page-markets">
+      <section>
+        <h2>Markets <span class="sub muted" id="mk-sub"></span>
+          <span class="filters"><label><input type="checkbox" id="f-today" checked> today only</label><label><input type="checkbox" id="f-open" checked> open only</label><label><input type="checkbox" id="f-edge"> with edge</label></span>
+        </h2>
+        <div class="scroll" style="max-height:78vh"><table id="markets"><thead><tr>
+          <th>Market</th><th>Station</th><th>Var</th><th class="num">Bucket</th><th class="num">Day extreme</th><th class="num">Gap</th>
+          <th>State</th><th class="num">p_win</th><th class="num" title="model probability of this bucket (METAR.ws forecasts conditioned on observations)">p_model</th><th>Side</th><th class="num">YES price</th><th class="num">Edge</th><th>Model</th><th class="num">To deadline</th><th>Local</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+    </div>
+
+    <!-- STATIONS -->
+    <div class="page" id="page-stations">
+      <section>
+        <h2>Daily extremes <span class="sub muted" id="st-sub"></span></h2>
+        <div class="scroll"><table id="stations"><thead><tr>
+          <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num" title="model forecast of today's max / min (mean, range)">Forecast</th><th class="num">Last</th><th>Last report</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+      <section>
+        <h2>Freshness <span class="sub muted" id="fr-sub"></span></h2>
+        <div class="scroll"><table id="stream"><thead><tr>
+          <th>Station</th><th>Status</th><th>Schedule</th><th>Last obs (UTC)</th><th class="num">Age</th><th>Next expected</th><th class="num">Lag</th><th>Raw</th>
+        </tr></thead><tbody></tbody></table></div>
+        <div id="failed" class="empty" hidden></div>
+      </section>
+    </div>
+
+    <!-- LOGS -->
+    <div class="page" id="page-logs">
+      <section>
+        <h2>Logs <span class="sub muted" id="hi-sub"></span>
+          <span class="filters tabs">
+            <label><input type="radio" name="htab" value="positions" checked> positions</label>
+            <label><input type="radio" name="htab" value="cycles"> cycles</label>
+            <label><input type="radio" name="htab" value="alerts"> alerts</label>
+            <label><input type="radio" name="htab" value="events"> stream events</label>
+          </span>
+        </h2>
+        <div class="scroll" style="max-height:78vh"><table id="history"><thead></thead><tbody></tbody></table></div>
+      </section>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-settings">
+      <div class="grid2">
+        <section>
+          <h2>Effective configuration <span class="sub muted">read-only, secrets masked</span></h2>
+          <div class="scroll" style="max-height:70vh"><table id="settings" class="kv-table"><thead><tr><th>Variable</th><th>Value</th><th>Source</th></tr></thead><tbody></tbody></table></div>
+        </section>
+        <div style="display:grid; gap:16px; align-content:start">
+          <section>
+            <h2>Paths</h2>
+            <table id="paths" class="kv-table"><tbody></tbody></table>
+          </section>
+          <section>
+            <h2>Market mapping</h2>
+            <table id="mapping" class="kv-table"><tbody></tbody></table>
+          </section>
+          <section>
+            <h2>Connections <span class="sub muted">details</span></h2>
+            <table id="conn-details" class="kv-table"><tbody></tbody></table>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
@@ -115,7 +208,63 @@
   const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const stateCls = (s) => ({met:"ok", attack:"ok", dead:"bad", flee:"bad", open:"info", standby:"info", metar_unavailable:"warn", premature:"muted", past_target:"muted"}[s] || "muted");
   const srcPill = (src) => src === "body" ? pill("body", "warn") : "";
+  const usd = (v) => v === null || v === undefined ? "–" : (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
+  const sgn = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
+  const tsShort = (ts) => ts ? ts.replace("T", " ").replace("Z", "") : "–";
+  const tile = (l, v, cls="") => `<div class="tile"><div class="l">${esc(l)}</div><div class="v ${cls}">${v}</div></div>`;
 
+  // ---- routing ----
+  const pages = ["dashboard", "markets", "stations", "logs", "settings"];
+  function route() {
+    const h = (location.hash || "#dashboard").slice(1);
+    const page = pages.includes(h) ? h : "dashboard";
+    pages.forEach(p => { $("#page-" + p).classList.toggle("active", p === page); });
+    document.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.dataset.page === page));
+    if (page === "settings" && !settingsLoaded) loadSettings();
+  }
+  window.addEventListener("hashchange", route);
+
+  // ---- clock ----
+  setInterval(() => { $("#clock").textContent = new Date().toISOString().slice(11, 19); }, 1000);
+
+  // ---- topbar ----
+  function conn(id, cls, meta, title) {
+    const el = $(id); el.querySelector(".dot").className = "dot " + cls; el.querySelector(".meta").textContent = meta; if (title) el.title = title;
+  }
+  let connDetails = null;
+  function renderConnections(c) {
+    const m = c.metar_ws || {};
+    const mcls = m.status === "ok" ? "ok" : m.status === "stale" || m.status === "no_snapshot" ? "bad" : "warn";
+    conn("#c-metar", mcls, m.status === "ok" ? `${m.channels_subscribed}/${m.channels_wanted} ch · ${m.plan || ""} · msg ${age(m.last_message_age_sec)}` : m.status === "stale" ? `daemon silent ${age(m.snapshot_age_sec)}` : m.status === "no_snapshot" ? "no snapshot" : `reconnecting (${m.reconnects ?? 0})`,
+         `METAR.ws · plan ${m.plan || "–"} · limits ${JSON.stringify(m.limits || {})} · stations ${m.stations ?? 0} · reconnects ${m.reconnects ?? 0} · forecasts ${m.forecast_records ?? 0}${m.last_error ? " · " + m.last_error : ""}`);
+    const g = c.gamma || {};
+    conn("#c-gamma", g.status === "ok" ? "ok" : g.status === "down" ? "bad" : "unknown", g.status === "ok" ? `${g.latency_ms} ms · ${g.prices_cached ?? 0} prices` : g.status === "down" ? "down" : "probing…",
+         `Gamma API · ${g.error || "ok"} · prices refreshed ${age(g.prices_age_sec)} ago${g.prices_error ? " · " + g.prices_error : ""}`);
+    const k = c.clob || {};
+    conn("#c-clob", k.status === "ok" ? "ok" : k.status === "down" ? "bad" : "unknown", k.status === "ok" ? `${k.latency_ms} ms` : k.status === "down" ? "down" : "probing…",
+         `CLOB · ${k.error || "ok"} · server time ${k.server_time || "–"}`);
+    const y = c.cycle || {};
+    conn("#c-cycle", y.last_ts ? (y.ok ? (y.age_sec > 1800 ? "warn" : "ok") : "bad") : "unknown", y.last_ts ? `${y.ok ? "ok" : "failed"} · ${age(y.age_sec)} ago` : "never ran",
+         `last trading cycle · ${y.last_ts || "–"} · pipeline ${y.pipeline || "–"}`);
+    const mode = c.mode || "–";
+    $("#mode").textContent = mode.toUpperCase();
+    $("#c-mode").className = "conn " + (mode === "live" ? "bad" : mode === "paper" ? "ok" : "warn");
+    $("#foot-mode").textContent = mode.toUpperCase(); $("#foot-source").textContent = c.observation_source === "metar_ws" ? "METAR.ws push" : "AWC polling";
+    connDetails = c;
+    if ($("#page-settings").classList.contains("active")) renderConnDetails();
+  }
+  function renderConnDetails() {
+    if (!connDetails) return;
+    const rows = [];
+    const add = (k, v) => rows.push(`<tr><td>${esc(k)}</td><td class="mono">${esc(typeof v === "object" && v !== null ? JSON.stringify(v) : v ?? "–")}</td></tr>`);
+    const m = connDetails.metar_ws || {};
+    ["status","plan","limits","channels_subscribed","channels_wanted","stations","station_days_tracked","forecast_records","reconnects","messages","last_message_age_sec","snapshot_age_sec","failed_channels","last_error"].forEach(k => add("metar_ws." + k, m[k]));
+    ["status","latency_ms","checked_at_utc","prices_cached","prices_age_sec","error"].forEach(k => add("gamma." + k, (connDetails.gamma||{})[k]));
+    ["status","latency_ms","checked_at_utc","server_time","error"].forEach(k => add("clob." + k, (connDetails.clob||{})[k]));
+    $("#conn-details tbody").innerHTML = rows.join("");
+  }
+
+  // ---- stream / stations ----
   function spark(samples) {
     if (!samples || samples.length < 2) return "";
     const vals = samples.map(s => s[1]);
@@ -126,19 +275,13 @@
     const dots = samples.map((s, i) => s[2] ? `<circle cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="2.2"/>` : "").join("");
     return `<svg class="spark" viewBox="0 0 ${W} ${H}"><path d="${d}"/>${dots}</svg>`;
   }
-
   function renderStream(st) {
-    $("#conn").textContent = st.available ? (st.connected ? "stream: connected" : "stream: disconnected") : "stream: no snapshot";
-    $("#conn-dot").className = "dot " + (st.connected ? "on" : "off");
-    const c = st.client || {};
-    $("#plan").textContent = c.plan ? `${c.plan} (${(c.limits||{}).max_channels ?? "?"} ch)` : "–";
-    $("#chan").textContent = `${(c.subscribed||[]).length}/${(c.wanted_channels||[]).length}`;
-    $("#reconn").textContent = c.reconnects ?? "–";
-    $("#snap-age").textContent = age(st.snapshot_age_sec);
     const cnt = st.counts || {};
     $("#fr-sub").textContent = `${cnt.ok||0} ok · ${cnt.late||0} late · ${cnt.no_data||0} no data`;
-    const tb = $("#stream tbody");
-    tb.innerHTML = (st.stations||[]).map(s => `<tr>
+    $("#dash-stream-sub").textContent = $("#fr-sub").textContent;
+    const rows = (st.stations||[]);
+    $("#n-stations").textContent = rows.length || "";
+    $("#stream tbody").innerHTML = rows.map(s => `<tr>
       <td><b>${esc(s.icao)}</b> <span class="muted">${esc(s.city||s.name||"")}</span>${s.served ? "" : " " + pill("not served", "bad")}</td>
       <td>${pill(s.status === "late" ? `late ${fmt(s.late_min,0)}m` : s.status.replace("_"," "), s.status==="ok"?"ok":s.status==="late"?"bad":"warn")}</td>
       <td class="mono muted">${(s.report_minutes||[]).map(m=>":"+String(m).padStart(2,"0")).join(" ")||"–"}</td>
@@ -147,11 +290,15 @@
       <td class="mono muted">${hhmm(s.next_expected_utc)}</td>
       <td class="num muted">${s.delivery_lag_sec===null||s.delivery_lag_sec===undefined?"–":fmt(s.delivery_lag_sec,0)+"s"}</td>
       <td class="mono raw muted" title="${esc(s.raw||"")}">${esc(s.raw||"")}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">no stations</td></tr>`;
-    const failed = Object.entries(c.failed_channels||{});
+    const problem = rows.filter(s => s.status !== "ok");
+    const shown = problem.length ? problem : rows.slice(0, 12);
+    $("#dash-stream tbody").innerHTML = shown.map(s => `<tr><td><b>${esc(s.icao)}</b> <span class="muted">${esc(s.city||"")}</span></td>
+      <td>${pill(s.status === "late" ? `late ${fmt(s.late_min,0)}m` : s.status.replace("_"," "), s.status==="ok"?"ok":s.status==="late"?"bad":"warn")}</td>
+      <td class="mono">${hhmm(s.last_obs_utc)}</td><td class="num">${s.age_min===null||s.age_min===undefined?"–":fmt(s.age_min,0)+"m"}</td><td class="mono muted">${hhmm(s.next_expected_utc)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">no stations</td></tr>`;
+    const failed = Object.entries((st.client||{}).failed_channels||{});
     const f = $("#failed"); f.hidden = !failed.length;
     f.innerHTML = failed.length ? "Rejected channels: " + failed.map(([ch,code]) => `<span class="mono">${esc(ch)}</span> ${pill(code,"bad")}`).join("  ") : "";
   }
-
   function renderStations(rows) {
     $("#st-sub").textContent = `${rows.length} stations`;
     $("#stations tbody").innerHTML = rows.map(r => {
@@ -168,23 +315,23 @@
         <td class="num mono" title="${esc(r.forecast ? r.forecast.models.join(", ") : "")}">${r.forecast ? `<span title="max">${fmt(r.forecast.max_mean_c)}</span><span class="muted"> [${fmt(r.forecast.max_lo_c)}–${fmt(r.forecast.max_hi_c)}]</span> / <span title="min">${fmt(r.forecast.min_mean_c)}</span> <span class="muted">${r.forecast.models.length}m</span>` : "–"}</td>
         <td class="num">${fmt(r.last_temp_c)}°C ${r.last_is_speci ? pill("SPECI","speci") : ""}</td>
         <td class="mono raw muted" title="${esc(r.last_raw||"")}">${esc(r.last_raw||"")}</td></tr>`;
-    }).join("") || `<tr><td colspan="10" class="empty">no day state yet — the daemon fills this as reports arrive</td></tr>`;
+    }).join("") || `<tr><td colspan="11" class="empty">no day state yet — the daemon fills this as reports arrive</td></tr>`;
   }
 
+  // ---- markets ----
   let marketRows = [];
+  const bucketTxt = (r) => { const b = r.bucket, u = "°" + esc(r.unit[0]);
+    return b ? (b.low !== null && b.high !== null ? (b.low === b.high ? fmt(b.low,0) + u : fmt(b.low,0) + "–" + fmt(b.high,0) + u) : b.low !== null ? "≥ " + fmt(b.low,0) + u : "≤ " + fmt(b.high,0) + u) : (r.yes_if_above ? "≥ " : "< ") + fmt(r.threshold) + u; };
   function renderMarkets() {
-    const openOnly = $("#f-open").checked, edgeOnly = $("#f-edge").checked;
-    const rows = marketRows.filter(r => (!openOnly || ["open","standby",null,undefined].includes(r.signal.binary_state)) && (!edgeOnly || (r.edge !== null && r.edge > 0)));
+    const todayOnly = $("#f-today").checked, openOnly = $("#f-open").checked, edgeOnly = $("#f-edge").checked;
+    const rows = marketRows.filter(r => (!todayOnly || r.signal.rt_day_guard === "jour_j") && (!openOnly || ["open","standby",null,undefined].includes(r.signal.binary_state)) && (!edgeOnly || (r.edge !== null && r.edge > 0)));
     $("#markets tbody").innerHTML = rows.map(r => {
       const s = r.signal, hit = r.gap !== null && r.gap === 0, past = r.gap !== null && r.gap < 0;
-      const b = r.bucket, u = "°" + esc(r.unit[0]);
-      const bucketTxt = b ? (b.low !== null && b.high !== null ? (b.low === b.high ? fmt(b.low,0) + u : fmt(b.low,0) + "–" + fmt(b.high,0) + u)
-                              : b.low !== null ? "≥ " + fmt(b.low,0) + u : "≤ " + fmt(b.high,0) + u) : (r.yes_if_above ? "≥ " : "< ") + fmt(r.threshold) + u;
       return `<tr>
         <td title="${esc(r.market_id)}">${esc(r.name)}</td>
         <td><b>${esc(r.icao)}</b></td>
         <td class="muted">${esc(r.variable.replace("temp_",""))}</td>
-        <td class="num mono">${bucketTxt}</td>
+        <td class="num mono">${bucketTxt(r)}</td>
         <td class="num"><b>${r.resolution_value === null || r.resolution_value === undefined ? fmt(r.day_extreme) : r.resolution_value}</b>${r.day_extreme !== null && r.resolution_value !== null ? ` <span class="muted">${fmt(r.day_extreme)}</span>` : ""}${r.lead_resolution_value !== null && r.lead_resolution_value !== undefined && r.lead_resolution_value !== r.resolution_value ? ` <span class="speci" title="leading incl. SPECI">→${r.lead_resolution_value}</span>` : ""}${r.obs_count ? ` <span class="muted">(${r.obs_count})</span>` : ""}</td>
         <td class="num ${hit ? "gap-hit" : past ? "edge-neg" : "gap-pos"}">${r.gap === null ? "–" : (hit ? "in" : past ? "past" : fmt(r.gap, 0))}</td>
         <td title="${esc(s.reason||"")}">${s.binary_state ? pill(s.binary_state, stateCls(s.binary_state)) : pill("no signal","warn")}</td>
@@ -196,14 +343,36 @@
         <td class="muted">${esc((s.resolution_model||"").replace("metar_ws_daily_extrema","daily extreme").replace("instant_metar_proxy","instant METAR"))}</td>
         <td class="num mono">${r.minutes_to_deadline === null ? "–" : (r.minutes_to_deadline <= 0 ? "passed" : `${Math.floor(r.minutes_to_deadline/60)}h${String(r.minutes_to_deadline%60).padStart(2,"0")}`)}</td>
         <td class="mono muted">${esc(r.local_time)} ${esc(r.target_date||"")}</td></tr>`;
-    }).join("") || `<tr><td colspan="14" class="empty">${marketRows.length ? "nothing matches the filters" : "no markets in icao_mapping.json"}</td></tr>`;
+    }).join("") || `<tr><td colspan="15" class="empty">${marketRows.length ? "nothing matches the filters" : "no markets in icao_mapping.json"}</td></tr>`;
+    // dashboard: actionable signals (met/dead today) and open buckets with a priced model edge
+    const act = marketRows.filter(r => r.signal.rt_day_guard === "jour_j" && (["met","dead"].includes(r.signal.binary_state) || (r.edge !== null && r.edge >= 0.08 && r.signal.binary_state === "open")))
+      .sort((a, b) => (b.edge ?? -1) - (a.edge ?? -1)).slice(0, 25);
+    $("#dash-signals tbody").innerHTML = act.map(r => { const s = r.signal; return `<tr><td title="${esc(r.market_id)}">${esc(r.name)}</td><td class="num mono">${bucketTxt(r)}</td>
+      <td class="num"><b>${r.resolution_value ?? fmt(r.day_extreme)}</b></td><td>${pill(s.binary_state||"–", stateCls(s.binary_state))}</td>
+      <td class="num mono">${fmt(s.p_model, 2)}</td><td class="num mono">${r.price ? fmt(r.price.yes, 3) : "–"}</td>
+      <td class="num mono ${r.edge > 0 ? "edge-pos" : r.edge < 0 ? "edge-neg" : ""}">${r.edge === null ? "–" : (r.edge > 0 ? "+" : "") + fmt(r.edge, 3)}</td></tr>`; }).join("")
+      || `<tr><td colspan="7" class="empty">no actionable signal right now</td></tr>`;
   }
+  ["f-today","f-open","f-edge"].forEach(id => $("#" + id).addEventListener("change", renderMarkets));
 
+  // ---- logs / positions ----
   let hist = null;
-  const tile = (l, v, cls="") => `<div class="tile"><div class="l">${esc(l)}</div><div class="v ${cls}">${v}</div></div>`;
-  const usd = (v) => v === null || v === undefined ? "–" : (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
-  const sgn = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
-  const tsShort = (ts) => ts ? ts.replace("T", " ").replace("Z", "") : "–";
+  function renderOpenPositions() {
+    if (!hist) return;
+    const byId = Object.fromEntries(marketRows.map(r => [r.market_id, r]));
+    const open = (hist.positions || []).filter(p => p.status === "OPEN");
+    $("#open-sub").textContent = `${open.length} open · ${hist.mode || ""} book`;
+    $("#n-open").textContent = open.length || "";
+    $("#open-positions tbody").innerHTML = open.map(p => {
+      const r = byId[p.market_id]; const yes = r && r.price ? r.price.yes : null;
+      const mark = yes === null ? null : (p.side === "YES" ? yes : 1 - yes) * p.size - p.notional;
+      return `<tr><td class="mono">${esc(tsShort(p.opened_at))}</td><td title="${esc(p.market_id)}">${esc(p.name || (r && r.name) || p.market_id.slice(0, 14) + "…")}</td>
+        <td><b>${esc(r ? r.icao : "")}</b></td><td>${pill(p.side, p.side === "YES" ? "ok" : "bad")}</td>
+        <td class="num mono">${fmt(p.price, 3)}</td><td class="num mono">${fmt(p.size, 2)}</td><td class="num mono">$${fmt(p.notional, 2)}</td><td class="num mono muted">$${fmt(p.max_payout, 2)}</td>
+        <td class="num mono">${yes === null ? "–" : fmt(yes, 3)}</td><td class="num mono ${sgn(mark)==="pos"?"edge-pos":sgn(mark)==="neg"?"edge-neg":""}">${mark === null ? "–" : usd(mark)}</td>
+        <td>${r ? pill(r.signal.binary_state || "–", stateCls(r.signal.binary_state)) : "–"}</td></tr>`;
+    }).join("") || `<tr><td colspan="11" class="empty">no open positions — the engine records paper fills here when a target passes the edge, ask and liquidity filters</td></tr>`;
+  }
   function renderHistory() {
     if (!hist) return;
     const s = hist.summary || {}, bs = s.by_status || {};
@@ -213,8 +382,8 @@
       tile("realized pnl", usd(s.realized_pnl_usdc), sgn(s.realized_pnl_usdc)) +
       tile("today", usd(s.realized_today_usdc), sgn(s.realized_today_usdc)) +
       tile("win / loss", `${s.wins || 0} / ${s.losses || 0}`) +
-      tile("last ok cycle", hist.minutes_since_ok_cycle === null || hist.minutes_since_ok_cycle === undefined ? "never" : `${Math.round(hist.minutes_since_ok_cycle)}m ago`,
-           hist.minutes_since_ok_cycle > 20 ? "neg" : "");
+      tile("last ok cycle", hist.minutes_since_ok_cycle === null || hist.minutes_since_ok_cycle === undefined ? "never" : `${Math.max(0, Math.round(hist.minutes_since_ok_cycle))}m ago`, hist.minutes_since_ok_cycle > 20 ? "neg" : "") +
+      tile("markets today", `${marketRows.filter(r => r.signal.rt_day_guard === "jour_j").length} <span class="muted" style="font-size:13px">of ${marketRows.length}</span>`);
     const tab = document.querySelector('input[name="htab"]:checked').value;
     const thead = $("#history thead"), tbody = $("#history tbody");
     let head = "", body = "", n = 0;
@@ -257,9 +426,30 @@
     thead.innerHTML = head;
     tbody.innerHTML = body || `<tr><td colspan="10" class="empty">nothing yet</td></tr>`;
     $("#hi-sub").textContent = `${n} ${tab}`;
+    $("#n-logs").textContent = (hist.cycles||[]).length || "";
   }
   document.querySelectorAll('input[name="htab"]').forEach(r => r.addEventListener("change", renderHistory));
 
+  // ---- settings ----
+  let settingsLoaded = false;
+  async function loadSettings() {
+    try {
+      const r = await fetch("/api/settings" + location.search, {cache: "no-store"}); const s = await r.json();
+      settingsLoaded = true;
+      $("#settings tbody").innerHTML = (s.values||[]).map(v => `<tr><td class="mono">${esc(v.name)}</td>
+        <td class="mono">${v.set ? esc(v.value) + (v.secret ? ` ${pill("masked","muted")}` : "") : `<span class="muted">(default)</span>`}</td>
+        <td>${pill(v.source, v.source === "env" ? "info" : v.source === "file" ? "ok" : "muted")}</td></tr>`).join("");
+      $("#paths tbody").innerHTML = Object.entries(s.paths||{}).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="mono wrap">${esc(v)}</td></tr>`).join("") +
+        `<tr><td>.env</td><td class="mono wrap">${esc(s.env_file || "not found")}</td></tr><tr><td>python</td><td class="mono">${esc(s.python)}</td></tr>`;
+      const m = s.mapping || {};
+      $("#mapping tbody").innerHTML = `<tr><td>markets</td><td class="mono">${esc(m.markets)}</td></tr><tr><td>stations</td><td class="mono">${esc(m.stations)}</td></tr>
+        <tr><td>target dates</td><td class="mono">${esc((m.dates||[]).join(", "))}</td></tr><tr><td>refreshed</td><td class="mono">${esc(m.refreshed_at || "–")}</td></tr>
+        <tr><td>refresh</td><td class="mono muted">python bots/metar_ws/refresh_mapping.py  (or start_local.bat refresh)</td></tr>`;
+      renderConnDetails();
+    } catch (e) { console.error(e); }
+  }
+
+  // ---- refresh ----
   async function refresh() {
     try {
       const r = await fetch("/api/overview" + location.search, {cache: "no-store"});
@@ -267,27 +457,22 @@
       renderStream(o.stream);
       renderStations(o.stations);
       marketRows = o.markets.rows || [];
-      $("#mk-sub").textContent = `${marketRows.length} markets · ${o.markets.pipeline} · status ${o.markets.status ?? "–"}`;
-      $("#sig-age").textContent = age(o.markets.signals_age_sec);
-      $("#sig-src").textContent = o.markets.observation_source === "metar_ws" ? "METAR.ws" : "AWC poll";
+      $("#n-markets").textContent = marketRows.filter(r => r.signal.rt_day_guard === "jour_j").length || "";
+      $("#mk-sub").textContent = `${marketRows.length} markets · ${o.markets.pipeline} · signals ${o.markets.status ?? "–"} · ${age(o.markets.signals_age_sec)} old`;
       renderMarkets();
       hist = o.history || null;
       renderHistory();
-      const mode = (hist && hist.mode) || "–";
-      $("#mode").textContent = mode.toUpperCase();
-      $("#mode").className = "pill " + (mode === "live" ? "bad" : mode === "paper" ? "ok" : "warn");
-      $("#updated").textContent = o.now_utc.slice(11, 19) + "Z";
-    } catch (e) { $("#updated").textContent = "error"; console.error(e); }
+      renderOpenPositions();
+      renderConnections(o.connections || {});
+      $("#foot-updated").textContent = "updated " + o.now_utc.slice(11, 19) + "Z";
+    } catch (e) { $("#foot-updated").textContent = "update failed"; console.error(e); }
   }
-  $("#f-open").addEventListener("change", renderMarkets);
-  $("#f-edge").addEventListener("change", renderMarkets);
+  route();
   refresh();
   setInterval(refresh, 30000);
   try {
     const es = new EventSource("/api/events" + location.search);
-    es.addEventListener("hello", () => { $("#live").textContent = "live"; $("#live").className = "pill ok"; });
     es.addEventListener("change", refresh);
-    es.onerror = () => { $("#live").textContent = "polling"; $("#live").className = "pill muted"; };
   } catch (e) { /* SSE unavailable: 30 s polling stays */ }
 })();
 </script>

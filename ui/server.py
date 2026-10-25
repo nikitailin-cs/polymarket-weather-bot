@@ -13,6 +13,8 @@ Endpoints:
 - ``GET /api/stations``      daily extremes board
 - ``GET /api/markets``       mapping x signals x daily extreme x Polymarket price
 - ``GET /api/history``       positions + PnL (portfolio_rt.sqlite), cycle summaries, alerts, daemon events
+- ``GET /api/connections``   topbar health: METAR.ws, Gamma, CLOB, prices cache, last cycle
+- ``GET /api/settings``      effective configuration, secrets masked (read-only)
 - ``GET /api/events``        Server-Sent Events: ``change`` whenever a watched file changes
 
 Environment: ``UI_HOST`` (127.0.0.1), ``UI_PORT`` (8765), ``UI_TOKEN`` (optional bearer /
@@ -114,6 +116,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(self.dashboard.markets())
             elif path == "/api/history":
                 self._send_json(self.dashboard.history())
+            elif path == "/api/connections":
+                self._send_json(self.dashboard.connections())
+            elif path == "/api/settings":
+                self._send_json(self.dashboard.settings())
             elif path == "/api/events":
                 self._sse()
             elif path == "/healthz":
@@ -180,6 +186,7 @@ def main() -> int:
         LOG.error("refusing to bind %s without UI_TOKEN (positions and wallet data are exposed)", host)
         return 2
     httpd = serve(host, port, token)
+    Handler.dashboard.health.start()
     LOG.info("dashboard on http://%s:%s/ (pipeline=%s)", host, port, os.getenv("UPDATE_BOT_RT_PIPELINE") or "bot2")
     try:
         httpd.serve_forever()
