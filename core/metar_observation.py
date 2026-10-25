@@ -86,8 +86,17 @@ class MetarObservation:
     observation_utc: datetime
     is_speci: bool
     dewpoint_celsius: Optional[float] = None
-    received_at_utc: Optional[datetime] = None
+    received_at_utc: Optional[datetime] = None  # when METAR.ws received the report from its source
     source: str = ""
+    sent_at_utc: Optional[datetime] = None  # when METAR.ws put the publication on the stream
+    report_type: str = ""
+
+    @property
+    def platform_latency_ms(self) -> Optional[int]:
+        """METAR.ws processing time: stream ``sent_at`` minus source ``receipt_time``."""
+        if self.sent_at_utc is None or self.received_at_utc is None:
+            return None
+        return int(round((self.sent_at_utc - self.received_at_utc).total_seconds() * 1000))
 
     @property
     def temp_fahrenheit(self) -> float:
@@ -107,6 +116,10 @@ class MetarObservation:
             "raw": self.raw_text,
             "is_speci": self.is_speci,
             "received_at_utc": format_utc(self.received_at_utc),
+            "received_at_ms": self.received_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if self.received_at_utc else "",
+            "sent_at_ms": self.sent_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if self.sent_at_utc else "",
+            "platform_latency_ms": self.platform_latency_ms,
+            "report_type": self.report_type,
             "source": self.source,
         }
 
@@ -129,8 +142,10 @@ class MetarObservation:
                 observation_utc=obs_utc,
                 is_speci=bool(d.get("is_speci", is_speci_raw(str(d.get("raw") or "")))),
                 dewpoint_celsius=float(dew) if dew is not None else None,
-                received_at_utc=parse_utc(d.get("received_at_utc")),
+                received_at_utc=parse_utc(d.get("received_at_ms") or d.get("received_at_utc")),
                 source=str(d.get("source") or ""),
+                sent_at_utc=parse_utc(d.get("sent_at_ms")),
+                report_type=str(d.get("report_type") or ""),
             )
         except (TypeError, ValueError):
             return None

@@ -246,9 +246,10 @@ def normalize_publication(
     except (TypeError, ValueError):
         dew_c = None
 
-    received = parse_utc(data.get("source_received_at") or data.get("receiptTime")) or parse_utc(
-        msg.get("published_at")
-    )
+    received = parse_utc(data.get("source_received_at") or data.get("receipt_time") or data.get("receiptTime"))
+    sent_at = parse_utc(msg.get("sent_at") or msg.get("published_at"))
+    if received is None:
+        received = sent_at
 
     return MetarObservation(
         icao_id=icao,
@@ -260,6 +261,8 @@ def normalize_publication(
         dewpoint_celsius=dew_c,
         received_at_utc=received,
         source=SOURCE_NAME,
+        sent_at_utc=sent_at,
+        report_type=str(data.get("report_type") or ("SPECI" if is_speci_raw(raw) else "METAR")),
     )
 
 
@@ -284,6 +287,21 @@ class ClientState:
     subscribed: set[str] = field(default_factory=set)
     failed_channels: dict[str, str] = field(default_factory=dict)
     last_error: str = ""
+    recent_latencies: list[dict[str, Any]] = field(default_factory=list)  # last live reports: platform + delivery latency
+
+    def platform_latency_ms(self) -> Optional[int]:
+        vals = [r["platform_ms"] for r in self.recent_latencies if r.get("platform_ms") is not None]
+        if not vals:
+            return None
+        vals.sort()
+        return int(vals[len(vals) // 2])  # median of the last reports
+
+    def delivery_latency_ms(self) -> Optional[int]:
+        vals = [r["delivery_ms"] for r in self.recent_latencies if r.get("delivery_ms") is not None]
+        if not vals:
+            return None
+        vals.sort()
+        return int(vals[len(vals) // 2])
 
 
 class MetarWsClient:
@@ -477,6 +495,17 @@ class MetarWsClient:
                 self._seen = set(list(self._seen)[-20_000:])
             if is_newer(obs, self.latest.get(obs.icao_id)):
                 self.latest[obs.icao_id] = obs
+            if not cached:
+                now = datetime.now(timezone.utc)
+                self.state.recent_latencies.append({
+                    "icao": obs.icao_id,
+                    "obs_time": obs.report_time_utc,
+                    "receipt_time": obs.received_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if obs.received_at_utc else None,
+                    "sent_at": obs.sent_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if obs.sent_at_utc else None,
+                    "platform_ms": obs.platform_latency_ms,
+                    "delivery_ms": int(round((now - obs.sent_at_utc).total_seconds() * 1000)) if obs.sent_at_utc else None,
+                })
+                del self.state.recent_latencies[:-10]
             LOG.info(
                 "%s %s %.1fC %s%s",
                 "cached" if cached else "live",

@@ -155,9 +155,9 @@
         </tr></thead><tbody></tbody></table></div>
       </section>
       <section>
-        <h2>Freshness <span class="sub muted" id="fr-sub"></span></h2>
+        <h2>Freshness <span class="sub muted" id="fr-sub"></span><span class="sub" id="fr-latency" style="margin-left:auto" title="METAR.ws platform latency = stream sent_at − source receipt_time, median of the last live reports"></span></h2>
         <div class="scroll"><table id="stream"><thead><tr>
-          <th>Station</th><th>Status</th><th>Schedule</th><th>Last obs (UTC)</th><th class="num">Age</th><th>Next expected</th><th class="num">Lag</th><th>Raw</th>
+          <th>Station</th><th>Status</th><th>Schedule</th><th>Last obs (UTC)</th><th class="num">Age</th><th>Next expected</th><th class="num" title="time from the observation time stamp to METAR.ws receiving the report from its source">Received in</th><th>Raw</th>
         </tr></thead><tbody></tbody></table></div>
         <div id="failed" class="empty" hidden></div>
       </section>
@@ -210,6 +210,7 @@
   const fmt = (v, d=1) => (v === null || v === undefined || Number.isNaN(v)) ? "–" : Number(v).toFixed(d);
   const hhmm = (iso) => iso ? iso.slice(11, 16) + "Z" : "–";
   const age = (s) => s === null || s === undefined ? "–" : s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s/60)}m` : `${(s/3600).toFixed(1)}h`;
+  const dur = (s) => s === null || s === undefined ? "–" : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m ${String(Math.round(s%60)).padStart(2,"0")}s`;
   const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const stateCls = (s) => ({met:"ok", attack:"ok", dead:"bad", flee:"bad", open:"info", standby:"info", metar_unavailable:"warn", premature:"muted", past_target:"muted"}[s] || "muted");
   const srcPill = (src) => src === "body" ? pill("body", "warn") : "";
@@ -294,8 +295,12 @@
       <td class="mono">${esc(s.last_obs_utc||"–")}</td>
       <td class="num">${s.age_min===null||s.age_min===undefined?"–":fmt(s.age_min,0)+"m"}</td>
       <td class="mono muted">${hhmm(s.next_expected_utc)}</td>
-      <td class="num muted">${s.delivery_lag_sec===null||s.delivery_lag_sec===undefined?"–":fmt(s.delivery_lag_sec,0)+"s"}</td>
+      <td class="num muted" title="${esc(s.receipt_time ? "received " + s.receipt_time + (s.sent_at ? " · sent " + s.sent_at + (s.platform_latency_ms !== null && s.platform_latency_ms !== undefined ? " · platform " + s.platform_latency_ms + " ms" : "") : "") : "")}">${s.received_in_sec===null||s.received_in_sec===undefined?"–":dur(s.received_in_sec)}</td>
       <td class="mono raw muted" title="${esc(s.raw||"")}">${esc(s.raw||"")}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">no stations</td></tr>`;
+    const lat = st.latency || {};
+    $("#fr-latency").innerHTML = lat.platform_ms === null || lat.platform_ms === undefined
+      ? `<span class="muted">METAR.ws platform latency: – <span class="muted">(no live report yet)</span></span>`
+      : `METAR.ws platform latency: <b>${esc(lat.platform_ms)} ms</b> <span class="muted">· delivery ${esc(lat.delivery_ms ?? "–")} ms · last ${esc(lat.samples)} report${lat.samples === 1 ? "" : "s"}</span>`;
     const problem = rows.filter(s => s.status !== "ok");
     const shown = problem.length ? problem : rows.slice(0, 12);
     $("#dash-stream tbody").innerHTML = shown.map(s => `<tr><td><b>${esc(s.icao)}</b> <span class="muted">${esc(s.city||"")}</span></td>

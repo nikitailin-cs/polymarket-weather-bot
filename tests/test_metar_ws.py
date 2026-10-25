@@ -417,6 +417,36 @@ class TestTlsContext(unittest.TestCase):
         obs = normalize_publication(CITY_FRAME, {"metar.obs.london": "XXXX"})
         self.assertEqual(obs.icao_id, "EGLL")
 
+    def test_receipt_and_sent_times_give_platform_latency(self):
+        frame = {"type": "publication", "channel": "metar.obs.klga", "cached": False, "sent_at": "2026-10-25T12:53:27.150Z",
+                 "data": {"station": "KLGA", "temp_c": "11", "report_time": "2026-10-25T12:51:00Z", "receipt_time": "2026-10-25T12:53:27.135Z",
+                          "raw": "METAR KLGA 251251Z 33003KT 10SM CLR 11/04 A3056", "report_type": "METAR"}}
+        obs = normalize_publication(frame)
+        self.assertEqual(obs.platform_latency_ms, 15)
+        self.assertEqual(obs.report_type, "METAR")
+        d = obs.to_dict()
+        self.assertEqual(d["platform_latency_ms"], 15)
+        back = MetarObservation.from_dict(d)
+        self.assertEqual(back.platform_latency_ms, 15)
+        self.assertEqual(back.received_at_utc, obs.received_at_utc)
+
+    def test_recent_latencies_only_for_live_frames(self):
+        client = MetarWsClient(MetarWsConfig(api_key="k", forecasts=False))
+        client.set_stations(["KLGA"])
+        live = {"type": "publication", "channel": "metar.obs.klga", "cached": False, "sent_at": "2026-10-25T12:53:27.150Z",
+                "data": {"station": "KLGA", "temp_c": "11", "report_time": "2026-10-25T12:51:00Z", "receipt_time": "2026-10-25T12:53:27.135Z", "raw": "METAR KLGA 251251Z 11/04"}}
+        cached = dict(live, cached=True, data=dict(live["data"], report_time="2026-10-25T11:51:00Z"))
+
+        async def go():
+            await client.handle_message(cached)
+            await client.handle_message(live)
+
+        asyncio.run(go())
+        self.assertEqual(len(client.state.recent_latencies), 1)
+        self.assertEqual(client.state.recent_latencies[0]["platform_ms"], 15)
+        self.assertEqual(client.state.platform_latency_ms(), 15)
+        self.assertIsNotNone(client.state.delivery_latency_ms())
+
 
 if __name__ == "__main__":
     unittest.main()

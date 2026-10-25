@@ -185,6 +185,9 @@ class Daemon:
             "live_observations": self.live_observations,
             "triggers_run": self.triggers_run,
             "station_days_tracked": len(self.days),
+            "recent_latencies": list(st.recent_latencies),
+            "platform_latency_ms": st.platform_latency_ms(),
+            "delivery_latency_ms": st.delivery_latency_ms(),
             "forecast_records": len(self.forecasts),
             "forecasts_received": self.client.forecasts_received,
         }

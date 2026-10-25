@@ -113,6 +113,10 @@ def station_freshness(
         "last_obs_utc": last.strftime("%Y-%m-%dT%H:%M:%SZ") if last else None,
         "age_min": round((now - last).total_seconds() / 60, 1) if last else None,
         "delivery_lag_sec": round((received - last).total_seconds(), 1) if last and received else None,
+        "received_in_sec": round((received - last).total_seconds(), 1) if last and received else None,
+        "receipt_time": obs_row.get("received_at_ms") or obs_row.get("received_at_utc") if obs_row else None,
+        "sent_at": obs_row.get("sent_at_ms") if obs_row else None,
+        "platform_latency_ms": obs_row.get("platform_latency_ms") if obs_row else None,
         "temp_c": obs_row.get("temp_c") if obs_row else None,
         "is_speci": bool(obs_row.get("is_speci")) if obs_row else False,
         "raw": obs_row.get("raw") if obs_row else None,
@@ -152,6 +156,12 @@ def stream_view(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str, 
         "client": client,
         "counts": counts,
         "stations": stations,
+        "latency": {
+            "platform_ms": client.get("platform_latency_ms"),
+            "delivery_ms": client.get("delivery_latency_ms"),
+            "samples": len(client.get("recent_latencies") or []),
+            "recent": client.get("recent_latencies") or [],
+        },
     }
 
 
