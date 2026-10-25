@@ -27,7 +27,7 @@ HAVE_WEBSOCKETS = importlib.util.find_spec("websockets") is not None
 
 FRAME = {
     "type": "publication",
-    "channel": "metar.obs.icao.kord",
+    "channel": "metar.obs.kord",
     "cached": False,
     "data": {
         "icao": "KORD",
@@ -116,7 +116,7 @@ class TestDaemon(unittest.TestCase):
             self.assertIsNotNone(data)
             self.assertEqual(data["client"]["plan"], "pro")
             self.assertEqual(data["stations"]["KORD"]["temp_c"], 23.0)
-            self.assertEqual(data["client"]["wanted_channels"], ["metar.obs.icao.kord"])
+            self.assertEqual(data["client"]["wanted_channels"], ["metar.obs.kord"])
             self.assertEqual(data["client"]["subscribed"], [], "subscriptions are cleared on disconnect")
             self.assertFalse(data["connected"], "final snapshot is written after shutdown")
             day = data["days"]["KORD"]

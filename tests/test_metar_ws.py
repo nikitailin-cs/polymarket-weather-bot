@@ -103,7 +103,9 @@ class TestNormalize(unittest.TestCase):
 
     def test_icao_from_channel(self):
         self.assertEqual(icao_from_channel("metar.obs.icao.lzib"), "LZIB")
+        self.assertEqual(icao_from_channel("metar.obs.klga"), "KLGA")
         self.assertEqual(icao_from_channel("metar.obs.london"), "")
+        self.assertEqual(icao_from_channel("metar.obs.sao-paulo"), "")
         self.assertEqual(icao_from_channel("model.icon.temperature-extrema.icao.lzib"), "")
 
     def test_speci_flag_and_icao_from_raw(self):
@@ -139,7 +141,7 @@ class TestNormalize(unittest.TestCase):
 class TestConfig(unittest.TestCase):
     def test_channel_format_and_map(self):
         cfg = MetarWsConfig(api_key="k", channel_map={"EGLL": "metar.obs.london"})
-        self.assertEqual(cfg.channel_for("knyc"), "metar.obs.icao.knyc")
+        self.assertEqual(cfg.channel_for("knyc"), "metar.obs.knyc")
         self.assertEqual(cfg.channel_for("EGLL"), "metar.obs.london")
         self.assertEqual(cfg.connect_url(), "wss://stream.metar.ws/v1/ws?key=k")
 
@@ -190,9 +192,9 @@ class TestClientFrames(unittest.TestCase):
 
     def test_wanted_channels_follow_stations(self):
         client = self._client([])
-        self.assertEqual(client.wanted_channels(), ["metar.obs.icao.egll", "metar.obs.icao.knyc"])
+        self.assertEqual(client.wanted_channels(), ["metar.obs.egll", "metar.obs.knyc"])
         client.set_stations(["KORD"])
-        self.assertEqual(client.wanted_channels(), ["metar.obs.icao.kord"])
+        self.assertEqual(client.wanted_channels(), ["metar.obs.kord"])
 
 
 class TestSnapshotRegistry(unittest.TestCase):
@@ -373,7 +375,7 @@ class TestEndToEnd(unittest.TestCase):
         self.assertGreaterEqual(connections["n"], 2)
         subs = [e for e in server_log if e[0] == "subscribe"]
         self.assertEqual([s[1] for s in subs][:2], [1, 2])
-        self.assertEqual(subs[0][2], ("metar.obs.icao.knyc",))
+        self.assertEqual(subs[0][2], ("metar.obs.knyc",))
         self.assertIn("key=test-key", server_log[0][2])
 
 

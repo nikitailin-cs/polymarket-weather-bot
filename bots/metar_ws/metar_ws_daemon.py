@@ -80,6 +80,16 @@ def timezones_from_mapping(path: Path) -> dict[str, str]:
     return out
 
 
+def served_stations(path: Optional[Path] = None) -> set[str]:
+    """ICAO codes known to be served by stream.metar.ws (data/metar_ws_stations.json)."""
+    path = path or (_ROOT / "data" / "metar_ws_stations.json")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(k).upper() for k in (data.get("stations") or {})}
+    except (OSError, ValueError, AttributeError):
+        return set()
+
+
 def stations_from_mapping(path: Path) -> set[str]:
     """ICAO codes of every market entry (keys starting with ``_`` are notes)."""
     try:
@@ -245,6 +255,13 @@ class Daemon:
             wanted = set()
         if wanted != self.client.stations:
             LOG.info("stations: %s", ", ".join(sorted(wanted)) or "(none)")
+            known = served_stations()
+            unknown = sorted(wanted - known) if known else []
+            if unknown:
+                LOG.warning(
+                    "not in data/metar_ws_stations.json (check the market's resolution station): %s",
+                    ", ".join(unknown),
+                )
             self.client.set_stations(wanted)
             self._write_snapshot()
 

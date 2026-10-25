@@ -10,21 +10,22 @@ Wire protocol (see METAR.ws ``docs/STREAM-PROTOCOL.md``):
 - ``error`` frames are non-fatal (``channel_limit``, ``permission_denied``,
   ``unknown_station``, ...); the connection stays open.
 
-Two publication payload schemas are accepted:
+Channels are one per resolution station: ``metar.obs.<icao>`` in lower case
+(``metar.obs.klga``, ``metar.obs.eglc``); the served station list with report
+minutes is in ``data/metar_ws_stations.json``. Two payload schemas are accepted:
 
-- station schema ``metar_observation.v1`` (channel ``metar.obs.icao.<icao>``):
-  ``icao``, ``temperature_c`` (number), ``observation_time``, ``raw``,
-  ``dewpoint_c``, ``source_received_at``;
-- legacy city schema (channel ``metar.obs.<city>``): ``location``, ``temp_c``
-  (decimal as string), ``report_time``, ``raw``. ICAO is read from the raw text.
+- station schema ``metar_observation.v1``: ``icao``, ``temperature_c`` (number),
+  ``observation_time``, ``raw``, ``dewpoint_c``, ``source_received_at``;
+- compact schema: ``location``, ``temp_c`` (decimal as string), ``report_time``,
+  ``raw``. ICAO is read from the raw text, else from the channel name.
 
 Environment:
 
 - ``METAR_WS_API_KEY``            API key (``mts_live_...``). Required.
 - ``METAR_WS_URL``                default ``wss://stream.metar.ws/v1/ws``
-- ``METAR_WS_CHANNEL_FORMAT``     default ``metar.obs.icao.{icao}`` (``{icao}`` lower-case)
-- ``METAR_WS_CHANNEL_MAP``        optional JSON ``{"EGLL": "metar.obs.london"}`` overriding
-                                  the format for specific stations (legacy city channels)
+- ``METAR_WS_CHANNEL_FORMAT``     default ``metar.obs.{icao}`` (``{icao}`` lower-case)
+- ``METAR_WS_CHANNEL_MAP``        optional JSON ``{"EGLL": "metar.obs.eglc"}`` overriding
+                                  the format for specific stations
 - ``METAR_WS_CHANNEL_MAP_FILE``   same, from a JSON file
 - ``METAR_WS_RECONNECT_MIN_SEC`` / ``METAR_WS_RECONNECT_MAX_SEC``  backoff bounds (1 / 60)
 - ``METAR_WS_PING_INTERVAL_SEC``  WebSocket keep-alive ping (20)
@@ -38,6 +39,7 @@ import json
 import logging
 import os
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +56,7 @@ from core.metar_observation import (
 LOG = logging.getLogger("metar_ws")
 
 DEFAULT_URL = "wss://stream.metar.ws/v1/ws"
-DEFAULT_CHANNEL_FORMAT = "metar.obs.icao.{icao}"
+DEFAULT_CHANNEL_FORMAT = "metar.obs.{icao}"
 SOURCE_NAME = "metar_ws"
 
 ObservationCallback = Callable[[MetarObservation, bool], Optional[Awaitable[None]]]
@@ -159,14 +161,24 @@ def build_ssl_context(config: "MetarWsConfig") -> Any:
     return ssl.create_default_context(cafile=cafile)
 
 
+_ICAO_RE = re.compile(r"^[A-Z0-9]{4}$")
+
+
 def icao_from_channel(channel: str) -> str:
-    """``metar.obs.icao.knyc`` -> ``KNYC``; city channels yield ``""``."""
+    """
+    ``metar.obs.klga`` -> ``KLGA`` (deployed format), ``metar.obs.icao.lzib`` -> ``LZIB``
+    (spec draft); anything else (city channels such as ``metar.obs.london``) yields ``""``.
+    """
     parts = (channel or "").strip().split(".")
-    if len(parts) >= 4 and parts[0] == "metar" and parts[1] == "obs" and parts[2] == "icao":
+    if len(parts) < 3 or parts[0] != "metar" or parts[1] != "obs":
+        return ""
+    if len(parts) >= 4 and parts[2] == "icao":
         code = parts[3].strip().upper()
-        if len(code) == 4:
-            return code
-    return ""
+    elif len(parts) == 3:
+        code = parts[2].strip().upper()
+    else:
+        return ""
+    return code if _ICAO_RE.match(code) else ""
 
 
 def normalize_publication(
@@ -186,13 +198,13 @@ def normalize_publication(
 
     raw = str(data.get("raw") or data.get("rawOb") or "").strip()
 
-    # station identity: payload field, then ICAO channel, then the raw report text
-    # (authoritative for city channels), and only then the configured channel map
+    # station identity: payload field, then the raw report text (authoritative),
+    # then the channel name (metar.obs.<icao>), and only then the configured channel map
     icao = str(data.get("icao") or data.get("icaoId") or "").strip().upper()
     if not icao:
-        icao = icao_from_channel(channel)
-    if not icao:
         icao = icao_from_raw(raw)
+    if not icao:
+        icao = icao_from_channel(channel)
     if not icao and channel_to_icao:
         icao = channel_to_icao.get(channel, "")
     if not icao:

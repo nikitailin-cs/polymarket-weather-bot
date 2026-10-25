@@ -263,7 +263,7 @@ Variables (dans `.env`, jamais dans l’unité) :
 | `METAR_WS_TRIGGER_CMD` | commande exécutée après chaque rapport **live** (vide = snapshot seul) |
 | `METAR_WS_TRIGGER_DEBOUNCE_SEC` | regroupe une rafale de rapports en un seul cycle (5) |
 | `METAR_WS_SNAPSHOT_MAX_AGE_SEC` | au-delà, le snapshot est considéré périmé → aucune observation (180) |
-| `METAR_WS_CHANNEL_FORMAT` / `METAR_WS_CHANNEL_MAP` | nommage des canaux (`metar.obs.icao.{icao}` par défaut) |
+| `METAR_WS_CHANNEL_FORMAT` / `METAR_WS_CHANNEL_MAP` | nommage des canaux (`metar.obs.{icao}` par défaut, un canal par station de résolution ; liste servie : `data/metar_ws_stations.json`) |
 
 Extrêmes journaliers (`core/station_day_state.py`) :
 
