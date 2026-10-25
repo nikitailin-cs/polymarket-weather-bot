@@ -92,6 +92,10 @@ python bots/metar_ws/run_cycle.py                # or run one cycle by hand: sig
 python -m ui.server                              # dashboard, mode badge shows PAPER
 ```
 
+On Windows, `start_local.bat` opens the daemon (push mode, `run_cycle.py` as the trigger) and the
+dashboard in two console windows and opens the browser; `start_local.bat refresh` refreshes the
+market mapping first; `stop_local.bat` closes them (`daemon` / `ui` to pick one).
+
 Markets are *buckets* ("61°F", "62-63°F", "64°F or higher") that resolve on the
 aviationweather.gov METAR feed for the station named in the market (`ids=` of the resolution
 URL). The mapping carries `threshold_low` / `threshold_high`; the daily extreme follows the
