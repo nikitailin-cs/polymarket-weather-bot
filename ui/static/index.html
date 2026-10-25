@@ -45,6 +45,12 @@
   .gap-pos { color: var(--warn); } .gap-hit { color: var(--ok); font-weight: 600; }
   .filters { margin-left: auto; display: flex; gap: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
   .filters label { cursor: pointer; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+  .tile { background: var(--panel-2); padding: 10px 14px; }
+  .tile .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .tile .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .v.pos { color: var(--ok); } .tile .v.neg { color: var(--bad); }
+  td.wrap { white-space: normal; max-width: 640px; }
   @media (max-width: 800px) { .raw { max-width: 220px; } header { gap: 8px 14px; } }
 </style>
 </head>
@@ -75,6 +81,19 @@
     <div class="scroll"><table id="stations"><thead><tr>
       <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num">Last</th><th>Last report</th>
     </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>History <span class="sub muted" id="hi-sub"></span>
+      <span class="filters tabs">
+        <label><input type="radio" name="htab" value="positions" checked> positions</label>
+        <label><input type="radio" name="htab" value="cycles"> cycles</label>
+        <label><input type="radio" name="htab" value="alerts"> alerts</label>
+        <label><input type="radio" name="htab" value="events"> stream events</label>
+      </span>
+    </h2>
+    <div class="tiles" id="hi-tiles"></div>
+    <div class="scroll"><table id="history"><thead></thead><tbody></tbody></table></div>
   </section>
 
   <section>
@@ -175,6 +194,66 @@
     }).join("") || `<tr><td colspan="14" class="empty">${marketRows.length ? "nothing matches the filters" : "no markets in icao_mapping.json"}</td></tr>`;
   }
 
+  let hist = null;
+  const tile = (l, v, cls="") => `<div class="tile"><div class="l">${esc(l)}</div><div class="v ${cls}">${v}</div></div>`;
+  const usd = (v) => v === null || v === undefined ? "–" : (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
+  const sgn = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
+  const tsShort = (ts) => ts ? ts.replace("T", " ").replace("Z", "") : "–";
+  function renderHistory() {
+    if (!hist) return;
+    const s = hist.summary || {}, bs = s.by_status || {};
+    $("#hi-tiles").innerHTML =
+      tile("open positions", `${bs.OPEN || 0} <span class="muted" style="font-size:13px">$${(s.open_notional_usdc||0).toFixed(2)}</span>`) +
+      tile("resolved / settled", `${bs.RESOLVED || 0} / ${bs.SETTLED || 0}`) +
+      tile("realized pnl", usd(s.realized_pnl_usdc), sgn(s.realized_pnl_usdc)) +
+      tile("today", usd(s.realized_today_usdc), sgn(s.realized_today_usdc)) +
+      tile("win / loss", `${s.wins || 0} / ${s.losses || 0}`) +
+      tile("last ok cycle", hist.minutes_since_ok_cycle === null || hist.minutes_since_ok_cycle === undefined ? "never" : `${Math.round(hist.minutes_since_ok_cycle)}m ago`,
+           hist.minutes_since_ok_cycle > 20 ? "neg" : "");
+    const tab = document.querySelector('input[name="htab"]:checked').value;
+    const thead = $("#history thead"), tbody = $("#history tbody");
+    let head = "", body = "", n = 0;
+    if (tab === "positions") {
+      head = `<tr><th>Opened (UTC)</th><th>Market</th><th>Side</th><th class="num">Price</th><th class="num">Shares</th><th class="num">Cost</th><th class="num">Max payout</th><th>Status</th><th>Settled</th><th class="num">PnL</th></tr>`;
+      const rows = hist.positions || []; n = rows.length;
+      body = rows.map(p => `<tr>
+        <td class="mono">${esc(tsShort(p.opened_at))}</td>
+        <td title="${esc(p.market_id)}">${esc(p.name || p.market_id.slice(0, 14) + "…")}</td>
+        <td>${pill(p.side, p.side === "YES" ? "ok" : "bad")}</td>
+        <td class="num mono">${fmt(p.price, 3)}</td><td class="num mono">${fmt(p.size, 2)}</td>
+        <td class="num mono">${p.notional === null ? "–" : "$" + fmt(p.notional, 2)}</td>
+        <td class="num mono muted">${p.max_payout === null ? "–" : "$" + fmt(p.max_payout, 2)}</td>
+        <td>${pill(p.status, p.status === "OPEN" ? "info" : p.status === "SETTLED" ? "ok" : "warn")}</td>
+        <td class="mono muted">${esc(tsShort(p.settled_at))}</td>
+        <td class="num mono ${sgn(p.pnl)==="pos"?"edge-pos":sgn(p.pnl)==="neg"?"edge-neg":""}">${p.pnl === null ? "–" : usd(p.pnl)}</td></tr>`).join("");
+    } else if (tab === "cycles") {
+      head = `<tr><th>Time (UTC)</th><th>Pipeline</th><th>Signals</th><th>Finance</th><th>Settlement</th><th>Result</th></tr>`;
+      const rows = hist.cycles || []; n = rows.length;
+      const rc = (v, skipped) => skipped ? pill("skipped", "muted") : v === null || v === undefined ? "–" : pill(v === 0 ? "ok" : `rc ${v}`, v === 0 ? "ok" : "bad");
+      body = rows.map(c => `<tr><td class="mono">${esc(tsShort(c.ts))}</td><td class="muted">${esc(c.pipeline)}</td>
+        <td>${rc(c.metar)}</td><td>${rc(c.finance, c.finance_skipped)}</td><td>${rc(c.settlement)}</td>
+        <td>${pill(c.ok ? "ok" : "failed", c.ok ? "ok" : "bad")}</td></tr>`).join("");
+    } else if (tab === "alerts") {
+      head = `<tr><th>Time (UTC)</th><th></th><th>Message</th><th>Telegram</th></tr>`;
+      const rows = hist.alerts || []; n = rows.length;
+      body = rows.map(a => `<tr><td class="mono">${esc(tsShort(a.ts))}</td><td>${esc(a.emoji||"")}</td>
+        <td class="wrap">${esc(a.message||"")}</td><td>${pill(a.sent ? "sent" : "not sent", a.sent ? "ok" : "muted")}</td></tr>`).join("");
+    } else {
+      head = `<tr><th>Time (UTC)</th><th>Kind</th><th>Details</th></tr>`;
+      const rows = hist.events || []; n = rows.length;
+      const det = (e) => e.kind === "observation" ? `<b>${esc(e.icao)}</b> ${fmt(e.temp_c)}°C @ ${esc(e.obs_time||"")}${e.speci ? " " + pill("SPECI","speci") : ""}`
+        : e.kind === "trigger" ? `${esc(e.reason||"")} → rc ${esc(e.rc)} in ${fmt(e.seconds,1)}s`
+        : e.kind === "connected" ? `plan ${esc(e.plan||"")}` : esc(e.error||"");
+      body = rows.map(e => `<tr><td class="mono">${esc(tsShort(e.ts))}</td>
+        <td>${pill(e.kind, e.kind === "connected" ? "ok" : e.kind === "disconnected" ? "bad" : e.kind === "trigger" ? "info" : "muted")}</td>
+        <td class="wrap">${det(e)}</td></tr>`).join("");
+    }
+    thead.innerHTML = head;
+    tbody.innerHTML = body || `<tr><td colspan="10" class="empty">nothing yet</td></tr>`;
+    $("#hi-sub").textContent = `${n} ${tab}`;
+  }
+  document.querySelectorAll('input[name="htab"]').forEach(r => r.addEventListener("change", renderHistory));
+
   async function refresh() {
     try {
       const r = await fetch("/api/overview" + location.search, {cache: "no-store"});
@@ -186,6 +265,8 @@
       $("#sig-age").textContent = age(o.markets.signals_age_sec);
       $("#sig-src").textContent = o.markets.observation_source === "metar_ws" ? "METAR.ws" : "AWC poll";
       renderMarkets();
+      hist = o.history || null;
+      renderHistory();
       $("#updated").textContent = o.now_utc.slice(11, 19) + "Z";
     } catch (e) { $("#updated").textContent = "error"; console.error(e); }
   }

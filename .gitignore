@@ -78,3 +78,4 @@ Untitled
 
 # METAR.ws push snapshot (runtime state)
 data/bots/realtime/metar_ws_latest.json*
+logs/*.jsonl

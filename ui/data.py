@@ -397,8 +397,25 @@ class Dashboard:
         self.prices = prices or GammaPrices()
 
     def watched_files(self) -> list[Path]:
+        from ui.history import ALERTS_FILE, EVENTS_FILE, cycle_log_path, portfolio_path
+
         sig, meta = signals_paths()
-        return [self.snapshot_file, sig, meta, mapping_path()]
+        return [self.snapshot_file, sig, meta, mapping_path(), portfolio_path(), cycle_log_path(), ALERTS_FILE, EVENTS_FILE]
+
+    def history(self, now: Optional[datetime] = None) -> dict[str, Any]:
+        from ui import history as h
+
+        now = now or datetime.now(timezone.utc)
+        mapping = _load_json(mapping_path()) or {}
+        names = {k: str(v.get("name") or "") for k, v in mapping.items() if isinstance(v, dict)} if isinstance(mapping, dict) else {}
+        return h.history_view(
+            positions=h.read_positions(h.portfolio_path()),
+            names=names,
+            cycles=h.parse_cycle_summaries(h._tail_lines(h.cycle_log_path(), 4000)),
+            alerts=h.read_jsonl(h.ALERTS_FILE),
+            events=h.read_jsonl(h.EVENTS_FILE),
+            now=now,
+        )
 
     def stream(self, now: Optional[datetime] = None) -> dict[str, Any]:
         now = now or datetime.now(timezone.utc)
@@ -437,4 +454,5 @@ class Dashboard:
             "stream": self.stream(now),
             "stations": self.stations(now),
             "markets": self.markets(now),
+            "history": self.history(now),
         }

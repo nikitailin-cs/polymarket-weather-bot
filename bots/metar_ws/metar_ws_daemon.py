@@ -39,6 +39,7 @@ from core.metar_observation import MetarObservation, format_utc  # noqa: E402
 from core.metar_ws_client import MetarWsClient, MetarWsConfig  # noqa: E402
 from core.metar_ws_snapshot import build_snapshot, read_snapshot, snapshot_path, write_snapshot_atomic  # noqa: E402
 from core.station_day_state import DayStateTracker  # noqa: E402
+from ui.history import EVENTS_FILE, append_jsonl  # noqa: E402
 
 LOG = logging.getLogger("metar_ws.daemon")
 
@@ -159,6 +160,7 @@ class Daemon:
         self._trigger_pending: Optional[asyncio.Task] = None
         self._trigger_running: Optional[asyncio.subprocess.Process] = None
         self._trigger_rerun = False
+        self._last_connected: Optional[bool] = None
 
     # -- snapshot -----------------------------------------------------------------
 
@@ -194,6 +196,12 @@ class Daemon:
                 self.client.latest.setdefault(str(icao).upper(), obs)
 
     def _write_snapshot(self) -> None:
+        # "connected" is recorded once the ack (plan, limits) is in; the initial disconnected state is not an event
+        connected = self.client.state.connected and bool(self.client.state.plan)
+        if connected != self._last_connected and not (self._last_connected is None and not connected):
+            append_jsonl(EVENTS_FILE, {"kind": "connected" if connected else "disconnected",
+                                       "plan": self.client.state.plan, "error": self.client.state.last_error})
+        self._last_connected = connected
         try:
             payload = build_snapshot(
                 self.client.latest,
@@ -214,6 +222,8 @@ class Daemon:
         if cached:
             return
         self.live_observations += 1
+        append_jsonl(EVENTS_FILE, {"kind": "observation", "icao": obs.icao_id, "temp_c": obs.temp_celsius,
+                                   "obs_time": obs.report_time_utc, "speci": obs.is_speci})
         if not self.trigger_cmd:
             return
         if self.trigger_speci_only and not obs.is_speci:
@@ -251,6 +261,7 @@ class Daemon:
         self._trigger_running = None
         self.triggers_run += 1
         LOG.info("trigger finished rc=%s in %.1fs", rc, time.monotonic() - started)
+        append_jsonl(EVENTS_FILE, {"kind": "trigger", "reason": reason, "rc": rc, "seconds": round(time.monotonic() - started, 1)})
         self._write_snapshot()
 
     # -- station list ---------------------------------------------------------------

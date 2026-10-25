@@ -5,6 +5,8 @@ Configure TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env
 import json
 import os
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 
 try:
     from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
@@ -22,7 +24,32 @@ def _html_escape(text: str, max_len: int = 480) -> str:
     )
 
 
+_ALERTS_LOG = Path(__file__).resolve().parent.parent / "logs" / "alerts.jsonl"
+
+
+def _persist_alert(message: str, emoji: str, sent: bool) -> None:
+    """Local history of every alert (dashboard), whether or not Telegram is configured."""
+    try:
+        _ALERTS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "emoji": emoji,
+            "message": (message or "")[:2000],
+            "sent": bool(sent),
+        }
+        with _ALERTS_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def send_alert(message: str, emoji: str = "🤖") -> bool:
+    sent = _send_telegram(message, emoji)
+    _persist_alert(message, emoji, sent)
+    return sent
+
+
+def _send_telegram(message: str, emoji: str) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"

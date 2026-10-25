@@ -74,7 +74,10 @@ from files the daemon and the RT cycle already write (standard library, no extra
 dependencies): stream health with per-station freshness against the station's scheduled
 report minute, the daily max/min board with SPECI provenance and a sample sparkline, and
 the market table joining `icao_mapping.json`, the RT signals, the daily extreme and the
-Polymarket YES price (Gamma API) into gap, state and edge. Live refresh through
+Polymarket YES price (Gamma API) into gap, state and edge, and a history panel: positions and
+realized PnL from `portfolio_rt.sqlite`, the `update_bot_rt.sh` cycle summaries, every alert
+(now also written to `logs/alerts.jsonl`, Telegram configured or not) and the daemon's
+connection / observation / trigger events (`logs/metar_ws_events.jsonl`). Live refresh through
 Server-Sent Events when the snapshot or the signals change. `UI_TOKEN` is required to bind
 anything but loopback. Nothing in the UI can place or cancel an order.
 

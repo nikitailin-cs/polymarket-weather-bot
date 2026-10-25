@@ -12,6 +12,7 @@ Endpoints:
 - ``GET /api/stream``        connection state and per-station freshness
 - ``GET /api/stations``      daily extremes board
 - ``GET /api/markets``       mapping x signals x daily extreme x Polymarket price
+- ``GET /api/history``       positions + PnL (portfolio_rt.sqlite), cycle summaries, alerts, daemon events
 - ``GET /api/events``        Server-Sent Events: ``change`` whenever a watched file changes
 
 Environment: ``UI_HOST`` (127.0.0.1), ``UI_PORT`` (8765), ``UI_TOKEN`` (optional bearer /
@@ -111,6 +112,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(self.dashboard.stations())
             elif path == "/api/markets":
                 self._send_json(self.dashboard.markets())
+            elif path == "/api/history":
+                self._send_json(self.dashboard.history())
             elif path == "/api/events":
                 self._sse()
             elif path == "/healthz":
