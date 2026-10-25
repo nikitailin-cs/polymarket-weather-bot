@@ -119,6 +119,12 @@ class TestDaemon(unittest.TestCase):
             self.assertEqual(data["client"]["wanted_channels"], ["metar.obs.icao.kord"])
             self.assertEqual(data["client"]["subscribed"], [], "subscriptions are cleared on disconnect")
             self.assertFalse(data["connected"], "final snapshot is written after shutdown")
+            day = data["days"]["KORD"]
+            self.assertEqual(len(day), 1)
+            (st,) = day.values()
+            self.assertEqual(st["timezone"], "UTC")
+            self.assertEqual((st["max_c"], st["min_c"], st["obs_count"]), (23.0, 21.0, 3))
+            self.assertEqual(MetarWsSnapshotRegistry(path=snap, max_age_sec=3600).fetch_day_state("KORD", st["local_date"]).max_c, 23.0)
 
             # the bridge the producers use reads it back (allow the big age so the test is time-independent)
             reg = MetarWsSnapshotRegistry(path=snap, max_age_sec=3600, obs_max_age_sec=0)

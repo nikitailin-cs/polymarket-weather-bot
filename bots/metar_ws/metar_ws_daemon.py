@@ -37,7 +37,8 @@ if str(_ROOT) not in sys.path:
 
 from core.metar_observation import MetarObservation, format_utc  # noqa: E402
 from core.metar_ws_client import MetarWsClient, MetarWsConfig  # noqa: E402
-from core.metar_ws_snapshot import build_snapshot, snapshot_path, write_snapshot_atomic  # noqa: E402
+from core.metar_ws_snapshot import build_snapshot, read_snapshot, snapshot_path, write_snapshot_atomic  # noqa: E402
+from core.station_day_state import DayStateTracker  # noqa: E402
 
 LOG = logging.getLogger("metar_ws.daemon")
 
@@ -58,6 +59,25 @@ def mapping_path_for_pipeline(pipeline: str) -> Path:
     from core.bot2_data_paths import get_rt_paths
 
     return get_rt_paths()["mapping"]
+
+
+def timezones_from_mapping(path: Path) -> dict[str, str]:
+    """ICAO -> IANA timezone from the mapping entries (first non-empty value wins)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, str] = {}
+    if not isinstance(data, dict):
+        return out
+    for key, cfg in data.items():
+        if not isinstance(key, str) or key.startswith("_") or not isinstance(cfg, dict):
+            continue
+        icao = str(cfg.get("icao") or "").strip().upper()
+        tz = str(cfg.get("timezone") or "").strip()
+        if len(icao) == 4 and tz and icao not in out:
+            out[icao] = tz
+    return out
 
 
 def stations_from_mapping(path: Path) -> set[str]:
@@ -110,6 +130,9 @@ class Daemon:
             on_observation=self._on_observation,
             on_state_change=self._write_snapshot,
         )
+        self._tz_by_icao: dict[str, str] = {}
+        self.days = DayStateTracker(lambda icao: self._tz_by_icao.get(icao, "UTC"), keep_days=3)
+        self._restore_days()
         self.live_observations = 0
         self.triggers_run = 0
         self._trigger_pending: Optional[asyncio.Task] = None
@@ -133,7 +156,21 @@ class Daemon:
             "last_error": st.last_error,
             "live_observations": self.live_observations,
             "triggers_run": self.triggers_run,
+            "station_days_tracked": len(self.days),
         }
+
+    def _restore_days(self) -> None:
+        snap = read_snapshot(self.snapshot_file)
+        if snap is None:
+            return
+        n = self.days.restore(snap.get("days"))
+        if n:
+            LOG.info("restored %s station-day state(s) from %s", n, self.snapshot_file)
+        # seed the latest-observation cache too, so a restart is not blind until the first frame
+        for icao, row in snap.get("stations", {}).items():
+            obs = MetarObservation.from_dict(row) if isinstance(row, dict) else None
+            if obs is not None:
+                self.client.latest.setdefault(str(icao).upper(), obs)
 
     def _write_snapshot(self) -> None:
         try:
@@ -141,6 +178,7 @@ class Daemon:
                 self.client.latest,
                 connected=self.client.state.connected,
                 state=self._client_state(),
+                days=self.days.to_dict(),
             )
             write_snapshot_atomic(self.snapshot_file, payload)
         except OSError as e:
@@ -149,6 +187,8 @@ class Daemon:
     # -- observations -------------------------------------------------------------
 
     async def _on_observation(self, obs: MetarObservation, cached: bool) -> None:
+        st = self.days.ingest(obs)
+        LOG.debug("%s %s day max=%s min=%s n=%s", obs.icao_id, st.local_date, st.max_c, st.min_c, st.obs_count)
         self._write_snapshot()
         if cached:
             return
@@ -195,6 +235,8 @@ class Daemon:
     # -- station list ---------------------------------------------------------------
 
     def _refresh_stations(self) -> None:
+        if self.mapping_path is not None:
+            self._tz_by_icao.update(timezones_from_mapping(self.mapping_path))
         if self.fixed_stations is not None:
             wanted = set(self.fixed_stations)
         elif self.mapping_path is not None:
@@ -222,6 +264,7 @@ class Daemon:
                 self._refresh_stations()
             if now >= next_beat:
                 next_beat = now + self.heartbeat_sec
+                self.days.prune()
                 self._write_snapshot()
 
     # -- main ---------------------------------------------------------------------
@@ -264,7 +307,7 @@ async def _amain(args: argparse.Namespace) -> int:
     if args.stations:
         fixed = {s.strip().upper() for s in args.stations.split(",") if s.strip()}
     daemon = Daemon(
-        mapping_path=None if fixed is not None else mapping_path_for_pipeline(pipeline),
+        mapping_path=mapping_path_for_pipeline(pipeline),
         fixed_stations=fixed,
         trigger_cmd=(os.getenv("METAR_WS_TRIGGER_CMD") or "") if not args.no_trigger else "",
         trigger_debounce_sec=_env_float("METAR_WS_TRIGGER_DEBOUNCE_SEC", 5.0),

@@ -66,6 +66,7 @@ def build_snapshot(
     connected: bool,
     state: Optional[dict[str, Any]] = None,
     now: Optional[datetime] = None,
+    days: Optional[dict[str, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     stations = {icao: obs.to_dict() for icao, obs in sorted(latest.items())}
@@ -74,6 +75,7 @@ def build_snapshot(
         "generated_at_utc": format_utc(now),
         "connected": bool(connected),
         "stations": stations,
+        "days": days or {},
     }
     if state:
         payload["client"] = state
@@ -155,6 +157,23 @@ class MetarWsSnapshotRegistry:
                 continue
             out[str(icao).upper()] = obs
         return out
+
+    def fetch_day_state(self, icao: str, local_day: Any):
+        """
+        Running daily extremes for ``icao`` on ``local_day`` (``date`` or ``YYYY-MM-DD``),
+        or ``None`` when the snapshot is missing/stale or the day is unknown.
+        """
+        from core.station_day_state import day_state_from_snapshot
+
+        snap = read_snapshot(self.path)
+        if snap is None:
+            self.last_status = "missing"
+            return None
+        gen = parse_utc(snap.get("generated_at_utc"))
+        if gen is None or (self._now() - gen).total_seconds() > self.max_age_sec:
+            self.last_status = "stale"
+            return None
+        return day_state_from_snapshot(snap, icao, local_day)
 
     # -- bot1 interface ---------------------------------------------------------
 

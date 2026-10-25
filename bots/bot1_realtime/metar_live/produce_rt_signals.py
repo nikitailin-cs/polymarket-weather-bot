@@ -41,11 +41,11 @@ from core.bot1_realtime_data_paths import (  # noqa: E402
     realtime_signals_path,
 )
 from bots.bot1_realtime.metar_live.realtime_metar_registry import (  # noqa: E402
-    RealTimeMetarRegistry,
     temp_celsius_to_contract_unit,
     utc_observation_to_local,
 )
 from core.metar_source import get_metar_registry, selected_source  # noqa: E402
+from core.rt_daily_extrema import decide_extrema  # noqa: E402
 
 LOG = logging.getLogger("produce_rt_signals")
 
@@ -239,8 +239,26 @@ def main() -> int:
             errors[market_id] = f"pas de METAR avec temp pour {icao}"
             continue
 
+        tz_early = str(spec.get("timezone") or "UTC").strip() or "UTC"
+        weather_var = str(spec.get("weather_variable") or "temp_max").strip().lower()
+        day_state = None
+        if weather_var in ("temp_max", "temp_min"):
+            fetch_ds = getattr(registry, "fetch_day_state", None)
+            if fetch_ds is not None:
+                try:
+                    day_state = fetch_ds(icao, _local_now(tz_early).date())
+                except Exception as e:  # noqa: BLE001
+                    LOG.warning("day state unavailable for %s: %s", icao, e)
+        extreme_c = None
+        if day_state is not None and int(getattr(day_state, "obs_count", 0) or 0) > 0:
+            extreme_c = day_state.min_c if weather_var == "temp_min" else day_state.max_c
+        source_c = obs.temp_celsius if extreme_c is None else float(extreme_c)
+        observation_model = (
+            "instant_metar" if extreme_c is None else ("daily_min" if weather_var == "temp_min" else "daily_max")
+        )
+
         try:
-            temp_contract = temp_celsius_to_contract_unit(obs.temp_celsius, unit)
+            temp_contract = temp_celsius_to_contract_unit(source_c, unit)
         except ValueError as e:
             errors[market_id] = str(e)
             continue
@@ -249,13 +267,28 @@ def main() -> int:
         tz = str(spec.get("timezone") or "UTC").strip() or "UTC"
         deadline = str(spec.get("deadline_local_hhmm") or default_deadline).strip()
 
-        p_win, binary_state, gap_unmet = _sniper_p_win(
-            temp_contract=temp_contract,
-            threshold=threshold,
-            above=above,
-            tz_name=tz,
-            deadline_hhmm=deadline,
-        )
+        if extreme_c is not None:
+            # monotonic daily extreme: terminal-aware decision instead of the instant heuristic
+            d = decide_extrema(
+                variable=weather_var,
+                yes_if_above=above,
+                threshold=threshold,
+                extreme_value=temp_contract,
+                local_now=_local_now(tz),
+                deadline_hhmm=deadline,
+                dead_min_gap=float(spec.get("dead_min_gap", 15) or 15),
+            )
+            p_win = d.p_win
+            binary_state = {"met": "attack", "dead": "flee", "open": "standby"}[d.binary_state]
+            gap_unmet = abs(threshold - temp_contract) if binary_state != "attack" else 0.0
+        else:
+            p_win, binary_state, gap_unmet = _sniper_p_win(
+                temp_contract=temp_contract,
+                threshold=threshold,
+                above=above,
+                tz_name=tz,
+                deadline_hhmm=deadline,
+            )
         # Scalping YES uniquement si p_win=1.0 ; 0.5 = neutre (pas d’achat), 0.0 = mort
         recommended_side = "YES" if p_win >= 1.0 - 1e-9 else "NO"
         fc = obs.report_time_utc.strip() or cycle_stamp
@@ -274,6 +307,10 @@ def main() -> int:
                 "binary_state": binary_state,
                 "gap_to_threshold": round(gap_unmet, 2) if binary_state != "attack" else 0.0,
                 "metar_is_speci": obs.is_speci,
+                "observation_model": observation_model,
+                "instant_temp_c": obs.temp_celsius,
+                "day_extreme_c": extreme_c,
+                "day_obs_count": day_state.obs_count if day_state is not None else None,
                 "observation_utc": obs.observation_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "observation_local": obs_local.isoformat(timespec="seconds"),
             }

@@ -265,6 +265,18 @@ Variables (dans `.env`, jamais dans l’unité) :
 | `METAR_WS_SNAPSHOT_MAX_AGE_SEC` | au-delà, le snapshot est considéré périmé → aucune observation (180) |
 | `METAR_WS_CHANNEL_FORMAT` / `METAR_WS_CHANNEL_MAP` | nommage des canaux (`metar.obs.icao.{icao}` par défaut) |
 
+Extrêmes journaliers (`core/station_day_state.py`) :
+
+Le daemon maintient pour chaque station le **max/min du jour local** (fuseau `timezone` du
+mapping) à partir de tous les METAR **et SPECI** reçus : groupe `RMK T` au dixième quand il
+est présent, groupes 6 h `1sTTT/2sTTT` appliqués seulement si la fenêtre reste dans le même
+jour local, groupe 24 h `4sTTTsTTT` conservé pour audit. Les états sont persistés dans le
+snapshot (`days`) et restaurés au redémarrage. Avec `METAR_SOURCE=metar_ws`, les producteurs
+bot1/bot2 décident les marchés `temp_max` / `temp_min` sur cet extrême
+(`resolution_model=metar_ws_daily_extrema`, `core/rt_daily_extrema.py`) : un seuil franchi
+par le max est définitif (`met`), un marché « reste sous » n’est gagné qu’en fin de journée,
+et il est `dead` dès que le max dépasse le seuil. Sans état du jour, retour au METAR instantané.
+
 Modes :
 
 - **Push complet** : daemon avec `METAR_WS_TRIGGER_CMD` → désactiver le timer

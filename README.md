@@ -61,6 +61,12 @@ also fire `update_bot_rt.sh` on each live report (`METAR_WS_TRIGGER_CMD`), turni
 timer-driven cycle into an event-driven one. Setup: `deploy/systemd/README.md`
 (section *METAR.ws push*). Default stays `METAR_SOURCE=awc`.
 
+The daemon also keeps each station's **daily max/min over its local day** from every METAR
+and SPECI (`core/station_day_state.py`), persisted in the snapshot. With `METAR_SOURCE=metar_ws`
+the `temp_max` / `temp_min` signals of both RT bots are decided on that running extreme instead
+of the instantaneous reading (`core/rt_daily_extrema.py`): a max that crossed the threshold is
+final, a "stays below" market only wins at end of day, and it dies the moment the max crosses.
+
 ## 🧠 The edge: why this bot is different
 
 Most open-source Polymarket weather bots stop at the National Weather Service or Open-Meteo. Those sources are fine for casual use, but two structural limits make them weak as a trading edge:

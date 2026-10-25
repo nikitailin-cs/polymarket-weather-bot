@@ -39,9 +39,9 @@ from core.rt_polymarket_alignment import (  # noqa: E402
 )
 from core.rt_range_policy import narrow_range_scalp_day  # noqa: E402
 from core.rt_signal_health import summarize_signals_health  # noqa: E402
-from bots.bot2_realtime.metar_live.realtime_metar_registry import RealTimeMetarRegistry  # noqa: E402
 from monitoring.error_guard import run_guarded  # noqa: E402
 from core.metar_source import get_metar_registry  # noqa: E402
+from core.rt_daily_extrema import RESOLUTION_MODEL_DAILY_EXTREMA, decide_extrema  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,8 +74,57 @@ def check_if_dead(
         return False
 
 
-def _observation_note(weather_var: str) -> str:
+def _fetch_day_state(registry: Any, icao: str, local_d: Any, weather_var: str) -> Any:
+    """Running daily extremes from the METAR.ws snapshot registry (None for AWC polling)."""
+    if weather_var not in ("temp_max", "temp_min"):
+        return None
+    fetch = getattr(registry, "fetch_day_state", None)
+    if fetch is None:
+        return None
+    try:
+        return fetch(icao, local_d)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("day state unavailable for %s: %s", icao, e)
+        return None
+
+
+def _day_extreme(state: Any, weather_var: str, unit: str) -> Optional[dict[str, Any]]:
+    """Today's max (or min) in the contract unit, with provenance, or None."""
+    if state is None or int(getattr(state, "obs_count", 0) or 0) <= 0:
+        return None
+    if weather_var == "temp_min":
+        value_c, t, src, raw = state.min_c, state.min_time_utc, state.min_source, state.min_raw
+    else:
+        value_c, t, src, raw = state.max_c, state.max_time_utc, state.max_source, state.max_raw
+    if value_c is None:
+        return None
+    if unit in ("F", "FAHRENHEIT"):
+        value = round(float(value_c) * 9.0 / 5.0 + 32.0, 1)
+    else:
+        value = round(float(value_c), 1)
+    return {
+        "kind": weather_var,
+        "value": value,
+        "value_c": float(value_c),
+        "time_utc": t,
+        "source": src,
+        "is_speci": src == "speci",
+        "raw": raw,
+        "local_date": state.local_date,
+        "timezone": state.timezone,
+        "obs_count": state.obs_count,
+        "speci_count": state.speci_count,
+        "last_temp_c": state.last_temp_c,
+    }
+
+
+def _observation_note(weather_var: str, *, use_extrema: bool = False) -> str:
     v = (weather_var or "temp_max").strip().lower()
+    if use_extrema:
+        return (
+            "Daily extreme built from the METAR.ws push stream (every METAR and SPECI, station local day). "
+            "Still verify the market official resolution source and rounding."
+        )
     if v == "temp_max":
         return (
             "METAR = température instantanée ; si le marché vise un max journalier officiel, "
@@ -250,7 +299,9 @@ def run_realtime_signals() -> None:
             continue
 
         metar_data = registry.fetch_latest_metar(icao)
-        if not metar_data:
+        day_state = _fetch_day_state(registry, icao, local_d, weather_var)
+        extreme = _day_extreme(day_state, weather_var, unit)
+        if not metar_data and extreme is None:
             logger.warning("Pas de METAR pour %s (%s) — metar_unavailable", market_id, icao)
             sig_row = {
                 "p_win": 0.5,
@@ -277,10 +328,18 @@ def run_realtime_signals() -> None:
             processed += 1
             continue
 
-        if unit in ("F", "FAHRENHEIT"):
-            current_temp = float(metar_data["temp_f"])
-        else:
-            current_temp = float(metar_data["temp_c"])
+        instant_temp: Optional[float] = None
+        if metar_data:
+            if unit in ("F", "FAHRENHEIT"):
+                instant_temp = float(metar_data["temp_f"])
+            else:
+                instant_temp = float(metar_data["temp_c"])
+        # Daily-extreme markets decide on the running max/min of the station's local day
+        # (METAR.ws push), falling back to the instantaneous METAR when no day state exists.
+        current_temp = float(extreme["value"]) if extreme is not None else float(instant_temp)
+        resolution_model = (
+            RESOLUTION_MODEL_DAILY_EXTREMA if extreme is not None else SIGNAL_RESOLUTION_MODEL_INSTANT_METAR
+        )
 
         p_win = 0.5
         binary_state = "open"
@@ -313,7 +372,18 @@ def run_realtime_signals() -> None:
 
         else:
             rt_day_guard = "jour_j"
-            if is_above and current_temp >= threshold:
+            if extreme is not None:
+                decision = decide_extrema(
+                    variable=weather_var,
+                    yes_if_above=is_above,
+                    threshold=threshold,
+                    extreme_value=current_temp,
+                    local_now=current_local_time,
+                    deadline_hhmm=deadline_str,
+                    dead_min_gap=dead_gap,
+                )
+                p_win, binary_state = decision.p_win, decision.binary_state
+            elif is_above and current_temp >= threshold:
                 p_win = 1.0
                 binary_state = "met"
             elif not is_above and current_temp < threshold:
@@ -341,7 +411,9 @@ def run_realtime_signals() -> None:
             "recommended_side": rec_side,
             "binary_state": binary_state,
             "current_obs_temp": current_temp,
-            "raw_metar": metar_data.get("rawOb"),
+            "instant_obs_temp": instant_temp,
+            "day_extreme": extreme,
+            "raw_metar": metar_data.get("rawOb") if metar_data else (extreme or {}).get("raw"),
             "obs_time_local": current_local_time.strftime("%Y-%m-%d %H:%M:%S"),
             "target_date": target_date_raw,
             "local_date": local_d.isoformat(),
@@ -349,8 +421,8 @@ def run_realtime_signals() -> None:
             "weather_variable": weather_var,
             "metar_interpretation": alignment.interpretation.value,
             "alignment_disclaimer": alignment.disclaimer,
-            "resolution_model": SIGNAL_RESOLUTION_MODEL_INSTANT_METAR,
-            "observation_note": _observation_note(weather_var),
+            "resolution_model": resolution_model,
+            "observation_note": _observation_note(weather_var, use_extrema=extreme is not None),
         }
         if has_range:
             sig_row["target_date_start"] = target_date_start
