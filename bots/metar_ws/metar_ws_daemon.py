@@ -38,6 +38,7 @@ if str(_ROOT) not in sys.path:
 from core.metar_observation import MetarObservation, format_utc  # noqa: E402
 from core.metar_ws_client import MetarWsClient, MetarWsConfig  # noqa: E402
 from core.metar_ws_snapshot import build_snapshot, read_snapshot, snapshot_path, write_snapshot_atomic  # noqa: E402
+from core.forecast_state import ForecastRecord, ForecastTracker  # noqa: E402
 from core.station_day_state import DayStateTracker  # noqa: E402
 from ui.history import EVENTS_FILE, append_jsonl  # noqa: E402
 
@@ -152,7 +153,9 @@ class Daemon:
             self.config,
             on_observation=self._on_observation,
             on_state_change=self._write_snapshot,
+            on_forecast=self._on_forecast,
         )
+        self.forecasts = ForecastTracker()
         self._tz_by_icao: dict[str, str] = {}
         self._served_tz = served_timezones()
         self.days = DayStateTracker(lambda icao: self._tz_by_icao.get(icao) or self._served_tz.get(icao, "UTC"), keep_days=3)
@@ -182,6 +185,8 @@ class Daemon:
             "live_observations": self.live_observations,
             "triggers_run": self.triggers_run,
             "station_days_tracked": len(self.days),
+            "forecast_records": len(self.forecasts),
+            "forecasts_received": self.client.forecasts_received,
         }
 
     def _restore_days(self) -> None:
@@ -191,6 +196,9 @@ class Daemon:
         n = self.days.restore(snap.get("days"))
         if n:
             LOG.info("restored %s station-day state(s) from %s", n, self.snapshot_file)
+        nf = self.forecasts.restore(snap.get("forecasts"))
+        if nf:
+            LOG.info("restored %s forecast record(s)", nf)
         # seed the latest-observation cache too, so a restart is not blind until the first frame
         for icao, row in snap.get("stations", {}).items():
             obs = MetarObservation.from_dict(row) if isinstance(row, dict) else None
@@ -210,12 +218,20 @@ class Daemon:
                 connected=self.client.state.connected,
                 state=self._client_state(),
                 days=self.days.to_dict(),
+                forecasts=self.forecasts.to_dict(),
             )
             write_snapshot_atomic(self.snapshot_file, payload)
         except OSError as e:
             LOG.error("snapshot write failed (%s): %s", self.snapshot_file, e)
 
     # -- observations -------------------------------------------------------------
+
+    async def _on_forecast(self, rec: ForecastRecord, cached: bool) -> None:
+        if self.forecasts.ingest(rec):
+            self._write_snapshot()
+            if not cached:
+                append_jsonl(self.events_file, {"kind": "forecast", "icao": rec.station, "model": rec.model, "local_date": rec.local_date,
+                                               "temp_max_c": rec.temp_max_c, "temp_min_c": rec.temp_min_c, "run_utc": rec.run_utc.strftime("%Y-%m-%dT%H:%M:%SZ")})
 
     async def _on_observation(self, obs: MetarObservation, cached: bool) -> None:
         st = self.days.ingest(obs)
@@ -306,6 +322,7 @@ class Daemon:
             if now >= next_beat:
                 next_beat = now + self.heartbeat_sec
                 self.days.prune()
+                self.forecasts.prune()
                 self._write_snapshot()
 
     # -- main ---------------------------------------------------------------------

@@ -67,6 +67,7 @@ def build_snapshot(
     state: Optional[dict[str, Any]] = None,
     now: Optional[datetime] = None,
     days: Optional[dict[str, dict[str, Any]]] = None,
+    forecasts: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     stations = {icao: obs.to_dict() for icao, obs in sorted(latest.items())}
@@ -76,6 +77,7 @@ def build_snapshot(
         "connected": bool(connected),
         "stations": stations,
         "days": days or {},
+        "forecasts": forecasts or {},
     }
     if state:
         payload["client"] = state
@@ -174,6 +176,18 @@ class MetarWsSnapshotRegistry:
             self.last_status = "stale"
             return None
         return day_state_from_snapshot(snap, icao, local_day)
+
+    def fetch_forecasts(self, icao: str, local_day: Any) -> dict[str, Any]:
+        """Latest model forecasts for ``icao`` on ``local_day`` (model -> ForecastRecord); {} when stale/missing."""
+        from core.forecast_state import forecasts_from_snapshot
+
+        snap = read_snapshot(self.path)
+        if snap is None:
+            return {}
+        gen = parse_utc(snap.get("generated_at_utc"))
+        if gen is None or (self._now() - gen).total_seconds() > self.max_age_sec:
+            return {}
+        return forecasts_from_snapshot(snap, icao, local_day)
 
     # -- bot1 interface ---------------------------------------------------------
 

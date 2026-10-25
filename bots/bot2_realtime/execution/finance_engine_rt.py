@@ -109,6 +109,8 @@ class BinaryTarget:
 
     market_id: str
     outcome_side: str  # "YES" ou "NO"
+    p_win: float = 1.0  # probabilité estimée de l'outcome acheté (1.0 pour met/dead)
+    kind: str = "binary"  # binary | prob
 
 
 @dataclass(frozen=True)
@@ -266,6 +268,46 @@ def filter_binary_targets(signals: dict[str, Any]) -> list[BinaryTarget]:
             continue
 
     return out
+
+
+def _prob_trading_enabled() -> bool:
+    return (os.getenv("FINANCE_RT_PROB_TRADING") or "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _prob_min_edge() -> float:
+    try:
+        return float(os.getenv("FINANCE_RT_PROB_MIN_EDGE", "0.08"))
+    except ValueError:
+        return 0.08
+
+
+def filter_prob_targets(signals: dict[str, Any]) -> list[BinaryTarget]:
+    """
+    Cibles probabilistes (``FINANCE_RT_PROB_TRADING=1``) : marchés ``open`` avec ``p_model``
+    (prévisions METAR.ws conditionnées par l'extrême observé). Côté YES si p >= 0.5 sinon NO ;
+    le filtre d'edge (p - best ask) est appliqué à l'analyse L2. Triées par confiance.
+    """
+    out: list[BinaryTarget] = []
+    for market_id, row in signals.items():
+        if not isinstance(market_id, str) or market_id.startswith("_") or not isinstance(row, dict):
+            continue
+        if str(row.get("binary_state", "")).strip().lower() != "open":
+            continue
+        p = row.get("p_model")
+        if not isinstance(p, (int, float)):
+            continue
+        p = float(p)
+        side = "YES" if p >= 0.5 else "NO"
+        conf = p if side == "YES" else 1.0 - p
+        if conf < 0.5 + _prob_min_edge():
+            continue  # even a free fill could not clear the edge threshold
+        out.append(BinaryTarget(market_id=market_id.strip(), outcome_side=side, p_win=conf, kind="prob"))
+    out.sort(key=lambda t: -t.p_win)
+    try:
+        cap = int(os.getenv("FINANCE_RT_MAX_PROB_TARGETS", "15"))
+    except ValueError:
+        cap = 15
+    return out[:cap] if cap > 0 else out
 
 
 def _mapping_by_market_id(paths: dict[str, Path]) -> dict[str, dict[str, Any]]:
@@ -469,6 +511,13 @@ def analyze_l2_for_targets(targets: list[BinaryTarget]) -> list[L2BookSnapshot]:
             continue
 
         ok = best <= cap + 1e-9
+        if ok and t.kind == "prob":
+            edge = t.p_win - best
+            ok = edge >= _prob_min_edge() - 1e-9
+            LOG.info(
+                "L2: prob target p=%.3f best ask=%.4f edge=%+.3f %s (outcome=%s) market=%s…",
+                t.p_win, best, edge, "OK" if ok else "SKIP (edge < min)", t.outcome_side, t.market_id[:20],
+            )
         if not ok:
             LOG.info(
                 "L2: SKIP rentabilité — best ask=%.4f > plafond FINANCE_RT_MAX_BEST_ASK_USDC=%.4f "
@@ -754,6 +803,10 @@ def main() -> int:
         return 1
 
     targets = filter_binary_targets(signals)
+    if _prob_trading_enabled():
+        prob_targets = filter_prob_targets(signals)
+        LOG.info("Cibles probabilistes: %s (FINANCE_RT_PROB_TRADING, edge min %.2f)", len(prob_targets), _prob_min_edge())
+        targets.extend(prob_targets)
     if not targets:
         LOG.info(
             "Filtre binaire: aucune cible (p_win 1.0/met ou 0.0/dead) — rien à exécuter."
@@ -765,7 +818,7 @@ def main() -> int:
         max_targets = int(os.getenv("FINANCE_RT_MAX_TARGETS_PER_CYCLE", "40"))
     except ValueError:
         max_targets = 40
-    targets.sort(key=lambda t: 0 if t.outcome_side == "YES" else 1)
+    targets.sort(key=lambda t: (0 if t.kind == "binary" and t.outcome_side == "YES" else 1 if t.kind == "prob" else 2, -t.p_win))
     if max_targets > 0 and len(targets) > max_targets:
         LOG.info("Filtre binaire: %s cibles, limitées à %s (FINANCE_RT_MAX_TARGETS_PER_CYCLE)", len(targets), max_targets)
         targets = targets[:max_targets]

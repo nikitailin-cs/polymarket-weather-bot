@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional
 from urllib.parse import urlencode
 
+from core.forecast_state import ForecastRecord, forecast_channel_tier, normalize_forecast_publication
 from core.metar_observation import (
     MetarObservation,
     icao_from_raw,
@@ -61,6 +62,8 @@ DEFAULT_CHANNEL_FORMAT = "metar.obs.{icao}"
 SOURCE_NAME = "metar_ws"
 
 ObservationCallback = Callable[[MetarObservation, bool], Optional[Awaitable[None]]]
+ForecastCallback = Callable[[ForecastRecord, bool], Optional[Awaitable[None]]]
+FORECAST_CHANNEL_FORMATS = ("metar.forecast.basic.{icao}", "metar.forecast.hires.{icao}")
 StateCallback = Callable[[], Optional[Awaitable[None]]]
 
 
@@ -105,11 +108,13 @@ class MetarWsConfig:
     ping_interval_sec: float = 20.0
     ssl_verify: bool = True
     ca_bundle: str = ""
+    forecasts: bool = True  # also subscribe to metar.forecast.basic/hires.<icao>
 
     @classmethod
     def from_env(cls) -> "MetarWsConfig":
         return cls(
             ca_bundle=(os.getenv("METAR_WS_CA_BUNDLE") or "").strip(),
+            forecasts=(os.getenv("METAR_WS_FORECASTS", "1").strip() != "0"),
             api_key=(os.getenv("METAR_WS_API_KEY") or "").strip(),
             url=(os.getenv("METAR_WS_URL") or DEFAULT_URL).strip() or DEFAULT_URL,
             channel_format=(os.getenv("METAR_WS_CHANNEL_FORMAT") or DEFAULT_CHANNEL_FORMAT).strip()
@@ -126,6 +131,10 @@ class MetarWsConfig:
         if code in self.channel_map:
             return self.channel_map[code]
         return self.channel_format.format(icao=code.lower(), ICAO=code)
+
+    def forecast_channels_for(self, icao: str) -> list[str]:
+        code = (icao or "").strip().lower()
+        return [f.format(icao=code) for f in FORECAST_CHANNEL_FORMATS] if self.forecasts and code else []
 
     def connect_url(self) -> str:
         sep = "&" if "?" in self.url else "?"
@@ -290,14 +299,18 @@ class MetarWsClient:
         *,
         on_observation: Optional[ObservationCallback] = None,
         on_state_change: Optional[StateCallback] = None,
+        on_forecast: Optional[ForecastCallback] = None,
     ) -> None:
         self.config = config or MetarWsConfig.from_env()
         self.on_observation = on_observation
+        self.on_forecast = on_forecast
+        self.forecasts_received = 0
         self.on_state_change = on_state_change
         self.latest: dict[str, MetarObservation] = {}
         self.state = ClientState()
         self._stations: set[str] = set()
         self._channel_to_icao: dict[str, str] = {}
+        self._forecast_channels: list[str] = []
         self._seen: set[tuple[str, str, str]] = set()
         self._stop = asyncio.Event()
         self._resubscribe = asyncio.Event()
@@ -314,10 +327,11 @@ class MetarWsClient:
             return
         self._stations = wanted
         self._channel_to_icao = {self.config.channel_for(i): i for i in wanted}
+        self._forecast_channels = sorted(c for i in wanted for c in self.config.forecast_channels_for(i))
         self._resubscribe.set()
 
     def wanted_channels(self) -> list[str]:
-        return sorted(self._channel_to_icao.keys())
+        return sorted(self._channel_to_icao.keys()) + list(self._forecast_channels)
 
     def stop(self) -> None:
         self._stop.set()
@@ -433,6 +447,19 @@ class MetarWsClient:
     async def handle_message(self, msg: dict[str, Any]) -> None:
         """Dispatch one decoded server frame (public for tests)."""
         mtype = msg.get("type")
+        if mtype == "publication" and forecast_channel_tier(str(msg.get("channel") or "")):
+            rec = normalize_forecast_publication(msg)
+            if rec is None:
+                return
+            self.forecasts_received += 1
+            cached = bool(msg.get("cached", False))
+            LOG.info("%s forecast %s %s %s max=%s min=%s run=%s%s", "cached" if cached else "live", rec.station, rec.local_date,
+                     rec.model, rec.temp_max_c, rec.temp_min_c, rec.run_utc.strftime("%dT%HZ"), "" if rec.complete else " (partial)")
+            if self.on_forecast is not None:
+                res = self.on_forecast(rec, cached)
+                if asyncio.iscoroutine(res):
+                    await res
+            return
         if mtype == "publication":
             obs = normalize_publication(msg, self._channel_to_icao)
             if obs is None:

@@ -168,6 +168,7 @@ def station_board(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str
     if snapshot is None:
         return []
     days = snapshot.get("days") or {}
+    forecasts = snapshot.get("forecasts") or {}
     rows: list[dict[str, Any]] = []
     for icao in sorted(set(days) | set(snapshot.get("stations", {}).keys())):
         by_day = days.get(icao) or {}
@@ -192,6 +193,7 @@ def station_board(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str
             "last_raw": latest_obs.get("raw"),
             "last_is_speci": bool(latest_obs.get("is_speci")),
             "day": None,
+            "forecast": _forecast_summary((forecasts.get(icao) or {}).get(today) or {}),
             "other_days": sorted(d for d in by_day if d != today),
         }
         if isinstance(st, dict):
@@ -300,11 +302,18 @@ def market_rows(
         yes_price = price.get("yes")
         edge = None
         side = sig.get("recommended_side")
+        p_model = sig.get("p_model")
+        model_side = None
         if isinstance(p_win, (int, float)) and isinstance(yes_price, (int, float)):
             if side == "YES":
                 edge = round(float(p_win) - float(yes_price), 3)
             elif side == "NO":
                 edge = round((1.0 - float(p_win)) - (1.0 - float(yes_price)), 3)
+            elif isinstance(p_model, (int, float)) and sig.get("binary_state") == "open":
+                # model view on an open bucket: edge of the better side vs the quoted YES price
+                e_yes = float(p_model) - float(yes_price)
+                e_no = (1.0 - float(p_model)) - (1.0 - float(yes_price))
+                edge, model_side = (round(e_yes, 3), "YES") if e_yes >= e_no else (round(e_no, 3), "NO")
         deadline = str(cfg.get("deadline_local_hhmm") or "23:59")
         try:
             hh, mm = (int(x) for x in deadline.split(":")[:2])
@@ -340,6 +349,9 @@ def market_rows(
                     "instant_obs_temp": sig.get("instant_obs_temp"),
                     "resolution_model": sig.get("resolution_model") or sig.get("observation_model"),
                     "reason": sig.get("decision_reason"),
+                    "p_model": p_model,
+                    "model_side": model_side,
+                    "forecast": sig.get("forecast"),
                     "rt_day_guard": sig.get("rt_day_guard"),
                     "obs_time_local": sig.get("obs_time_local") or sig.get("observation_local"),
                 },
@@ -450,6 +462,25 @@ def _price_row(m: dict[str, Any]) -> dict[str, Any]:
         "question": m.get("question"),
         "slug": m.get("slug"),
         "closed": bool(m.get("closed")),
+    }
+
+
+def _forecast_summary(models: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Ensemble view of today's model forecasts for the station board."""
+    rows = [m for m in models.values() if isinstance(m, dict)]
+    maxes = [float(m["temp_max_c"]) for m in rows if m.get("temp_max_c") is not None]
+    mins = [float(m["temp_min_c"]) for m in rows if m.get("temp_min_c") is not None]
+    if not rows:
+        return None
+    return {
+        "models": sorted(f"{m.get('model')}{'' if m.get('complete') else '*'}" for m in rows),
+        "max_mean_c": round(sum(maxes) / len(maxes), 1) if maxes else None,
+        "max_lo_c": min(maxes) if maxes else None,
+        "max_hi_c": max(maxes) if maxes else None,
+        "min_mean_c": round(sum(mins) / len(mins), 1) if mins else None,
+        "min_lo_c": min(mins) if mins else None,
+        "min_hi_c": max(mins) if mins else None,
+        "latest_run_utc": max((str(m.get("run_utc") or "") for m in rows), default=""),
     }
 
 

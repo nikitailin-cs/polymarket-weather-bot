@@ -73,14 +73,14 @@
     </h2>
     <div class="scroll"><table id="markets"><thead><tr>
       <th>Market</th><th>Station</th><th>Var</th><th class="num">Bucket</th><th class="num">Day extreme</th><th class="num">Gap</th>
-      <th>State</th><th class="num">p_win</th><th>Side</th><th class="num">YES price</th><th class="num">Edge</th><th>Model</th><th class="num">To deadline</th><th>Local</th>
+      <th>State</th><th class="num">p_win</th><th class="num" title="model probability of this bucket (METAR.ws forecasts conditioned on observations)">p_model</th><th>Side</th><th class="num">YES price</th><th class="num">Edge</th><th>Model</th><th class="num">To deadline</th><th>Local</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
 
   <section>
     <h2>Stations · daily extremes <span class="sub muted" id="st-sub"></span></h2>
     <div class="scroll"><table id="stations"><thead><tr>
-      <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num">Last</th><th>Last report</th>
+      <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num" title="model forecast of today's max / min (mean, range), * = run does not cover the whole day">Forecast</th><th class="num">Last</th><th>Last report</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
 
@@ -165,6 +165,7 @@
         <td class="mono">${d ? hhmm(d.min_time_utc) + " " + srcPill(d.min_source) : "–"}</td>
         <td class="num">${d ? `${d.obs_count}${d.speci_count ? ` <span class="speci">+${d.speci_count}S</span>` : ""}` : "0"}</td>
         <td>${d ? spark(d.samples) : ""}</td>
+        <td class="num mono" title="${esc(r.forecast ? r.forecast.models.join(", ") : "")}">${r.forecast ? `<span title="max">${fmt(r.forecast.max_mean_c)}</span><span class="muted"> [${fmt(r.forecast.max_lo_c)}–${fmt(r.forecast.max_hi_c)}]</span> / <span title="min">${fmt(r.forecast.min_mean_c)}</span> <span class="muted">${r.forecast.models.length}m</span>` : "–"}</td>
         <td class="num">${fmt(r.last_temp_c)}°C ${r.last_is_speci ? pill("SPECI","speci") : ""}</td>
         <td class="mono raw muted" title="${esc(r.last_raw||"")}">${esc(r.last_raw||"")}</td></tr>`;
     }).join("") || `<tr><td colspan="10" class="empty">no day state yet — the daemon fills this as reports arrive</td></tr>`;
@@ -188,9 +189,10 @@
         <td class="num ${hit ? "gap-hit" : past ? "edge-neg" : "gap-pos"}">${r.gap === null ? "–" : (hit ? "in" : past ? "past" : fmt(r.gap, 0))}</td>
         <td title="${esc(s.reason||"")}">${s.binary_state ? pill(s.binary_state, stateCls(s.binary_state)) : pill("no signal","warn")}</td>
         <td class="num mono">${fmt(s.p_win, 2)}</td>
-        <td>${s.recommended_side && s.recommended_side !== "NONE" ? pill(s.recommended_side, s.recommended_side==="YES"?"ok":"bad") : "–"}</td>
+        <td class="num mono" title="${esc(s.forecast ? (s.forecast.components||[]).map(c => c.model + " " + fmt(c.value_c) + "C").join(", ") : "")}">${s.p_model === null || s.p_model === undefined ? "–" : fmt(s.p_model, 2) + (s.forecast ? ` <span class="muted">(${s.forecast.models})</span>` : "")}</td>
+        <td>${s.recommended_side && s.recommended_side !== "NONE" ? pill(s.recommended_side, s.recommended_side==="YES"?"ok":"bad") : (s.model_side ? pill(s.model_side + "?", "info") : "–")}</td>
         <td class="num mono">${r.price ? fmt(r.price.yes, 3) : "–"}</td>
-        <td class="num mono ${r.edge > 0 ? "edge-pos" : r.edge < 0 ? "edge-neg" : ""}">${r.edge === null ? "–" : (r.edge > 0 ? "+" : "") + fmt(r.edge, 3)}</td>
+        <td class="num mono ${r.edge > 0 ? "edge-pos" : r.edge < 0 ? "edge-neg" : ""}" title="${esc(s.model_side ? "model view, not a signal" : "")}">${r.edge === null ? "–" : (r.edge > 0 ? "+" : "") + fmt(r.edge, 3)}</td>
         <td class="muted">${esc((s.resolution_model||"").replace("metar_ws_daily_extrema","daily extreme").replace("instant_metar_proxy","instant METAR"))}</td>
         <td class="num mono">${r.minutes_to_deadline === null ? "–" : (r.minutes_to_deadline <= 0 ? "passed" : `${Math.floor(r.minutes_to_deadline/60)}h${String(r.minutes_to_deadline%60).padStart(2,"0")}`)}</td>
         <td class="mono muted">${esc(r.local_time)} ${esc(r.target_date||"")}</td></tr>`;
@@ -245,10 +247,11 @@
       head = `<tr><th>Time (UTC)</th><th>Kind</th><th>Details</th></tr>`;
       const rows = hist.events || []; n = rows.length;
       const det = (e) => e.kind === "observation" ? `<b>${esc(e.icao)}</b> ${fmt(e.temp_c)}°C @ ${esc(e.obs_time||"")}${e.speci ? " " + pill("SPECI","speci") : ""}`
+        : e.kind === "forecast" ? `<b>${esc(e.icao)}</b> ${esc(e.model)} ${esc(e.local_date)} max ${fmt(e.temp_max_c)}°C min ${fmt(e.temp_min_c)}°C <span class="muted">run ${esc(e.run_utc||"")}</span>`
         : e.kind === "trigger" ? `${esc(e.reason||"")} → rc ${esc(e.rc)} in ${fmt(e.seconds,1)}s`
         : e.kind === "connected" ? `plan ${esc(e.plan||"")}` : esc(e.error||"");
       body = rows.map(e => `<tr><td class="mono">${esc(tsShort(e.ts))}</td>
-        <td>${pill(e.kind, e.kind === "connected" ? "ok" : e.kind === "disconnected" ? "bad" : e.kind === "trigger" ? "info" : "muted")}</td>
+        <td>${pill(e.kind, e.kind === "connected" ? "ok" : e.kind === "disconnected" ? "bad" : e.kind === "trigger" ? "info" : e.kind === "forecast" ? "warn" : "muted")}</td>
         <td class="wrap">${det(e)}</td></tr>`).join("");
     }
     thead.innerHTML = head;

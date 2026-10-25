@@ -154,7 +154,7 @@ class TestConfig(unittest.TestCase):
 
 class TestClientFrames(unittest.TestCase):
     def _client(self, seen: list):
-        cfg = MetarWsConfig(api_key="k")
+        cfg = MetarWsConfig(api_key="k", forecasts=False)
         client = MetarWsClient(cfg, on_observation=lambda obs, cached: seen.append((obs.icao_id, cached)))
         client.set_stations(["KNYC", "EGLL"])
         return client
@@ -357,6 +357,7 @@ class TestEndToEnd(unittest.TestCase):
                     reconnect_min_sec=0.1,
                     reconnect_max_sec=0.2,
                     ping_interval_sec=5,
+                    forecasts=False,
                 )
                 client = MetarWsClient(cfg, on_observation=lambda o, c: seen.append((o.icao_id, o.temp_celsius, c)))
                 client.set_stations(["KNYC"])

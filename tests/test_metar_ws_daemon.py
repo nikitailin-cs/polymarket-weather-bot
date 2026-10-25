@@ -94,7 +94,7 @@ class TestDaemon(unittest.TestCase):
 
             async def go():
                 async with websockets.serve(handler, "127.0.0.1", port):
-                    cfg = MetarWsConfig(api_key="k", url=f"ws://127.0.0.1:{port}/v1/ws", reconnect_min_sec=0.1)
+                    cfg = MetarWsConfig(api_key="k", url=f"ws://127.0.0.1:{port}/v1/ws", reconnect_min_sec=0.1, forecasts=False)
                     daemon = Daemon(
                         config=cfg,
                         fixed_stations={"KORD"},

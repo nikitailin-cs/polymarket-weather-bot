@@ -43,6 +43,7 @@ from monitoring.error_guard import run_guarded  # noqa: E402
 from core.metar_source import get_metar_registry  # noqa: E402
 from core.rt_daily_extrema import RESOLUTION_MODEL_DAILY_EXTREMA, Bucket, decide_bucket  # noqa: E402
 from core.station_day_state import resolution_value  # noqa: E402
+from core.forecast_state import bucket_probability  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,6 +126,31 @@ def _day_extreme(state: Any, weather_var: str, unit: str) -> Optional[dict[str, 
         "speci_count": state.speci_count,
         "last_temp_c": state.last_temp_c,
     }
+
+
+def _model_probability(registry: Any, icao: str, local_d: Any, weather_var: str, bucket: Any, unit: str, extreme: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """P(bucket) from METAR.ws model forecasts conditioned on the observed routine extreme, or None."""
+    fetch = getattr(registry, "fetch_forecasts", None)
+    if fetch is None or bucket is None:
+        return None
+    try:
+        forecasts = fetch(icao, local_d)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("forecasts unavailable for %s: %s", icao, e)
+        return None
+    if not forecasts:
+        return None
+    bp = bucket_probability(
+        variable=weather_var,
+        low=bucket.low,
+        high=bucket.high,
+        unit=unit,
+        forecasts=forecasts.values(),
+        observed_extreme_c=(extreme or {}).get("value_c"),
+    )
+    if bp is None:
+        return None
+    return {"p": bp.p, "models": bp.models, "mean_c": bp.mean_c, "spread_c": bp.spread_c, "components": bp.components}
 
 
 def _observation_note(weather_var: str, *, use_extrema: bool = False) -> str:
@@ -348,6 +374,7 @@ def run_realtime_signals() -> None:
         # decisions use the whole-degree resolution value; the precise extreme stays in the row
         current_temp = float(extreme["resolution_value"]) if extreme is not None else float(instant_temp)
         bucket = Bucket.from_mapping(config)
+        model_prob = _model_probability(registry, icao, local_d, weather_var, bucket, unit, extreme) if weather_var in ("temp_max", "temp_min") else None
         resolution_model = (
             RESOLUTION_MODEL_DAILY_EXTREMA if extreme is not None else SIGNAL_RESOLUTION_MODEL_INSTANT_METAR
         )
@@ -427,6 +454,8 @@ def run_realtime_signals() -> None:
             "day_extreme": extreme,
             "bucket": {"low": bucket.low, "high": bucket.high} if bucket is not None else None,
             "decision_reason": decision_reason,
+            "p_model": model_prob["p"] if model_prob else None,
+            "forecast": model_prob,
             "raw_metar": metar_data.get("rawOb") if metar_data else (extreme or {}).get("raw"),
             "obs_time_local": current_local_time.strftime("%Y-%m-%d %H:%M:%S"),
             "target_date": target_date_raw,

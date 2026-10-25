@@ -103,6 +103,15 @@ have sent as an OPEN position in `portfolio_paper.sqlite` (one per market and si
 sized as live); `run_cycle.py` settles them against Gamma once the market resolves, PnL =
 payout − cost. Only stations served by METAR.ws are mapped; the rest are listed at refresh time.
 
+**Model forecasts.** The daemon also subscribes to `metar.forecast.basic.<icao>` (GFS, ICON,
+ICON-EU, ECMWF IFS) and `metar.forecast.hires.<icao>` (HRRR, NBM, JMA MSM, ICON-D2, HARMONIE,
+ARPEGE): one record per model run and station local day with the forecast max/min and the time
+of the peak. `core/forecast_state.py` keeps the latest run per model and turns them into
+`P(bucket)` with a normal mixture (sigma per tier) conditioned on the routine extreme already
+observed; signals carry it as `p_model`, the dashboard shows it next to the quoted YES price.
+`FINANCE_RT_PROB_TRADING=1` lets the engine also take open buckets when `p_model` beats the
+best ask by `FINANCE_RT_PROB_MIN_EDGE` (paper first; the sigmas are not calibrated per station).
+
 ## 🧠 The edge: why this bot is different
 
 Most open-source Polymarket weather bots stop at the National Weather Service or Open-Meteo. Those sources are fine for casual use, but two structural limits make them weak as a trading edge:
