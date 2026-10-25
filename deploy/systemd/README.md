@@ -268,9 +268,11 @@ Variables (dans `.env`, jamais dans l’unité) :
 Extrêmes journaliers (`core/station_day_state.py`) :
 
 Le daemon maintient pour chaque station le **max/min du jour local** (fuseau `timezone` du
-mapping) à partir de tous les METAR **et SPECI** reçus : groupe `RMK T` au dixième quand il
-est présent, groupes 6 h `1sTTT/2sTTT` appliqués seulement si la fenêtre reste dans le même
-jour local, groupe 24 h `4sTTTsTTT` conservé pour audit. Les états sont persistés dans le
+mapping ou de `data/metar_ws_stations.json`) selon la règle des marchés Polymarket (résolution
+sur le flux METAR d’aviationweather.gov) : **rapports routiniers seulement** (SPECI exclus),
+groupe `RMK T` au dixième sinon température du corps, arrondi au degré entier de l’unité du
+marché avec les demis vers le haut. Les pics SPECI et les groupes 6 h / 24 h sont conservés à
+titre indicatif (extrême « leading »), pas pour la décision. Les états sont persistés dans le
 snapshot (`days`) et restaurés au redémarrage. Avec `METAR_SOURCE=metar_ws`, les producteurs
 bot1/bot2 décident les marchés `temp_max` / `temp_min` sur cet extrême
 (`resolution_model=metar_ws_daily_extrema`, `core/rt_daily_extrema.py`) : un seuil franchi

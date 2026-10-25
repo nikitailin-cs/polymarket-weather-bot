@@ -81,6 +81,28 @@ connection / observation / trigger events (`logs/metar_ws_events.jsonl`). Live r
 Server-Sent Events when the snapshot or the signals change. `UI_TOKEN` is required to bind
 anything but loopback. Nothing in the UI can place or cancel an order.
 
+### 🧪 Paper trading from a laptop (no wallet)
+
+```bash
+cp .env.example .env            # set METAR_WS_API_KEY; keep DRY_RUN=1 (PAPER_TRADING defaults to 1)
+export METAR_SOURCE=metar_ws
+python bots/metar_ws/refresh_mapping.py          # today's Polymarket temperature buckets -> data/icao_mapping.json
+python bots/metar_ws/metar_ws_daemon.py          # push stream; set METAR_WS_TRIGGER_CMD="python bots/metar_ws/run_cycle.py"
+python bots/metar_ws/run_cycle.py                # or run one cycle by hand: signals -> paper fills -> paper settlement
+python -m ui.server                              # dashboard, mode badge shows PAPER
+```
+
+Markets are *buckets* ("61°F", "62-63°F", "64°F or higher") that resolve on the
+aviationweather.gov METAR feed for the station named in the market (`ids=` of the resolution
+URL). The mapping carries `threshold_low` / `threshold_high`; the daily extreme follows the
+market rule exactly (`core/station_day_state.py`): routine reports only (SPECI excluded), the
+`RMK T` group in tenths else the body temperature, local calendar day of the station, and the
+value rounded to the whole degree of the market unit with halves up (`resolution_value`). SPECI
+peaks are kept as a *leading* extreme for the dashboard. In DRY_RUN the finance engine records the order it would
+have sent as an OPEN position in `portfolio_paper.sqlite` (one per market and side, best ask,
+sized as live); `run_cycle.py` settles them against Gamma once the market resolves, PnL =
+payout − cost. Only stations served by METAR.ws are mapped; the rest are listed at refresh time.
+
 ## 🧠 The edge: why this bot is different
 
 Most open-source Polymarket weather bots stop at the National Weather Service or Open-Meteo. Those sources are fine for casual use, but two structural limits make them weak as a trading edge:

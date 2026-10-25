@@ -77,14 +77,16 @@ class TestStationDayState(unittest.TestCase):
         tr = DayStateTracker(lambda icao: NY)
         tr.ingest(obs("KNYC", "2026-10-25T12:51:00Z", 12))
         tr.ingest(obs("KNYC", "2026-10-25T13:51:00Z", 14))
-        tr.ingest(obs("KNYC", "2026-10-25T14:23:00Z", 19, speci=True))  # the actual peak, off-schedule
+        tr.ingest(obs("KNYC", "2026-10-25T14:23:00Z", 19, speci=True))  # off-schedule peak: leading only
         tr.ingest(obs("KNYC", "2026-10-25T14:51:00Z", 18))
         tr.ingest(obs("KNYC", "2026-10-25T14:51:00Z", 18))  # duplicate frame
         st = tr.get("KNYC", "2026-10-25")
-        self.assertEqual((st.max_c, st.max_source, st.max_time_utc), (19.0, "speci", "2026-10-25T14:23:00Z"))
-        self.assertTrue(st.max_is_speci)
-        self.assertEqual((st.min_c, st.min_source), (12.0, "metar"))
-        self.assertEqual((st.obs_count, st.speci_count), (4, 1))
+        # resolution extreme ignores SPECI (market rule), the leading extreme keeps it
+        self.assertEqual((st.max_c, st.max_source, st.max_time_utc), (18.0, "body", "2026-10-25T14:51:00Z"))
+        self.assertEqual((st.lead_max_c, st.lead_max_is_speci, st.lead_max_time_utc), (19.0, True, "2026-10-25T14:23:00Z"))
+        self.assertFalse(st.max_is_speci)
+        self.assertEqual((st.min_c, st.min_source), (12.0, "body"))
+        self.assertEqual((st.obs_count, st.speci_count), (3, 1))
         self.assertEqual(st.last_temp_c, 18.0)
         self.assertEqual([s[1] for s in st.samples], [12.0, 14.0, 19.0, 18.0])
         # evening report after midnight UTC still belongs to the 25th locally
@@ -93,18 +95,12 @@ class TestStationDayState(unittest.TestCase):
         self.assertIsNone(tr.get("KNYC", "2026-10-26"))
         self.assertEqual(len(tr.days_for("KNYC")), 1)
 
-    def test_six_hour_group_only_inside_local_day(self):
+    def test_six_hour_group_recorded_not_applied(self):
         tr = DayStateTracker(lambda icao: NY)
-        # 18Z report (14:00 EDT): window 12Z-18Z = 08:00-14:00 local, same day -> 6h max applies
         tr.ingest(obs("KNYC", "2026-10-25T17:51:00Z", 17, "METAR KNYC 251751Z 17/06 A3012 RMK AO2 T01720061 10194"))
         st = tr.get("KNYC", "2026-10-25")
-        self.assertEqual((st.max_c, st.max_source), (19.4, "rmk_6h"))
-        # 06Z report (02:00 EDT): window spans local midnight -> group ignored for extremes
-        tr2 = DayStateTracker(lambda icao: NY)
-        tr2.ingest(obs("KNYC", "2026-10-26T05:51:00Z", 9, "METAR KNYC 260551Z 09/04 A3012 RMK AO2 T00940039 10211 20089"))
-        st2 = tr2.get("KNYC", "2026-10-26")
-        self.assertEqual((st2.max_c, st2.max_source), (9.4, "metar"))
-        self.assertEqual(st2.min_c, 9.4)
+        self.assertEqual((st.max_c, st.max_source), (17.2, "t_group"))  # tenths from the T group
+        self.assertEqual(st.reported_6h_max_c, 19.4)
 
     def test_24h_group_recorded_not_applied(self):
         tr = DayStateTracker(lambda icao: NY)
@@ -123,10 +119,10 @@ class TestStationDayState(unittest.TestCase):
         self.assertEqual(tr2.restore(json.loads(json.dumps(payload))), 2)
         st = tr2.get("KNYC", "2026-10-25")
         self.assertIsInstance(st, StationDayState)
-        self.assertEqual((st.max_c, st.max_source, st.speci_count), (15.0, "speci", 1))
-        # a replay of an already-known sample after restore is ignored
+        self.assertEqual((st.max_c, st.lead_max_c, st.speci_count), (None, 15.0, 1))
+        # a replay of an already-known sample after restore is ignored (SPECI counted once, never as routine)
         tr2.ingest(obs("KNYC", "2026-10-25T15:51:00Z", 15, speci=True))
-        self.assertEqual(tr2.get("KNYC", "2026-10-25").obs_count, 1)
+        self.assertEqual((tr2.get("KNYC", "2026-10-25").obs_count, tr2.get("KNYC", "2026-10-25").speci_count), (0, 1))
         removed = tr2.prune(now_utc=datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc))
         self.assertEqual(removed, 1)
         self.assertIsNone(tr2.get("KNYC", "2026-10-23"))
@@ -225,7 +221,7 @@ class TestBot2ProducerWithSnapshot(unittest.TestCase):
 
     def _day_rows(self, today: str, max_c: float):
         st = StationDayState(icao="KORD", local_date=today, timezone="America/Chicago")
-        st.max_c, st.max_time_utc, st.max_source, st.max_raw = max_c, "2026-10-25T19:23:00Z", "speci", "SPECI KORD ..."
+        st.max_c, st.max_time_utc, st.max_source, st.max_raw = max_c, "2026-10-25T19:51:00Z", "t_group", "METAR KORD ..."
         st.min_c, st.min_source, st.obs_count, st.speci_count, st.last_temp_c = 10.0, "metar", 8, 1, 20.0
         return {today: st.to_dict()}
 
@@ -238,7 +234,7 @@ class TestBot2ProducerWithSnapshot(unittest.TestCase):
         self.assertEqual((row["binary_state"], row["p_win"], row["recommended_side"]), ("met", 1.0, "YES"))
         self.assertEqual(row["current_obs_temp"], 81.0)
         self.assertEqual(row["instant_obs_temp"], 68.0)
-        self.assertTrue(row["day_extreme"]["is_speci"])
+        self.assertFalse(row["day_extreme"]["is_speci"])
         self.assertEqual(row["day_extreme"]["obs_count"], 8)
 
     def test_below_market_dead_once_max_crossed(self):

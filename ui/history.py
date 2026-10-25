@@ -25,7 +25,22 @@ ALERTS_FILE = _ROOT / "logs" / "alerts.jsonl"
 EVENTS_FILE = _ROOT / "logs" / "metar_ws_events.jsonl"
 
 
+def trading_mode() -> str:
+    """``live`` (real orders), ``paper`` (DRY_RUN + paper fills) or ``dry`` (DRY_RUN, log only)."""
+    from execution.paper_broker import paper_enabled
+
+    v = (os.getenv("FINANCE_RT_DRY_RUN") or os.getenv("FINANCE_ENGINE_RT_DRY_RUN") or os.getenv("DRY_RUN") or "1").strip().lower()
+    dry = v not in ("0", "false", "no", "off")
+    if not dry:
+        return "live"
+    return "paper" if paper_enabled() else "dry"
+
+
 def portfolio_path() -> Path:
+    if trading_mode() == "paper":
+        from execution.paper_broker import paper_portfolio_path
+
+        return paper_portfolio_path()
     if (os.getenv("UPDATE_BOT_RT_PIPELINE") or "bot2").strip().lower() == "bot1":
         from core.bot1_realtime_data_paths import portfolio_rt_sqlite_path
 
@@ -221,6 +236,8 @@ def history_view(
     last_ok = next((c for c in cycles if c["ok"]), None)
     last_ok_dt = parse_utc(last_ok["ts"]) if last_ok else None
     return {
+        "mode": trading_mode(),
+        "portfolio": str(portfolio_path()),
         "summary": positions_summary(positions, now),
         "positions": positions,
         "cycles": cycles,

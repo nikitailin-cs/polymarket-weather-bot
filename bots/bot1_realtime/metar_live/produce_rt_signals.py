@@ -45,7 +45,8 @@ from bots.bot1_realtime.metar_live.realtime_metar_registry import (  # noqa: E40
     utc_observation_to_local,
 )
 from core.metar_source import get_metar_registry, selected_source  # noqa: E402
-from core.rt_daily_extrema import decide_extrema  # noqa: E402
+from core.rt_daily_extrema import Bucket, decide_bucket  # noqa: E402
+from core.station_day_state import resolution_value  # noqa: E402
 
 LOG = logging.getLogger("produce_rt_signals")
 
@@ -267,13 +268,14 @@ def main() -> int:
         tz = str(spec.get("timezone") or "UTC").strip() or "UTC"
         deadline = str(spec.get("deadline_local_hhmm") or default_deadline).strip()
 
-        if extreme_c is not None:
-            # monotonic daily extreme: terminal-aware decision instead of the instant heuristic
-            d = decide_extrema(
+        bucket = Bucket.from_mapping(spec)
+        if extreme_c is not None and bucket is not None:
+            # monotonic daily extreme: terminal-aware bucket decision on the whole-degree resolution value
+            res_val = resolution_value(extreme_c, unit)
+            d = decide_bucket(
                 variable=weather_var,
-                yes_if_above=above,
-                threshold=threshold,
-                extreme_value=temp_contract,
+                bucket=bucket,
+                extreme_value=float(res_val),
                 local_now=_local_now(tz),
                 deadline_hhmm=deadline,
                 dead_min_gap=float(spec.get("dead_min_gap", 15) or 15),

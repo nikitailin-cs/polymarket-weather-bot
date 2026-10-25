@@ -65,9 +65,12 @@ if [[ "${PIPELINE}" == "bot1" ]]; then
   PORTFOLIO_RT="${BOT1_PORTFOLIO_RT_SQLITE_PATH}"
 fi
 
-PYTHON_BIN="${ROOT_DIR}/.venv/bin/python3"
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  PYTHON_BIN="python3"
+# PYTHON_BIN env wins (Windows/git-bash: PYTHON_BIN=python), else .venv, else python3
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  PYTHON_BIN="${ROOT_DIR}/.venv/bin/python3"
+  if [[ ! -x "${PYTHON_BIN}" ]]; then
+    PYTHON_BIN="python3"
+  fi
 fi
 
 exit_code=0

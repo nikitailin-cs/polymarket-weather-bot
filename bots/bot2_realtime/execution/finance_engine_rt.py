@@ -630,10 +630,16 @@ def execute_limit_orders_phase45(
         return 0, 0
 
     try:
+        from execution.paper_broker import has_position
+
         for row in sized:
             if row.skipped_reason is not None or row.shares <= _EPS:
                 continue
             snap = row.snapshot
+            if has_position(conn, snap.target.market_id, snap.target.outcome_side):
+                LOG.info("4.5: position déjà ouverte market=%s side=%s — pas de nouvel ordre",
+                         snap.target.market_id[:16], snap.target.outcome_side)
+                continue
             tid = snap.token_id
             price = snap.best_ask
             size = row.shares
@@ -753,6 +759,16 @@ def main() -> int:
             "Filtre binaire: aucune cible (p_win 1.0/met ou 0.0/dead) — rien à exécuter."
         )
         return 0
+    # Bucket events produce many dead buckets per station: bound the L2 work per cycle,
+    # YES (met) targets first, then NO (dead) targets in mapping order.
+    try:
+        max_targets = int(os.getenv("FINANCE_RT_MAX_TARGETS_PER_CYCLE", "40"))
+    except ValueError:
+        max_targets = 40
+    targets.sort(key=lambda t: 0 if t.outcome_side == "YES" else 1)
+    if max_targets > 0 and len(targets) > max_targets:
+        LOG.info("Filtre binaire: %s cibles, limitées à %s (FINANCE_RT_MAX_TARGETS_PER_CYCLE)", len(targets), max_targets)
+        targets = targets[:max_targets]
 
     for t in targets:
         LOG.info(
@@ -783,10 +799,26 @@ def main() -> int:
         LOG.info(
             "4.5: mode DRY-RUN — aucun post_order (FINANCE_RT_DRY_RUN / DRY_RUN)."
         )
+        from execution.paper_broker import paper_enabled, paper_portfolio_path, record_paper_fill
+
+        paper = paper_enabled()
+        if paper:
+            LOG.info("4.5: PAPER_TRADING — fills simulés enregistrés dans %s", paper_portfolio_path())
         for row in sized:
             if row.skipped_reason is not None or row.shares <= _EPS:
                 continue
             s = row.snapshot
+            if paper:
+                try:
+                    record_paper_fill(
+                        paper_portfolio_path(),
+                        market_id=s.target.market_id,
+                        side=s.target.outcome_side,
+                        price=s.best_ask,
+                        shares=row.shares,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    LOG.error("paper fill failed: %s", exc)
             LOG.info(
                 "[DRY-RUN 4.5] LIMIT BUY token=%s… price=%.6f size=%.6f outcome=%s notionnel~%.4f",
                 s.token_id[:16],

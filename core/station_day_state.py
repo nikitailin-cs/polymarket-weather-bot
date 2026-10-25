@@ -1,18 +1,22 @@
 """
-Per-station daily temperature extrema, computed over the station's *local* day.
+Per-station daily temperature extrema, computed over the station's *local* day,
+following the Polymarket daily temperature resolution rules (events resolve on
+the aviationweather.gov METAR feed):
 
-Weather markets ("Will the high in NYC on Oct 25 be >= 70F?") settle on the day's
-maximum (or minimum), not on the latest reading. A polling bot only sees the
-instantaneous METAR temperature; with METAR.ws push delivery every routine METAR
-*and* every SPECI arrives, so the day's running extremes can be maintained exactly:
+- only **routine** reports count: a report whose line begins with ``SPECI`` is
+  excluded; everything else is routine, even off-hour or unlabeled;
+- the qualifying value is the ``RMK T`` group in tenths of a degree Celsius; if
+  a routine report has no T group, the whole-degree body temperature governs;
+- the value is rounded to the nearest whole degree in the market unit, halves
+  rounded up (16.5 -> 17, -8.5 -> -8); Fahrenheit markets convert first
+  (``F = C * 9/5 + 32``) then round;
+- an observation belongs to the local calendar day of its time stamp (station
+  IANA timezone, DST included).
 
-- the local calendar day comes from the station IANA timezone (mapping ``timezone``);
-- the body temperature is whole degrees C; the ``RMK T`` group gives tenths and is
-  preferred when present (``T01720061`` -> 17.2 / 6.1);
-- SPECI reports count like any observation (they often carry the actual peak);
-- ``RMK 1sTTT`` / ``2sTTT`` six-hour max/min groups are applied when their whole
-  6-hour window lies inside the same local day (they can reveal a peak between
-  routine reports); ``4sTTTsTTT`` 24-hour groups are recorded for audit only.
+SPECI reports and the 6-hour ``1sTTT``/``2sTTT`` and 24-hour ``4sTTTsTTT``
+remark groups are therefore **not** part of the resolution extreme. They are
+still tracked as a *leading* extreme (``lead_max_c`` / ``lead_min_c``) because a
+SPECI peak usually shows up in the next routine report.
 
 :class:`DayStateTracker` keeps a few days per station and (de)serialises to the
 daemon snapshot so a restart does not forget the morning's readings.
@@ -20,9 +24,10 @@ daemon snapshot so a restart does not forget the morning's readings.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
@@ -78,12 +83,34 @@ def parse_remarks(raw: str) -> MetarRemarks:
     return MetarRemarks(temp, dew, smax, smin, dmax, dmin)
 
 
-def precise_temperature_c(obs: MetarObservation, remarks: Optional[MetarRemarks] = None) -> float:
-    """Tenths-precision temperature when the T group agrees with the body value."""
+def qualifying_temperature_c(obs: MetarObservation, remarks: Optional[MetarRemarks] = None) -> tuple[float, str]:
+    """
+    The value the resolution rule reads from one report: T-group tenths when present
+    (and consistent with the body), else the whole-degree body temperature.
+    Returns ``(value_c, source)`` with source ``"t_group"`` or ``"body"``.
+    """
     rm = remarks or parse_remarks(obs.raw_text)
     if rm.temp_tenths_c is not None and abs(rm.temp_tenths_c - obs.temp_celsius) < 1.0:
-        return rm.temp_tenths_c
-    return float(obs.temp_celsius)
+        return rm.temp_tenths_c, "t_group"
+    return float(obs.temp_celsius), "body"
+
+
+def precise_temperature_c(obs: MetarObservation, remarks: Optional[MetarRemarks] = None) -> float:
+    return qualifying_temperature_c(obs, remarks)[0]
+
+
+def resolution_value(value_c: Optional[float], unit: str) -> Optional[int]:
+    """
+    Whole-degree value in the market unit, halves rounded up: Celsius markets round
+    the tenths; Fahrenheit markets convert with ``C * 9/5 + 32`` first.
+    16.5 -> 17, 17.4 -> 17, -1.7 -> -2, -8.5 -> -8; 18.3C -> 64.94F -> 65.
+    """
+    if value_c is None:
+        return None
+    x = float(value_c)
+    if not (unit or "F").upper().startswith("C"):
+        x = x * 9.0 / 5.0 + 32.0
+    return int(math.floor(x + 0.5))
 
 
 def local_date_for(obs_utc: datetime, tz_name: str) -> date:
@@ -99,19 +126,29 @@ class StationDayState:
     icao: str
     local_date: str  # YYYY-MM-DD
     timezone: str
+    # resolution extremes: routine reports only, qualifying value (tenths or body)
     max_c: Optional[float] = None
     max_time_utc: str = ""
     max_raw: str = ""
-    max_source: str = ""  # metar | speci | rmk_6h
+    max_source: str = ""  # t_group | body
     min_c: Optional[float] = None
     min_time_utc: str = ""
     min_raw: str = ""
     min_source: str = ""
-    obs_count: int = 0
+    # leading extremes: every report incl. SPECI (not used for resolution)
+    lead_max_c: Optional[float] = None
+    lead_max_time_utc: str = ""
+    lead_max_is_speci: bool = False
+    lead_min_c: Optional[float] = None
+    lead_min_time_utc: str = ""
+    lead_min_is_speci: bool = False
+    obs_count: int = 0  # routine reports
     speci_count: int = 0
     first_obs_utc: str = ""
     last_obs_utc: str = ""
     last_temp_c: Optional[float] = None
+    reported_6h_max_c: Optional[float] = None
+    reported_6h_min_c: Optional[float] = None
     reported_24h_max_c: Optional[float] = None
     reported_24h_min_c: Optional[float] = None
     samples: list[list[Any]] = field(default_factory=list)  # [time_utc, temp_c, is_speci]
@@ -119,35 +156,33 @@ class StationDayState:
 
     # -- updates -----------------------------------------------------------------
 
-    def _consider_max(self, value: float, time_utc: str, raw: str, source: str) -> bool:
-        if self.max_c is None or value > self.max_c:
-            self.max_c, self.max_time_utc, self.max_raw, self.max_source = value, time_utc, raw, source
-            return True
-        return False
-
-    def _consider_min(self, value: float, time_utc: str, raw: str, source: str) -> bool:
-        if self.min_c is None or value < self.min_c:
-            self.min_c, self.min_time_utc, self.min_raw, self.min_source = value, time_utc, raw, source
-            return True
-        return False
-
     def ingest(self, obs: MetarObservation, remarks: Optional[MetarRemarks] = None) -> bool:
-        """Apply one observation; returns True when it changed the max or the min."""
+        """Apply one observation; returns True when it changed the resolution max or min."""
         key = (format_utc(obs.observation_utc), "speci" if obs.is_speci else "metar")
         if key in self._seen:
             return False
         self._seen.add(key)
         rm = remarks or parse_remarks(obs.raw_text)
-        value = precise_temperature_c(obs, rm)
+        value, src = qualifying_temperature_c(obs, rm)
         t = format_utc(obs.observation_utc)
-        src = "speci" if obs.is_speci else "metar"
+        changed = False
 
-        changed = self._consider_max(value, t, obs.raw_text, src)
-        changed = self._consider_min(value, t, obs.raw_text, src) or changed
+        if self.lead_max_c is None or value > self.lead_max_c:
+            self.lead_max_c, self.lead_max_time_utc, self.lead_max_is_speci = value, t, obs.is_speci
+        if self.lead_min_c is None or value < self.lead_min_c:
+            self.lead_min_c, self.lead_min_time_utc, self.lead_min_is_speci = value, t, obs.is_speci
 
-        self.obs_count += 1
         if obs.is_speci:
             self.speci_count += 1
+        else:
+            if self.max_c is None or value > self.max_c:
+                self.max_c, self.max_time_utc, self.max_raw, self.max_source = value, t, obs.raw_text, src
+                changed = True
+            if self.min_c is None or value < self.min_c:
+                self.min_c, self.min_time_utc, self.min_raw, self.min_source = value, t, obs.raw_text, src
+                changed = True
+            self.obs_count += 1
+
         if not self.first_obs_utc or t < self.first_obs_utc:
             self.first_obs_utc = t
         if t >= self.last_obs_utc:
@@ -158,14 +193,10 @@ class StationDayState:
             self.samples = self.samples[-MAX_SAMPLES:]
         self.samples.sort(key=lambda s: s[0])
 
-        # 6-hour groups: only when the whole window sits inside this local day
-        if rm.six_hour_max_c is not None or rm.six_hour_min_c is not None:
-            start = obs.observation_utc - timedelta(hours=6)
-            if local_date_for(start, self.timezone).isoformat() == self.local_date:
-                if rm.six_hour_max_c is not None:
-                    changed = self._consider_max(rm.six_hour_max_c, t, obs.raw_text, "rmk_6h") or changed
-                if rm.six_hour_min_c is not None:
-                    changed = self._consider_min(rm.six_hour_min_c, t, obs.raw_text, "rmk_6h") or changed
+        if rm.six_hour_max_c is not None:
+            self.reported_6h_max_c = rm.six_hour_max_c
+        if rm.six_hour_min_c is not None:
+            self.reported_6h_min_c = rm.six_hour_min_c
         if rm.day_max_c is not None:
             self.reported_24h_max_c = rm.day_max_c
         if rm.day_min_c is not None:
@@ -187,11 +218,19 @@ class StationDayState:
             "min_time_utc": self.min_time_utc,
             "min_raw": self.min_raw,
             "min_source": self.min_source,
+            "lead_max_c": self.lead_max_c,
+            "lead_max_time_utc": self.lead_max_time_utc,
+            "lead_max_is_speci": self.lead_max_is_speci,
+            "lead_min_c": self.lead_min_c,
+            "lead_min_time_utc": self.lead_min_time_utc,
+            "lead_min_is_speci": self.lead_min_is_speci,
             "obs_count": self.obs_count,
             "speci_count": self.speci_count,
             "first_obs_utc": self.first_obs_utc,
             "last_obs_utc": self.last_obs_utc,
             "last_temp_c": self.last_temp_c,
+            "reported_6h_max_c": self.reported_6h_max_c,
+            "reported_6h_min_c": self.reported_6h_min_c,
             "reported_24h_max_c": self.reported_24h_max_c,
             "reported_24h_min_c": self.reported_24h_min_c,
             "samples": [list(s) for s in self.samples],
@@ -212,11 +251,19 @@ class StationDayState:
                 min_time_utc=str(d.get("min_time_utc") or ""),
                 min_raw=str(d.get("min_raw") or ""),
                 min_source=str(d.get("min_source") or ""),
+                lead_max_c=_opt_float(d.get("lead_max_c")),
+                lead_max_time_utc=str(d.get("lead_max_time_utc") or ""),
+                lead_max_is_speci=bool(d.get("lead_max_is_speci", False)),
+                lead_min_c=_opt_float(d.get("lead_min_c")),
+                lead_min_time_utc=str(d.get("lead_min_time_utc") or ""),
+                lead_min_is_speci=bool(d.get("lead_min_is_speci", False)),
                 obs_count=int(d.get("obs_count") or 0),
                 speci_count=int(d.get("speci_count") or 0),
                 first_obs_utc=str(d.get("first_obs_utc") or ""),
                 last_obs_utc=str(d.get("last_obs_utc") or ""),
                 last_temp_c=_opt_float(d.get("last_temp_c")),
+                reported_6h_max_c=_opt_float(d.get("reported_6h_max_c")),
+                reported_6h_min_c=_opt_float(d.get("reported_6h_min_c")),
                 reported_24h_max_c=_opt_float(d.get("reported_24h_max_c")),
                 reported_24h_min_c=_opt_float(d.get("reported_24h_min_c")),
                 samples=[list(s) for s in d.get("samples") or [] if isinstance(s, (list, tuple)) and len(s) >= 2],
@@ -228,12 +275,12 @@ class StationDayState:
         return st
 
     @property
-    def max_is_speci(self) -> bool:
-        return self.max_source == "speci"
+    def max_is_speci(self) -> bool:  # resolution extremes never come from SPECI
+        return False
 
     @property
     def min_is_speci(self) -> bool:
-        return self.min_source == "speci"
+        return False
 
 
 def _opt_float(v: Any) -> Optional[float]:
@@ -317,6 +364,9 @@ class DayStateTracker:
                 if st.timezone != self.timezone_for(st.icao):
                     LOG.info("dropping restored %s %s: timezone %s is now %s", st.icao, day, st.timezone, self.timezone_for(st.icao))
                     continue
+                if "lead_max_c" not in row:
+                    LOG.info("dropping restored %s %s: built by an older schema", st.icao, day)
+                    continue
                 key = (str(icao).upper(), str(day))
                 if key not in self._states:
                     self._states[key] = st
@@ -349,4 +399,6 @@ __all__ = [
     "parse_remarks",
     "parse_utc",
     "precise_temperature_c",
+    "qualifying_temperature_c",
+    "resolution_value",
 ]

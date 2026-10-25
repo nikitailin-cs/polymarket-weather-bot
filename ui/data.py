@@ -207,6 +207,12 @@ def station_board(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str
                 "min_source": st.get("min_source"),
                 "obs_count": st.get("obs_count"),
                 "speci_count": st.get("speci_count"),
+                "lead_max_c": st.get("lead_max_c"),
+                "lead_max_time_utc": st.get("lead_max_time_utc"),
+                "lead_max_is_speci": bool(st.get("lead_max_is_speci")),
+                "lead_min_c": st.get("lead_min_c"),
+                "lead_min_time_utc": st.get("lead_min_time_utc"),
+                "lead_min_is_speci": bool(st.get("lead_min_is_speci")),
                 "samples": [[s[0], s[1], bool(s[2]) if len(s) > 2 else False] for s in st.get("samples") or []],
                 "reported_24h_max_c": st.get("reported_24h_max_c"),
                 "reported_24h_min_c": st.get("reported_24h_min_c"),
@@ -267,8 +273,24 @@ def market_rows(
             extreme_c = st.get("min_c") if var == "temp_min" else st.get("max_c")
         extreme = _to_unit(extreme_c, unit)
         yes_if_above = bool(cfg.get("yes_if_above", True))
+        from core.rt_daily_extrema import Bucket
+        from core.station_day_state import resolution_value
+
+        bucket = Bucket.from_mapping(cfg)
+        res_val = resolution_value(extreme_c, unit) if extreme_c is not None else None
+        lead_c = None
+        if isinstance(st, dict):
+            lead_c = st.get("lead_min_c") if var == "temp_min" else st.get("lead_max_c")
+        lead_val = resolution_value(lead_c, unit) if lead_c is not None else None
         gap = None
-        if extreme is not None and threshold is not None:
+        if res_val is not None and bucket is not None:
+            if bucket.contains(res_val):
+                gap = 0.0
+            elif bucket.low is not None and res_val < bucket.low:
+                gap = round(bucket.low - res_val, 1)
+            elif bucket.high is not None and res_val > bucket.high:
+                gap = round(bucket.high - res_val, 1)  # negative: already past the bucket
+        elif extreme is not None and threshold is not None:
             gap = round(threshold - extreme, 1) if yes_if_above else round(extreme - threshold, 1)
         p_win = sig.get("p_win")
         price = prices.get(market_id) or {}
@@ -302,6 +324,9 @@ def market_rows(
                 "minutes_to_deadline": mins_left,
                 "day_extreme": extreme,
                 "day_extreme_c": extreme_c,
+                "resolution_value": res_val,
+                "lead_resolution_value": lead_val,
+                "bucket": {"low": bucket.low, "high": bucket.high} if bucket is not None else None,
                 "gap": gap,
                 "obs_count": st.get("obs_count") if isinstance(st, dict) else None,
                 "signal": {
@@ -311,6 +336,7 @@ def market_rows(
                     "current_obs_temp": sig.get("current_obs_temp"),
                     "instant_obs_temp": sig.get("instant_obs_temp"),
                     "resolution_model": sig.get("resolution_model") or sig.get("observation_model"),
+                    "reason": sig.get("decision_reason"),
                     "rt_day_guard": sig.get("rt_day_guard"),
                     "obs_time_local": sig.get("obs_time_local") or sig.get("observation_local"),
                 },

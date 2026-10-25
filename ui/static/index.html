@@ -63,6 +63,7 @@
   <span class="kv">reconnects <b id="reconn">–</b></span>
   <span class="kv">snapshot age <b id="snap-age">–</b></span>
   <span class="kv">signals age <b id="sig-age">–</b> <span id="sig-src" class="pill info"></span></span>
+  <span class="kv">mode <b id="mode" class="pill warn">–</b></span>
   <span class="kv" style="margin-left:auto">updated <b id="updated">–</b> <span id="live" class="pill muted">polling</span></span>
 </header>
 <main>
@@ -71,7 +72,7 @@
       <span class="filters"><label><input type="checkbox" id="f-open" checked> open only</label><label><input type="checkbox" id="f-edge"> with edge</label></span>
     </h2>
     <div class="scroll"><table id="markets"><thead><tr>
-      <th>Market</th><th>Station</th><th>Var</th><th class="num">Threshold</th><th class="num">Day extreme</th><th class="num">Gap</th>
+      <th>Market</th><th>Station</th><th>Var</th><th class="num">Bucket</th><th class="num">Day extreme</th><th class="num">Gap</th>
       <th>State</th><th class="num">p_win</th><th>Side</th><th class="num">YES price</th><th class="num">Edge</th><th>Model</th><th class="num">To deadline</th><th>Local</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
@@ -113,7 +114,7 @@
   const age = (s) => s === null || s === undefined ? "–" : s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s/60)}m` : `${(s/3600).toFixed(1)}h`;
   const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const stateCls = (s) => ({met:"ok", attack:"ok", dead:"bad", flee:"bad", open:"info", standby:"info", metar_unavailable:"warn", premature:"muted", past_target:"muted"}[s] || "muted");
-  const srcPill = (src) => src === "speci" ? pill("SPECI", "speci") : src === "rmk_6h" ? pill("6h", "warn") : "";
+  const srcPill = (src) => src === "body" ? pill("body", "warn") : "";
 
   function spark(samples) {
     if (!samples || samples.length < 2) return "";
@@ -158,7 +159,7 @@
       return `<tr>
         <td><b>${esc(r.icao)}</b> <span class="muted">${esc(r.city||r.name||"")}</span></td>
         <td class="mono">${esc(r.local_time)} <span class="muted">${esc(r.local_date)}</span></td>
-        <td class="num">${d ? `<b>${fmt(d.max_c)}°C</b> <span class="muted">${fmt(d.max_f)}°F</span>` : "–"}</td>
+        <td class="num">${d ? `<b>${fmt(d.max_c)}°C</b> <span class="muted">${fmt(d.max_f)}°F</span>${d.lead_max_c !== null && d.lead_max_c > d.max_c ? ` <span class="speci" title="leading extreme incl. SPECI (not used for resolution)">↑${fmt(d.lead_max_c)}</span>` : ""}` : "–"}</td>
         <td class="mono">${d ? hhmm(d.max_time_utc) + " " + srcPill(d.max_source) : "–"}</td>
         <td class="num">${d ? `${fmt(d.min_c)}°C <span class="muted">${fmt(d.min_f)}°F</span>` : "–"}</td>
         <td class="mono">${d ? hhmm(d.min_time_utc) + " " + srcPill(d.min_source) : "–"}</td>
@@ -174,16 +175,18 @@
     const openOnly = $("#f-open").checked, edgeOnly = $("#f-edge").checked;
     const rows = marketRows.filter(r => (!openOnly || ["open","standby",null,undefined].includes(r.signal.binary_state)) && (!edgeOnly || (r.edge !== null && r.edge > 0)));
     $("#markets tbody").innerHTML = rows.map(r => {
-      const s = r.signal, hit = r.gap !== null && r.gap <= 0;
-      const cmp = r.yes_if_above ? "≥" : "<";
+      const s = r.signal, hit = r.gap !== null && r.gap === 0, past = r.gap !== null && r.gap < 0;
+      const b = r.bucket, u = "°" + esc(r.unit[0]);
+      const bucketTxt = b ? (b.low !== null && b.high !== null ? (b.low === b.high ? fmt(b.low,0) + u : fmt(b.low,0) + "–" + fmt(b.high,0) + u)
+                              : b.low !== null ? "≥ " + fmt(b.low,0) + u : "≤ " + fmt(b.high,0) + u) : (r.yes_if_above ? "≥ " : "< ") + fmt(r.threshold) + u;
       return `<tr>
         <td title="${esc(r.market_id)}">${esc(r.name)}</td>
         <td><b>${esc(r.icao)}</b></td>
         <td class="muted">${esc(r.variable.replace("temp_",""))}</td>
-        <td class="num mono">${cmp} ${fmt(r.threshold)}°${esc(r.unit[0])}</td>
-        <td class="num"><b>${fmt(r.day_extreme)}</b>${r.obs_count ? ` <span class="muted">(${r.obs_count})</span>` : ""}</td>
-        <td class="num ${hit ? "gap-hit" : "gap-pos"}">${r.gap === null ? "–" : (hit ? "hit" : fmt(r.gap))}</td>
-        <td>${s.binary_state ? pill(s.binary_state, stateCls(s.binary_state)) : pill("no signal","warn")}</td>
+        <td class="num mono">${bucketTxt}</td>
+        <td class="num"><b>${r.resolution_value === null || r.resolution_value === undefined ? fmt(r.day_extreme) : r.resolution_value}</b>${r.day_extreme !== null && r.resolution_value !== null ? ` <span class="muted">${fmt(r.day_extreme)}</span>` : ""}${r.lead_resolution_value !== null && r.lead_resolution_value !== undefined && r.lead_resolution_value !== r.resolution_value ? ` <span class="speci" title="leading incl. SPECI">→${r.lead_resolution_value}</span>` : ""}${r.obs_count ? ` <span class="muted">(${r.obs_count})</span>` : ""}</td>
+        <td class="num ${hit ? "gap-hit" : past ? "edge-neg" : "gap-pos"}">${r.gap === null ? "–" : (hit ? "in" : past ? "past" : fmt(r.gap, 0))}</td>
+        <td title="${esc(s.reason||"")}">${s.binary_state ? pill(s.binary_state, stateCls(s.binary_state)) : pill("no signal","warn")}</td>
         <td class="num mono">${fmt(s.p_win, 2)}</td>
         <td>${s.recommended_side && s.recommended_side !== "NONE" ? pill(s.recommended_side, s.recommended_side==="YES"?"ok":"bad") : "–"}</td>
         <td class="num mono">${r.price ? fmt(r.price.yes, 3) : "–"}</td>
@@ -267,6 +270,9 @@
       renderMarkets();
       hist = o.history || null;
       renderHistory();
+      const mode = (hist && hist.mode) || "–";
+      $("#mode").textContent = mode.toUpperCase();
+      $("#mode").className = "pill " + (mode === "live" ? "bad" : mode === "paper" ? "ok" : "warn");
       $("#updated").textContent = o.now_utc.slice(11, 19) + "Z";
     } catch (e) { $("#updated").textContent = "error"; console.error(e); }
   }

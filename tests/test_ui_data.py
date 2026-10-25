@@ -41,9 +41,10 @@ def _snapshot(generated=NOW):
                      "raw": "METAR EGLC 251650Z 24008KT 9999 SCT030 12/08 Q1015", "is_speci": False},
         },
         "days": {
-            "KORD": {"2026-10-25": {"icao": "KORD", "local_date": "2026-10-25", "timezone": "America/Chicago", "max_c": 27.2, "max_time_utc": "2026-10-25T19:23:00Z",
-                                    "max_source": "speci", "min_c": 10.0, "min_time_utc": "2026-10-25T11:51:00Z", "min_source": "metar", "obs_count": 8, "speci_count": 1,
-                                    "last_temp_c": 21.0, "samples": [["2026-10-25T11:51:00Z", 10.0, False], ["2026-10-25T19:23:00Z", 27.2, True]]}},
+            "KORD": {"2026-10-25": {"icao": "KORD", "local_date": "2026-10-25", "timezone": "America/Chicago", "max_c": 27.2, "max_time_utc": "2026-10-25T19:51:00Z",
+                                    "max_source": "t_group", "min_c": 10.0, "min_time_utc": "2026-10-25T11:51:00Z", "min_source": "body", "obs_count": 8, "speci_count": 1,
+                                    "lead_max_c": 27.8, "lead_max_time_utc": "2026-10-25T19:23:00Z", "lead_max_is_speci": True,
+                                    "last_temp_c": 21.0, "samples": [["2026-10-25T11:51:00Z", 10.0, False], ["2026-10-25T19:23:00Z", 27.8, True]]}},
         },
     }
 
@@ -80,7 +81,7 @@ class TestStationBoard(unittest.TestCase):
         k = by["KORD"]
         self.assertEqual(k["local_time"], "13:05")  # CDT
         self.assertEqual(k["day"]["max_f"], 81.0)
-        self.assertEqual(k["day"]["max_source"], "speci")
+        self.assertEqual((k["day"]["max_source"], k["day"]["lead_max_c"], k["day"]["lead_max_is_speci"]), ("t_group", 27.8, True))
         self.assertEqual(len(k["day"]["samples"]), 2)
         self.assertIsNone(by["EGLC"]["day"])
 
@@ -104,11 +105,13 @@ class TestMarkets(unittest.TestCase):
         rows = ud.market_rows(self.MAPPING, self.SIGNALS, _snapshot(), prices, NOW)
         self.assertEqual([r["market_id"] for r in rows], ["0xdef", "0xabc"])  # open first
         a = next(r for r in rows if r["market_id"] == "0xabc")
-        self.assertEqual((a["day_extreme"], a["gap"]), (81.0, -1.0))
+        self.assertEqual((a["day_extreme"], a["resolution_value"], a["gap"]), (81.0, 81, 0.0))  # 81F sits inside ">= 80F"
+        self.assertEqual(a["bucket"], {"low": 80.0, "high": None})
+        self.assertEqual(a["lead_resolution_value"], 82)  # 27.8C -> 82.04F
         self.assertAlmostEqual(a["edge"], 0.18, places=3)
         self.assertEqual(a["minutes_to_deadline"], (23 - 13) * 60 + (59 - 5))
         d = next(r for r in rows if r["market_id"] == "0xdef")
-        self.assertEqual(d["gap"], -9.0)
+        self.assertEqual((d["bucket"], d["gap"]), ({"low": None, "high": 89.0}, 0.0))  # "< 90F" holds while the max is 81
         self.assertIsNone(d["edge"])
         self.assertEqual(d["price"]["yes"], 0.9)
 

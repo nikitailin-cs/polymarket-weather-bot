@@ -79,3 +79,6 @@ Untitled
 # METAR.ws push snapshot (runtime state)
 data/bots/realtime/metar_ws_latest.json*
 logs/*.jsonl
+
+# market mapping is runtime data (refresh_mapping.py); data/icao_mapping.example.json is the tracked sample
+data/icao_mapping.json

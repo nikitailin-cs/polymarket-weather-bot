@@ -41,7 +41,8 @@ from core.rt_range_policy import narrow_range_scalp_day  # noqa: E402
 from core.rt_signal_health import summarize_signals_health  # noqa: E402
 from monitoring.error_guard import run_guarded  # noqa: E402
 from core.metar_source import get_metar_registry  # noqa: E402
-from core.rt_daily_extrema import RESOLUTION_MODEL_DAILY_EXTREMA, decide_extrema  # noqa: E402
+from core.rt_daily_extrema import RESOLUTION_MODEL_DAILY_EXTREMA, Bucket, decide_bucket  # noqa: E402
+from core.station_day_state import resolution_value  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,21 +95,29 @@ def _day_extreme(state: Any, weather_var: str, unit: str) -> Optional[dict[str, 
         return None
     if weather_var == "temp_min":
         value_c, t, src, raw = state.min_c, state.min_time_utc, state.min_source, state.min_raw
+        lead_c, lead_speci = getattr(state, "lead_min_c", None), bool(getattr(state, "lead_min_is_speci", False))
     else:
         value_c, t, src, raw = state.max_c, state.max_time_utc, state.max_source, state.max_raw
+        lead_c, lead_speci = getattr(state, "lead_max_c", None), bool(getattr(state, "lead_max_is_speci", False))
     if value_c is None:
         return None
     if unit in ("F", "FAHRENHEIT"):
         value = round(float(value_c) * 9.0 / 5.0 + 32.0, 1)
     else:
         value = round(float(value_c), 1)
+    # whole-degree value per the market rule (routine reports, tenths, halves rounded up)
+    res_value = resolution_value(float(value_c), unit)
     return {
         "kind": weather_var,
         "value": value,
+        "resolution_value": res_value,
         "value_c": float(value_c),
+        "lead_value_c": lead_c,
+        "lead_resolution_value": resolution_value(lead_c, unit) if lead_c is not None else None,
+        "lead_is_speci": lead_speci,
         "time_utc": t,
         "source": src,
-        "is_speci": src == "speci",
+        "is_speci": False,
         "raw": raw,
         "local_date": state.local_date,
         "timezone": state.timezone,
@@ -336,7 +345,9 @@ def run_realtime_signals() -> None:
                 instant_temp = float(metar_data["temp_c"])
         # Daily-extreme markets decide on the running max/min of the station's local day
         # (METAR.ws push), falling back to the instantaneous METAR when no day state exists.
-        current_temp = float(extreme["value"]) if extreme is not None else float(instant_temp)
+        # decisions use the whole-degree resolution value; the precise extreme stays in the row
+        current_temp = float(extreme["resolution_value"]) if extreme is not None else float(instant_temp)
+        bucket = Bucket.from_mapping(config)
         resolution_model = (
             RESOLUTION_MODEL_DAILY_EXTREMA if extreme is not None else SIGNAL_RESOLUTION_MODEL_INSTANT_METAR
         )
@@ -344,6 +355,7 @@ def run_realtime_signals() -> None:
         p_win = 0.5
         binary_state = "open"
         rec_side = "NONE"
+        decision_reason = ""
         rt_day_guard: str
 
         if day_kind == "invalid":
@@ -372,17 +384,17 @@ def run_realtime_signals() -> None:
 
         else:
             rt_day_guard = "jour_j"
-            if extreme is not None:
-                decision = decide_extrema(
+            if extreme is not None and bucket is not None:
+                decision = decide_bucket(
                     variable=weather_var,
-                    yes_if_above=is_above,
-                    threshold=threshold,
+                    bucket=bucket,
                     extreme_value=current_temp,
                     local_now=current_local_time,
                     deadline_hhmm=deadline_str,
                     dead_min_gap=dead_gap,
                 )
                 p_win, binary_state = decision.p_win, decision.binary_state
+                decision_reason = decision.reason
             elif is_above and current_temp >= threshold:
                 p_win = 1.0
                 binary_state = "met"
@@ -413,6 +425,8 @@ def run_realtime_signals() -> None:
             "current_obs_temp": current_temp,
             "instant_obs_temp": instant_temp,
             "day_extreme": extreme,
+            "bucket": {"low": bucket.low, "high": bucket.high} if bucket is not None else None,
+            "decision_reason": decision_reason,
             "raw_metar": metar_data.get("rawOb") if metar_data else (extreme or {}).get("raw"),
             "obs_time_local": current_local_time.strftime("%Y-%m-%d %H:%M:%S"),
             "target_date": target_date_raw,
