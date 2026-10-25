@@ -41,6 +41,7 @@ from core.rt_range_policy import narrow_range_scalp_day  # noqa: E402
 from core.rt_signal_health import summarize_signals_health  # noqa: E402
 from bots.bot2_realtime.metar_live.realtime_metar_registry import RealTimeMetarRegistry  # noqa: E402
 from monitoring.error_guard import run_guarded  # noqa: E402
+from core.metar_source import get_metar_registry  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,7 +111,7 @@ def run_realtime_signals() -> None:
 
     logger.info("Démarrage analyse RT sur %s entrée(s) mapping.", len(markets))
 
-    registry = RealTimeMetarRegistry()
+    registry = get_metar_registry("bot2")
 
     signals: dict[str, Any] = {}
     processed = 0

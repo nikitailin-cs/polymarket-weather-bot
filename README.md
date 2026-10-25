@@ -50,6 +50,17 @@ This bot is built around that edge: it pulls raw **ECMWF IFS ensemble forecasts*
 
 ---
 
+### 📡 Observation source: METAR.ws push (optional)
+
+The real-time scalping bots (`bots/bot1_realtime`, `bots/bot2_realtime`) historically
+polled `aviationweather.gov` on a systemd timer. With `METAR_SOURCE=metar_ws` they read a
+snapshot maintained by `bots/metar_ws/metar_ws_daemon.py`, which holds **one persistent
+WebSocket** to `wss://stream.metar.ws/v1/ws` and receives every METAR/SPECI the moment it
+is published — no polling, no parsing, same source the markets resolve on. The daemon can
+also fire `update_bot_rt.sh` on each live report (`METAR_WS_TRIGGER_CMD`), turning the
+timer-driven cycle into an event-driven one. Setup: `deploy/systemd/README.md`
+(section *METAR.ws push*). Default stays `METAR_SOURCE=awc`.
+
 ## 🧠 The edge: why this bot is different
 
 Most open-source Polymarket weather bots stop at the National Weather Service or Open-Meteo. Those sources are fine for casual use, but two structural limits make them weak as a trading edge:

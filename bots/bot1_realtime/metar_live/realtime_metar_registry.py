@@ -14,23 +14,21 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 import urllib.parse
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from core.metar_observation import MetarObservation, is_speci_raw  # noqa: F401
+
 LOG = logging.getLogger(__name__)
 
 AWC_METAR_BASE = os.getenv(
     "BOT1_METAR_API_URL", "https://aviationweather.gov/api/data/metar"
 ).rstrip("/")
-
-_SPECI_HEAD = re.compile(r"^\s*SPECI\b", re.IGNORECASE)
 
 
 def celsius_to_fahrenheit_uma(temp_c: float, oracle_rounding: int = 0) -> float:
@@ -83,12 +81,6 @@ def temp_celsius_to_contract_unit(
     raise ValueError(f"threshold_unit inconnu: {unit!r} (utiliser F ou C)")
 
 
-def is_speci_raw(raw_ob: str) -> bool:
-    """True si le rapport est un SPECI (prioritaire vs METAR horaire)."""
-    s = (raw_ob or "").strip()
-    if not s:
-        return False
-    return bool(_SPECI_HEAD.match(s))
 
 
 def _parse_report_time(item: dict[str, Any]) -> tuple[float, str]:
@@ -145,14 +137,6 @@ def _row_priority_key(item: dict[str, Any]) -> tuple[float, int]:
     return (sort_key, speci)
 
 
-@dataclass(frozen=True)
-class MetarObservation:
-    icao_id: str
-    temp_celsius: float
-    report_time_utc: str
-    raw_text: str
-    observation_utc: datetime
-    is_speci: bool
 
 
 def _pick_best_per_station(rows: list[dict[str, Any]]) -> dict[str, MetarObservation]:

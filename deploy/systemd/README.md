@@ -227,6 +227,59 @@ sudo systemctl enable --now polymarket-bot-rt.timer
 sudo systemctl list-timers polymarket-bot-rt.timer
 ```
 
+## METAR.ws push — `polymarket-bot-rt-metar-ws` (remplace le polling AWC)
+
+Le timer `polymarket-bot1-rt-metar.timer` interroge `aviationweather.gov` à H:52/H:55/H:58.
+Le daemon `bots/metar_ws/metar_ws_daemon.py` remplace ce polling par **une** connexion
+WebSocket persistante à `wss://stream.metar.ws/v1/ws` : chaque METAR/SPECI des stations
+présentes dans `data/icao_mapping.json` arrive en push, est écrit dans
+`data/bots/realtime/metar_ws_latest.json`, et (optionnel) déclenche immédiatement
+`update_bot_rt.sh`.
+
+Chaîne :
+
+```
+stream.metar.ws ──push──▶ metar_ws_daemon.py ──▶ metar_ws_latest.json ──▶ produce_rt_signals.py
+                                   │                                             (METAR_SOURCE=metar_ws)
+                                   └── METAR_WS_TRIGGER_CMD="bash update_bot_rt.sh" (debounce 5 s)
+```
+
+Installation :
+
+```bash
+sudo sed -e "s#__REPO_ROOT__#$(pwd)#g" -e "s#__RUN_AS_USER__#$USER#g"   deploy/systemd/polymarket-bot-rt-metar-ws.service   > /etc/systemd/system/polymarket-bot-rt-metar-ws.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now polymarket-bot-rt-metar-ws.service
+journalctl -u polymarket-bot-rt-metar-ws -f
+```
+
+Variables (dans `.env`, jamais dans l’unité) :
+
+| Variable | Rôle |
+|---|---|
+| `METAR_WS_API_KEY` | clé `mts_live_…` METAR.ws (obligatoire) |
+| `METAR_SOURCE=metar_ws` | les producteurs lisent le snapshot au lieu d’appeler AWC |
+| `METAR_WS_FALLBACK_AWC=1` | filet de sécurité : AWC pour les stations absentes du snapshot |
+| `METAR_WS_TRIGGER_CMD` | commande exécutée après chaque rapport **live** (vide = snapshot seul) |
+| `METAR_WS_TRIGGER_DEBOUNCE_SEC` | regroupe une rafale de rapports en un seul cycle (5) |
+| `METAR_WS_SNAPSHOT_MAX_AGE_SEC` | au-delà, le snapshot est considéré périmé → aucune observation (180) |
+| `METAR_WS_CHANNEL_FORMAT` / `METAR_WS_CHANNEL_MAP` | nommage des canaux (`metar.obs.icao.{icao}` par défaut) |
+
+Modes :
+
+- **Push complet** : daemon avec `METAR_WS_TRIGGER_CMD` → désactiver le timer
+  `polymarket-bot1-rt-metar.timer` (sinon double cycle).
+- **Snapshot seul** : daemon sans trigger + timer existant ; les cycles lisent simplement
+  des observations déjà présentes au lieu d’attendre l’API AWC.
+- **Retour arrière** : `METAR_SOURCE=awc` (défaut) — comportement historique inchangé.
+
+Smoke test sans systemd :
+
+```bash
+METAR_WS_API_KEY=mts_live_xxx python bots/metar_ws/metar_ws_daemon.py --stations KNYC,KORD --max-seconds 60 --no-trigger
+cat data/bots/realtime/metar_ws_latest.json
+```
+
 ## Sécurité
 
 - Le service doit tourner sous un utilisateur **non root** (`User=`).

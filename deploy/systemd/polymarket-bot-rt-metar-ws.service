@@ -1,0 +1,28 @@
+[Unit]
+Description=Polymarket bot RT — METAR.ws push daemon (WebSocket → snapshot → update_bot_rt.sh)
+Documentation=file:__REPO_ROOT__/deploy/systemd/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_AS_USER__
+Group=__RUN_AS_USER__
+WorkingDirectory=__REPO_ROOT__
+
+# Secrets: METAR_WS_API_KEY and the Polymarket wallet live in .env (never in the unit file).
+EnvironmentFile=-__REPO_ROOT__/.env
+Environment=METAR_SOURCE=metar_ws
+Environment=UPDATE_BOT_RT_PIPELINE=bot2
+# Push mode: one trading cycle per live observation (debounced). Comment out to only
+# maintain the snapshot and keep the H:52/H:55/H:58 timer as the trigger.
+Environment=METAR_WS_TRIGGER_CMD=bash __REPO_ROOT__/update_bot_rt.sh
+
+ExecStart=__REPO_ROOT__/.venv/bin/python3 __REPO_ROOT__/bots/metar_ws/metar_ws_daemon.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

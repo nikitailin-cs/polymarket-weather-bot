@@ -75,3 +75,6 @@ Desktop.ini
 
 # Fichiers brouillon éditeur
 Untitled
+
+# METAR.ws push snapshot (runtime state)
+data/bots/realtime/metar_ws_latest.json*

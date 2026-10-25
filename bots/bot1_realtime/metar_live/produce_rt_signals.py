@@ -45,6 +45,7 @@ from bots.bot1_realtime.metar_live.realtime_metar_registry import (  # noqa: E40
     temp_celsius_to_contract_unit,
     utc_observation_to_local,
 )
+from core.metar_source import get_metar_registry, selected_source  # noqa: E402
 
 LOG = logging.getLogger("produce_rt_signals")
 
@@ -195,7 +196,7 @@ def main() -> int:
         if icao:
             icaos.append(icao)
 
-    registry = RealTimeMetarRegistry()
+    registry = get_metar_registry("bot1")
     try:
         obs_by_icao = registry.fetch_latest_for_stations(icaos)
     except Exception as e:
@@ -315,7 +316,7 @@ def main() -> int:
             pipeline_exit_code=1,
             generated_at_unix=gen_unix,
             signals_ttl_sec=ttl_sec,
-            extra={"source": "metar", "metar_errors": errors},
+            extra={"source": "metar", "observation_source": selected_source(), "metar_errors": errors},
         )
         if not args.dry_run:
             _write_json_atomic(realtime_signals_path(), payload)

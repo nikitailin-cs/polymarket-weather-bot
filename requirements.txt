@@ -102,5 +102,6 @@ xarray==2025.6.1
 xxhash==3.6.0
 yarl==1.23.0
 websocket-client
+websockets>=10.4
 web3>=7.0.0
 PySocks>=1.7.1
