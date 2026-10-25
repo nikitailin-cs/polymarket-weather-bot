@@ -44,6 +44,13 @@ def paper_portfolio_path() -> Path:
     return (_ROOT / "data" / "bots" / "bot_2_realtime" / "portfolio_paper.sqlite").resolve()
 
 
+def ensure_strategy_column(conn: sqlite3.Connection) -> None:
+    cols = {str(c[1]) for c in conn.execute("PRAGMA table_info(positions)").fetchall()}
+    if "strategy" not in cols:
+        conn.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
+        conn.commit()
+
+
 def has_position(conn: sqlite3.Connection, market_id: str, side: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM positions WHERE market_id = ? AND side = ? LIMIT 1", (market_id, side.upper())
@@ -59,18 +66,22 @@ def record_paper_fill(
     price: float,
     shares: float,
     now: Optional[datetime] = None,
+    strategy: str = "",
 ) -> bool:
     """Insert an OPEN paper position; returns False when one already exists for (market, side)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     ts = (now or datetime.now(timezone.utc)).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
     with closing(sqlite3.connect(str(db_path))) as conn:
         ensure_bot2_positions_table(conn)
+        ensure_strategy_column(conn)
         if has_position(conn, market_id, side):
             LOG.info("paper: position already exists market=%s side=%s, skipped", market_id[:16], side)
             return False
         insert_open_position(conn, market_id=market_id, side=side.upper(), price=float(price), size=float(shares), timestamp_iso_utc=ts)
+        if strategy:
+            conn.execute("UPDATE positions SET strategy = ? WHERE rowid = (SELECT max(rowid) FROM positions)", (strategy,))
         conn.commit()
-    LOG.info("paper: OPEN market=%s side=%s price=%.4f shares=%.4f cost=%.2f", market_id[:16], side, price, shares, price * shares)
+    LOG.info("paper: OPEN market=%s side=%s price=%.4f shares=%.4f cost=%.2f strategy=%s", market_id[:16], side, price, shares, price * shares, strategy or "-")
     return True
 
 

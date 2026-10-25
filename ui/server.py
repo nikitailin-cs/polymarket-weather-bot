@@ -15,6 +15,8 @@ Endpoints:
 - ``GET /api/history``       positions + PnL (portfolio_rt.sqlite), cycle summaries, alerts, daemon events
 - ``GET /api/connections``   topbar health: METAR.ws, Gamma, CLOB, prices cache, last cycle
 - ``GET /api/settings``      effective configuration, secrets masked (read-only)
+- ``GET /api/strategies``    strategies: enabled flag and its source, params, today's intents, positions
+- ``POST /api/strategies/<name>``  ``{"enabled": true|false|null}`` operator toggle (data/strategy_overrides.json)
 - ``GET /api/events``        Server-Sent Events: ``change`` whenever a watched file changes
 
 Environment: ``UI_HOST`` (127.0.0.1), ``UI_PORT`` (8765), ``UI_TOKEN`` (optional bearer /
@@ -118,6 +120,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(self.dashboard.history())
             elif path == "/api/connections":
                 self._send_json(self.dashboard.connections())
+            elif path == "/api/strategies":
+                self._send_json(self.dashboard.strategies())
             elif path == "/api/settings":
                 self._send_json(self.dashboard.settings())
             elif path == "/api/events":
@@ -134,6 +138,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR)
             except Exception:  # noqa: BLE001
                 pass
+
+    def do_POST(self) -> None:  # noqa: N802 - http.server API
+        """``POST /api/strategies/<name>`` with ``{"enabled": true|false|null}`` toggles a strategy (operator override)."""
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        if not self._authorized(query):
+            self._send_json({"error": "unauthorized"}, HTTPStatus.UNAUTHORIZED)
+            return
+        if (os.getenv("UI_READONLY") or "0").strip() == "1":
+            self._send_json({"error": "dashboard is read-only (UI_READONLY=1)"}, HTTPStatus.FORBIDDEN)
+            return
+        parts = url.path.strip("/").split("/")
+        if len(parts) != 3 or parts[0] != "api" or parts[1] != "strategies":
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        name = parts[2]
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except (ValueError, UnicodeDecodeError):
+            self._send_json({"error": "invalid JSON"}, HTTPStatus.BAD_REQUEST)
+            return
+        from strategies import REGISTRY, set_override
+
+        if name not in REGISTRY:
+            self._send_json({"error": f"unknown strategy {name!r}"}, HTTPStatus.NOT_FOUND)
+            return
+        enabled = body.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            self._send_json({"error": "enabled must be true, false or null"}, HTTPStatus.BAD_REQUEST)
+            return
+        set_override(name, enabled, who=f"dashboard@{self.address_string()}")
+        try:
+            from monitoring.telegram_alert import send_alert
+
+            send_alert(f"Strategy {name} {'enabled' if enabled else 'disabled' if enabled is False else 'reset to config'} from the dashboard", "🎛️")
+        except Exception:  # noqa: BLE001
+            LOG.debug("alert failed", exc_info=True)
+        LOG.info("strategy %s -> %s", name, enabled)
+        self._send_json(self.dashboard.strategies())
 
     def _sse(self) -> None:
         self.send_response(200)

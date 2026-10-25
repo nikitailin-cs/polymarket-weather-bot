@@ -106,6 +106,7 @@ def read_positions(path: Path, limit: int = 500) -> list[dict[str, Any]]:
                 "opened_at": d.get("timestamp"),
                 "settled_at": d.get("settled_at"),
                 "pnl": _f(d.get("pnl")),
+                "strategy": d.get("strategy") or "",
             }
         )
     return out

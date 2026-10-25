@@ -88,3 +88,4 @@ data/bots/bot_2_realtime/realtime_signals*.json
 data/bots/realtime/
 data/bots/bot_2_realtime/*.sqlite
 logs/
+data/strategy_overrides.json

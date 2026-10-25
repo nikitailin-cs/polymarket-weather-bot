@@ -15,7 +15,7 @@ the historical environment variables still apply on top.
 from __future__ import annotations
 
 from strategies.base import Intent, MarketContext, Strategy
-from strategies.config import StrategyConfig, load_config
+from strategies.config import StrategyConfig, load_config, load_overrides, overrides_path, set_override
 from strategies.registry import REGISTRY, load_strategies
 
-__all__ = ["Intent", "MarketContext", "REGISTRY", "Strategy", "StrategyConfig", "load_config", "load_strategies"]
+__all__ = ["Intent", "MarketContext", "REGISTRY", "Strategy", "StrategyConfig", "load_config", "load_overrides", "load_strategies", "overrides_path", "set_override"]

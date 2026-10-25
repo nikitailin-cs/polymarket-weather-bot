@@ -124,8 +124,11 @@ returns an `Intent` (side, probability of that side, minimum edge, ask cap, budg
 fields it wants in the signal row. `sniper.py` trades buckets the routine extreme has already
 decided; `forecast_edge.py` trades open buckets where the model probability beats the price.
 Parameters are in `config/strategies.json` (the historical `FINANCE_RT_*` variables still
-override them). The finance engine executes intents and decides nothing itself. A new
-strategy is a subclass registered in `strategies/registry.py`.
+override them). The dashboard's **Strategies** page (and the widget on the Dashboard) switches a
+strategy on or off at runtime: the toggle writes `data/strategy_overrides.json`, which wins over
+both the file and `.env`, and the next cycle picks it up; "reset to config" removes the override.
+`UI_READONLY=1` disables the toggles. The finance engine executes intents and decides nothing
+itself. A new strategy is a subclass registered in `strategies/registry.py`.
 
 **Model forecasts.** The daemon also subscribes to `metar.forecast.basic.<icao>` (GFS, ICON,
 ICON-EU, ECMWF IFS) and `metar.forecast.hires.<icao>` (HRRR, NBM, JMA MSM, ICON-D2, HARMONIE,

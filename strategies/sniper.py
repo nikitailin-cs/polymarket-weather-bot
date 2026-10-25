@@ -22,6 +22,8 @@ from strategies.base import Assessment, Intent, MarketContext, Strategy
 
 
 class SniperStrategy(Strategy):
+    """Binary: buy YES when the routine extreme already settles the bucket, NO when it can no longer resolve."""
+
     name = "sniper"
 
     def evaluate(self, ctx: MarketContext) -> Assessment:

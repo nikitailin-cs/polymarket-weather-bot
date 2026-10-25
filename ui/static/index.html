@@ -82,6 +82,16 @@
   .tile .v.pos { color: var(--ok); } .tile .v.neg { color: var(--bad); }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .kv-table td:first-child { color: var(--muted); width: 34%; }
+  .strat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1px; background: var(--line); }
+  .strat { background: var(--panel-2); padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; }
+  .strat .name { font-weight: 600; } .strat .desc { grid-column: 1 / span 2; color: var(--muted); font-size: 12px; }
+  .strat .stats { grid-column: 1 / span 2; display: flex; gap: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .strat .stats b { color: var(--fg); font-weight: 600; }
+  .switch { position: relative; width: 40px; height: 22px; border-radius: 999px; background: var(--line); border: 0; cursor: pointer; transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: left .15s, background .15s; }
+  .switch.on { background: color-mix(in srgb, var(--ok) 45%, var(--line)); } .switch.on::after { left: 21px; background: var(--ok); }
+  .switch:disabled { opacity: .5; cursor: not-allowed; }
+  .src { font-size: 11px; color: var(--muted); }
   @media (max-width: 900px) { .app { grid-template-columns: 1fr; } aside { display: none; } header.top, main { grid-column: 1; } .grid2 { grid-template-columns: 1fr; } .raw { max-width: 220px; } }
 </style>
 </head>
@@ -93,6 +103,7 @@
       <a href="#dashboard" data-page="dashboard"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>Dashboard<span class="count" id="n-open"></span></a>
       <a href="#markets" data-page="markets"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>Markets<span class="count" id="n-markets"></span></a>
       <a href="#stations" data-page="stations"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>Stations<span class="count" id="n-stations"></span></a>
+      <a href="#strategies" data-page="strategies"><svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h16M4 18h7"/><circle cx="17" cy="6" r="2"/><circle cx="14" cy="18" r="2"/></svg>Strategies<span class="count" id="n-strategies"></span></a>
       <a href="#logs" data-page="logs"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Logs<span class="count" id="n-logs"></span></a>
       <a href="#settings" data-page="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
     </nav>
@@ -114,6 +125,10 @@
       <section>
         <h2>Overview</h2>
         <div class="tiles" id="hi-tiles"></div>
+      </section>
+      <section>
+        <h2>Strategies <span class="sub muted" id="dash-strat-sub"></span></h2>
+        <div class="strat-grid" id="dash-strategies"></div>
       </section>
       <section>
         <h2>Open positions <span class="sub muted" id="open-sub"></span></h2>
@@ -160,6 +175,17 @@
           <th>Station</th><th>Status</th><th>Schedule</th><th>Last obs (UTC)</th><th class="num">Age</th><th>Next expected</th><th class="num" title="time from the observation time stamp to METAR.ws receiving the report from its source">Received in</th><th>Raw</th>
         </tr></thead><tbody></tbody></table></div>
         <div id="failed" class="empty" hidden></div>
+      </section>
+    </div>
+
+    <!-- STRATEGIES -->
+    <div class="page" id="page-strategies">
+      <section>
+        <h2>Strategies <span class="sub muted" id="strat-page-sub"></span></h2>
+        <div class="scroll"><table id="strategies-table"><thead><tr>
+          <th>Strategy</th><th>State</th><th>Set by</th><th>Parameters</th><th class="num">Intents today</th><th class="num">Open</th><th class="num">Settled</th><th class="num">PnL</th>
+        </tr></thead><tbody></tbody></table></div>
+        <div class="empty" id="strat-note"></div>
       </section>
     </div>
 
@@ -226,7 +252,7 @@
   const tile = (l, v, cls="") => `<div class="tile"><div class="l">${esc(l)}</div><div class="v ${cls}">${v}</div></div>`;
 
   // ---- routing ----
-  const pages = ["dashboard", "markets", "stations", "logs", "settings"];
+  const pages = ["dashboard", "markets", "stations", "strategies", "logs", "settings"];
   function route() {
     const h = (location.hash || "#dashboard").slice(1);
     const page = pages.includes(h) ? h : "dashboard";
@@ -389,7 +415,7 @@
         <td><b>${esc(r ? r.icao : "")}</b></td><td>${pill(p.side, p.side === "YES" ? "ok" : "bad")}</td>
         <td class="num mono">${fmt(p.price, 3)}</td><td class="num mono">${fmt(p.size, 2)}</td><td class="num mono">$${fmt(p.notional, 2)}</td><td class="num mono muted">$${fmt(p.max_payout, 2)}</td>
         <td class="num mono">${yes === null ? "–" : fmt(yes, 3)}</td><td class="num mono ${sgn(mark)==="pos"?"edge-pos":sgn(mark)==="neg"?"edge-neg":""}">${mark === null ? "–" : usd(mark)}</td>
-        <td>${r ? pill(r.signal.binary_state || "–", stateCls(r.signal.binary_state)) : "–"}</td></tr>`;
+        <td>${r ? pill(r.signal.binary_state || "–", stateCls(r.signal.binary_state)) : "–"}${p.strategy ? ` <span class="muted">${esc(p.strategy)}</span>` : ""}</td></tr>`;
     }).join("") || `<tr><td colspan="11" class="empty">no open positions — the engine records paper fills here when a target passes the edge, ask and liquidity filters</td></tr>`;
   }
   function renderHistory() {
@@ -458,6 +484,46 @@
     renderHistory();
   }));
 
+  // ---- strategies ----
+  let strategies = null;
+  async function toggleStrategy(name, enabled) {
+    try {
+      const r = await fetch(`/api/strategies/${encodeURIComponent(name)}` + location.search, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({enabled})});
+      const data = await r.json();
+      if (!r.ok) { alert(data.error || "toggle failed"); return; }
+      strategies = data; renderStrategies();
+    } catch (e) { console.error(e); alert("toggle failed: " + e); }
+  }
+  function strategyCard(s) {
+    const src = s.enabled_source === "override" ? `set here${s.override && s.override.set_at ? " · " + tsShort(s.override.set_at) : ""}` : s.enabled_source === "env" ? "from .env (FINANCE_RT_*)" : s.enabled_source === "file" ? "from config/strategies.json" : "default";
+    const it = s.intents_today || {}, ps = s.positions || {};
+    return `<div class="strat">
+      <div><span class="name">${esc(s.name)}</span> ${pill(s.enabled ? "enabled" : "off", s.enabled ? "ok" : "muted")}<div class="src">${esc(src)}</div></div>
+      <button class="switch ${s.enabled ? "on" : ""}" data-strategy="${esc(s.name)}" data-enabled="${s.enabled}" title="${s.enabled ? "disable" : "enable"} ${esc(s.name)}" ${strategies && strategies.writable ? "" : "disabled"}></button>
+      <div class="desc">${esc(s.doc || "")}</div>
+      <div class="stats"><span>intents today <b>${(it.YES||0) + (it.NO||0)}</b> <span class="muted">(${it.YES||0} YES · ${it.NO||0} NO)</span></span><span>open <b>${ps.open||0}</b></span><span>settled <b>${ps.settled||0}</b></span><span>pnl <b class="${sgn(ps.pnl)==="pos"?"edge-pos":sgn(ps.pnl)==="neg"?"edge-neg":""}">${usd(ps.pnl||0)}</b></span></div>
+    </div>`;
+  }
+  function renderStrategies() {
+    if (!strategies) return;
+    const items = strategies.items || [];
+    $("#dash-strategies").innerHTML = items.map(strategyCard).join("") || `<div class="empty">no strategies</div>`;
+    $("#dash-strat-sub").textContent = `${items.filter(s => s.enabled).length} of ${items.length} enabled · ${strategies.mode || ""} mode`;
+    $("#n-strategies").textContent = items.filter(s => s.enabled).length || "";
+    $("#strat-page-sub").textContent = $("#dash-strat-sub").textContent;
+    $("#strategies-table tbody").innerHTML = items.map(s => { const it = s.intents_today || {}, ps = s.positions || {};
+      return `<tr><td><b>${esc(s.name)}</b><div class="muted" style="white-space:normal;max-width:360px">${esc(s.doc||"")}</div></td>
+        <td><button class="switch ${s.enabled ? "on" : ""}" data-strategy="${esc(s.name)}" data-enabled="${s.enabled}" ${strategies.writable ? "" : "disabled"}></button></td>
+        <td class="muted">${esc(s.enabled_source)}${s.override ? `<div class="src">${esc(s.override.set_by||"")} ${esc(tsShort(s.override.set_at))}</div>` : ""}${s.enabled_source === "override" ? ` <a href="#" data-reset="${esc(s.name)}" class="src">reset to config</a>` : ""}</td>
+        <td class="mono wrap">${esc(Object.entries(s.params||{}).map(([k,v]) => k + "=" + v).join("  "))}</td>
+        <td class="num">${(it.YES||0) + (it.NO||0)} <span class="muted">(${it.YES||0}Y/${it.NO||0}N)</span></td>
+        <td class="num">${ps.open||0}</td><td class="num">${ps.settled||0}</td>
+        <td class="num mono ${sgn(ps.pnl)==="pos"?"edge-pos":sgn(ps.pnl)==="neg"?"edge-neg":""}">${usd(ps.pnl||0)}</td></tr>`; }).join("");
+    $("#strat-note").textContent = strategies.writable ? `Toggles write ${strategies.overrides_path} (operator override, wins over .env and ${strategies.config_path || "config/strategies.json"}); the engine reads it on the next cycle.` : "Dashboard is read-only (UI_READONLY=1).";
+    document.querySelectorAll("button.switch").forEach(b => b.onclick = () => toggleStrategy(b.dataset.strategy, b.dataset.enabled !== "true"));
+    document.querySelectorAll("a[data-reset]").forEach(a => a.onclick = (e) => { e.preventDefault(); toggleStrategy(a.dataset.reset, null); });
+  }
+
   // ---- settings ----
   let settingsLoaded = false;
   async function loadSettings() {
@@ -496,6 +562,8 @@
       renderHistory();
       renderOpenPositions();
       renderConnections(o.connections || {});
+      strategies = o.strategies || null;
+      renderStrategies();
       $("#foot-updated").textContent = "updated " + o.now_utc.slice(11, 19) + "Z";
     } catch (e) { $("#foot-updated").textContent = "update failed"; console.error(e); }
   }

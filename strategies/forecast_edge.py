@@ -25,6 +25,8 @@ from strategies.base import Assessment, Intent, MarketContext, Strategy
 
 
 class ForecastEdgeStrategy(Strategy):
+    """Probabilistic: model-forecast P(bucket) vs the quoted price, only with full-day coverage and a minimum edge."""
+
     name = "forecast_edge"
 
     def evaluate(self, ctx: MarketContext) -> Assessment:

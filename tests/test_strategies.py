@@ -61,6 +61,32 @@ class TestConfig(unittest.TestCase):
         self.assertEqual([s.name for s in load_strategies(load_config(Path(d) / "nope.json", env={}))], ["sniper", "forecast_edge"])
 
 
+    def test_operator_overrides_win_over_file_and_env(self):
+        from strategies import load_overrides, set_override
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg_p = Path(d) / "strategies.json"
+            cfg_p.write_text(json.dumps({"strategies": {"forecast_edge": {"enabled": False}}}), encoding="utf-8")
+            ov_p = Path(d) / "overrides.json"
+            env = {"FINANCE_RT_PROB_TRADING": "1"}
+            cfg = load_config(cfg_p, env=env, overrides=ov_p)
+            self.assertTrue(cfg.params("forecast_edge")["enabled"])
+            self.assertEqual(cfg.enabled_source, {"sniper": "default", "forecast_edge": "env"})
+            set_override("forecast_edge", False, path=ov_p, who="test")
+            set_override("sniper", False, path=ov_p, who="test")
+            cfg = load_config(cfg_p, env=env, overrides=ov_p)
+            self.assertFalse(cfg.params("forecast_edge")["enabled"])
+            self.assertEqual(cfg.enabled_names(), [])
+            self.assertEqual(cfg.enabled_source["forecast_edge"], "override")
+            self.assertEqual(load_overrides(ov_p)["sniper"]["set_by"], "test")
+            set_override("sniper", None, path=ov_p)  # reset -> back to defaults/file/env
+            cfg = load_config(cfg_p, env=env, overrides=ov_p)
+            self.assertEqual(cfg.enabled_names(), ["sniper"])
+            self.assertEqual(cfg.enabled_source["sniper"], "default")
+            self.assertNotIn("sniper", load_overrides(ov_p))
+            self.assertFalse((ov_p.with_suffix(".json.tmp")).exists())
+
+
 class TestSniper(unittest.TestCase):
     def test_states_and_intents(self):
         s = SniperStrategy({"enabled": True, "max_best_ask": 0.97, "max_bet_usdc": 40})

@@ -911,6 +911,7 @@ def main() -> int:
                         side=s.target.outcome_side,
                         price=s.best_ask,
                         shares=row.shares,
+                        strategy=s.target.strategy,
                     )
                 except Exception as exc:  # noqa: BLE001
                     LOG.error("paper fill failed: %s", exc)

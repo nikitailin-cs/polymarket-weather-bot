@@ -149,7 +149,8 @@ class TestServer(unittest.TestCase):
             mapping.write_text(json.dumps(TestMarkets.MAPPING), encoding="utf-8")
             sig = base / "signals.json"
             sig.write_text(json.dumps(TestMarkets.SIGNALS), encoding="utf-8")
-            env = {"UI_POLYMARKET_PRICES": "0", "METAR_SOURCE": "metar_ws"}
+            env = {"UI_POLYMARKET_PRICES": "0", "METAR_SOURCE": "metar_ws", "STRATEGY_OVERRIDES": str(base / "overrides.json"),
+                   "BOT2_PORTFOLIO_PAPER_SQLITE_PATH": str(base / "paper.sqlite"), "DRY_RUN": "1"}
             with mock.patch.dict(os.environ, env), \
                  mock.patch.object(ud, "mapping_path", lambda: mapping), \
                  mock.patch.object(ud, "signals_paths", lambda: (sig, base / "meta.json")), \
@@ -175,6 +176,34 @@ class TestServer(unittest.TestCase):
                     st = json.loads(urllib.request.urlopen(req).read())
                     self.assertEqual(st["client"]["plan"], "trader")
                     self.assertEqual(json.loads(urllib.request.urlopen(f"{url}/healthz").read()), {"ok": True})
+                    # strategies: list, toggle (operator override), reset, validation
+                    strat = json.loads(urllib.request.urlopen(f"{url}/api/strategies?token=s3cret").read())
+                    names = {s["name"]: s for s in strat["items"]}
+                    self.assertEqual(set(names), {"sniper", "forecast_edge"})
+                    self.assertTrue(strat["writable"])
+
+                    def post(name, body, code=200):
+                        req = urllib.request.Request(f"{url}/api/strategies/{name}?token=s3cret", data=json.dumps(body).encode(),
+                                                     headers={"Content-Type": "application/json"}, method="POST")
+                        try:
+                            return code, json.loads(urllib.request.urlopen(req).read())
+                        except urllib.error.HTTPError as e:
+                            return e.code, json.loads(e.read())
+
+                    code, res = post("sniper", {"enabled": False})
+                    self.assertEqual(code, 200)
+                    sn = {s["name"]: s for s in res["items"]}["sniper"]
+                    self.assertFalse(sn["enabled"])
+                    self.assertEqual(sn["enabled_source"], "override")
+                    self.assertTrue((base / "overrides.json").is_file())
+                    code, res = post("sniper", {"enabled": None})
+                    self.assertTrue({s["name"]: s for s in res["items"]}["sniper"]["enabled"])
+                    self.assertEqual(post("nope", {"enabled": True})[0], 404)
+                    self.assertEqual(post("sniper", {"enabled": "yes"})[0], 400)
+                    req = urllib.request.Request(f"{url}/api/strategies/sniper", data=b"{}", method="POST")
+                    with self.assertRaises(urllib.error.HTTPError) as cm:
+                        urllib.request.urlopen(req)
+                    self.assertEqual(cm.exception.code, 401)
                 finally:
                     httpd.shutdown()
                     httpd.server_close()

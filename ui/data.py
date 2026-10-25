@@ -564,6 +564,57 @@ class Dashboard:
             "observation_source": (os.getenv("METAR_SOURCE") or "awc"),
         }
 
+    def strategies(self, now: Optional[datetime] = None) -> dict[str, Any]:
+        """Strategies with their effective state, where the flag comes from, and today's activity."""
+        from strategies import load_config, load_overrides, load_strategies, overrides_path
+        from ui import history as h
+
+        now = now or datetime.now(timezone.utc)
+        cfg = load_config()
+        overrides = load_overrides()
+        sig_path, meta_path = signals_paths()
+        signals, _meta = load_signals(sig_path, meta_path)
+        intents: dict[str, dict[str, int]] = {}
+        for row in signals.values():
+            if row.get("rt_day_guard") not in (None, "jour_j"):
+                continue
+            for it in row.get("intents") or []:
+                if isinstance(it, dict) and it.get("strategy"):
+                    d = intents.setdefault(str(it["strategy"]), {"YES": 0, "NO": 0})
+                    d[str(it.get("side") or "NO").upper()] = d.get(str(it.get("side") or "NO").upper(), 0) + 1
+        positions = h.read_positions(h.portfolio_path())
+        by_strategy: dict[str, dict[str, Any]] = {}
+        for p in positions:
+            name = p.get("strategy") or "unknown"
+            d = by_strategy.setdefault(name, {"open": 0, "settled": 0, "pnl": 0.0, "cost": 0.0})
+            if p["status"] == "OPEN":
+                d["open"] += 1
+                d["cost"] += p.get("notional") or 0.0
+            elif p["status"] == "SETTLED":
+                d["settled"] += 1
+                d["pnl"] += p.get("pnl") or 0.0
+        items = []
+        for s in load_strategies(cfg):
+            params = {k: v for k, v in s.params.items() if k != "enabled"}
+            ov = overrides.get(s.name) or {}
+            items.append({
+                "name": s.name,
+                "enabled": s.enabled,
+                "enabled_source": cfg.enabled_source.get(s.name, "default"),
+                "override": {"enabled": ov.get("enabled"), "set_by": ov.get("set_by"), "set_at": ov.get("set_at")} if ov else None,
+                "params": params,
+                "doc": (type(s).__doc__ or "").strip().split("\n")[0] if type(s).__doc__ else "",
+                "intents_today": intents.get(s.name, {"YES": 0, "NO": 0}),
+                "positions": by_strategy.get(s.name, {"open": 0, "settled": 0, "pnl": 0.0, "cost": 0.0}),
+            })
+        return {
+            "config_path": str(cfg.path) if cfg.path else None,
+            "overrides_path": str(overrides_path()),
+            "mode": h.trading_mode(),
+            "writable": (os.getenv("UI_READONLY") or "0").strip() != "1",
+            "items": items,
+        }
+
     def settings(self) -> dict[str, Any]:
         from ui import history as h
         from ui.health import settings_view
@@ -646,4 +697,5 @@ class Dashboard:
             "markets": self.markets(now),
             "history": self.history(now),
             "connections": self.connections(now),
+            "strategies": self.strategies(now),
         }
