@@ -438,15 +438,19 @@ def run_realtime_signals() -> None:
         bucket = Bucket.from_mapping(config)
         strategy_fields: dict[str, Any] = {}
         intents: list[dict[str, Any]] = []
-        if extreme is not None and bucket is not None and weather_var in ("temp_max", "temp_min"):
+        # With a day-state capable source (METAR.ws) the strategies decide, even before the first
+        # routine report of the day (then: open, no intent). The instantaneous-METAR heuristic of the
+        # upstream only remains for the plain AWC polling source, which has no day states at all.
+        day_state_source = hasattr(registry, "fetch_day_state")
+        if bucket is not None and weather_var in ("temp_max", "temp_min") and (extreme is not None or day_state_source):
             ctx = _market_context(
                 market_id, icao, weather_var, unit, bucket, local_d, tz_name, current_local_time, deadline_str, dead_gap,
-                extreme, _fetch_forecasts(registry, icao, local_d),
+                extreme or {}, _fetch_forecasts(registry, icao, local_d),
             )
             strategy_fields, intents = _run_strategies(ctx)
         model_prob = strategy_fields.get("forecast")
         resolution_model = (
-            RESOLUTION_MODEL_DAILY_EXTREMA if extreme is not None else SIGNAL_RESOLUTION_MODEL_INSTANT_METAR
+            RESOLUTION_MODEL_DAILY_EXTREMA if (extreme is not None or hasattr(registry, "fetch_day_state")) else SIGNAL_RESOLUTION_MODEL_INSTANT_METAR
         )
 
         p_win = 0.5
@@ -481,7 +485,7 @@ def run_realtime_signals() -> None:
 
         else:
             rt_day_guard = "jour_j"
-            if extreme is not None and bucket is not None and "binary_state" in strategy_fields:
+            if bucket is not None and "binary_state" in strategy_fields:
                 p_win = float(strategy_fields.get("p_win", 0.5))
                 binary_state = str(strategy_fields.get("binary_state") or "open")
                 decision_reason = str(strategy_fields.get("decision_reason") or "")

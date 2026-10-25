@@ -242,12 +242,15 @@ class TestBot2ProducerWithSnapshot(unittest.TestCase):
         signals, _ = self._run(mapping, self._day_rows(today, 27.2))
         self.assertEqual((signals["0xmarket"]["binary_state"], signals["0xmarket"]["recommended_side"]), ("dead", "NO"))
 
-    def test_without_day_state_falls_back_to_instant_metar(self):
+    def test_without_day_state_stays_open_no_instant_heuristic(self):
+        # a METAR.ws snapshot without a routine report for the day: never decide on the instantaneous
+        # temperature (that path bought YES on four adjacent buckets once); open, no intents
         mapping, today = self._mapping(yes_if_above=True)
         signals, _ = self._run(mapping, {}, latest_temp_c=27.2)
         row = signals["0xmarket"]
-        self.assertEqual(row["resolution_model"], "instant_metar_proxy")
-        self.assertEqual(row["binary_state"], "met")
+        self.assertEqual(row["resolution_model"], "metar_ws_daily_extrema")
+        self.assertEqual((row["binary_state"], row["p_win"], row["intents"]), ("open", 0.5, []))
+        self.assertEqual(row["decision_reason"], "no day state yet")
         self.assertIsNone(row["day_extreme"])
 
     def test_stale_snapshot_marks_metar_unavailable(self):
