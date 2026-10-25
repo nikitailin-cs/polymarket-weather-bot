@@ -314,6 +314,9 @@ class DayStateTracker:
                 st = StationDayState.from_dict(row)
                 if st is None:
                     continue
+                if st.timezone != self.timezone_for(st.icao):
+                    LOG.info("dropping restored %s %s: timezone %s is now %s", st.icao, day, st.timezone, self.timezone_for(st.icao))
+                    continue
                 key = (str(icao).upper(), str(day))
                 if key not in self._states:
                     self._states[key] = st

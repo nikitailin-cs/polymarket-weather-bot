@@ -132,6 +132,14 @@ class TestStationDayState(unittest.TestCase):
         self.assertIsNone(tr2.get("KNYC", "2026-10-23"))
         self.assertEqual(StationDayState.from_dict({"icao": "X"}), None)
 
+    def test_restore_drops_states_from_another_timezone(self):
+        tr = DayStateTracker(lambda icao: "UTC")
+        tr.ingest(obs("KNYC", "2026-10-25T15:51:00Z", 20))
+        payload = tr.to_dict()
+        tr2 = DayStateTracker(lambda icao: NY)
+        self.assertEqual(tr2.restore(payload), 0)
+        self.assertEqual(len(tr2), 0)
+
 
 class TestDecideExtrema(unittest.TestCase):
     def setUp(self):

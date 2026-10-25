@@ -136,7 +136,9 @@ class Daemon:
         trigger_speci_only: bool = False,
         mapping_reload_sec: float = 60.0,
         heartbeat_sec: float = 30.0,
+        events_file: Optional[Path] = None,
     ) -> None:
+        self.events_file = events_file or EVENTS_FILE
         self.config = config or MetarWsConfig.from_env()
         self.mapping_path = mapping_path
         self.fixed_stations = fixed_stations
@@ -199,7 +201,7 @@ class Daemon:
         # "connected" is recorded once the ack (plan, limits) is in; the initial disconnected state is not an event
         connected = self.client.state.connected and bool(self.client.state.plan)
         if connected != self._last_connected and not (self._last_connected is None and not connected):
-            append_jsonl(EVENTS_FILE, {"kind": "connected" if connected else "disconnected",
+            append_jsonl(self.events_file, {"kind": "connected" if connected else "disconnected",
                                        "plan": self.client.state.plan, "error": self.client.state.last_error})
         self._last_connected = connected
         try:
@@ -222,7 +224,7 @@ class Daemon:
         if cached:
             return
         self.live_observations += 1
-        append_jsonl(EVENTS_FILE, {"kind": "observation", "icao": obs.icao_id, "temp_c": obs.temp_celsius,
+        append_jsonl(self.events_file, {"kind": "observation", "icao": obs.icao_id, "temp_c": obs.temp_celsius,
                                    "obs_time": obs.report_time_utc, "speci": obs.is_speci})
         if not self.trigger_cmd:
             return
@@ -261,7 +263,7 @@ class Daemon:
         self._trigger_running = None
         self.triggers_run += 1
         LOG.info("trigger finished rc=%s in %.1fs", rc, time.monotonic() - started)
-        append_jsonl(EVENTS_FILE, {"kind": "trigger", "reason": reason, "rc": rc, "seconds": round(time.monotonic() - started, 1)})
+        append_jsonl(self.events_file, {"kind": "trigger", "reason": reason, "rc": rc, "seconds": round(time.monotonic() - started, 1)})
         self._write_snapshot()
 
     # -- station list ---------------------------------------------------------------

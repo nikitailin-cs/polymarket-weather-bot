@@ -102,6 +102,7 @@ class TestDaemon(unittest.TestCase):
                         trigger_cmd=trigger,
                         trigger_debounce_sec=0.3,
                         heartbeat_sec=5,
+                        events_file=Path(d) / "events.jsonl",
                     )
                     await daemon.run(max_seconds=2.5)
                     return daemon
@@ -111,6 +112,10 @@ class TestDaemon(unittest.TestCase):
             self.assertEqual(daemon.live_observations, 2)
             self.assertEqual(daemon.triggers_run, 1, "burst of two reports must coalesce into one run")
             self.assertEqual(marker.read_text(), "x")
+            events = [json.loads(l) for l in (Path(d) / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([e["kind"] for e in events], ["connected", "observation", "observation", "trigger", "disconnected"])
+            self.assertEqual(events[0]["plan"], "pro")
+            self.assertEqual(events[3]["rc"], 0)
 
             data = read_snapshot(snap)
             self.assertIsNotNone(data)
