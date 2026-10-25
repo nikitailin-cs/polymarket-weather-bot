@@ -186,6 +186,10 @@
         </section>
         <div style="display:grid; gap:16px; align-content:start">
           <section>
+            <h2>Strategies <span class="sub muted" id="strat-sub"></span></h2>
+            <table id="strategies" class="kv-table"><tbody></tbody></table>
+          </section>
+          <section>
             <h2>Paths</h2>
             <table id="paths" class="kv-table"><tbody></tbody></table>
           </section>
@@ -465,6 +469,10 @@
         <td>${pill(v.source, v.source === "env" ? "info" : v.source === "file" ? "ok" : "muted")}</td></tr>`).join("");
       $("#paths tbody").innerHTML = Object.entries(s.paths||{}).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="mono wrap">${esc(v)}</td></tr>`).join("") +
         `<tr><td>.env</td><td class="mono wrap">${esc(s.env_file || "not found")}</td></tr><tr><td>python</td><td class="mono">${esc(s.python)}</td></tr>`;
+      const st = s.strategies || {};
+      $("#strat-sub").textContent = st.path ? st.path.split(/[\/]/).slice(-2).join("/") : "defaults";
+      $("#strategies tbody").innerHTML = (st.items||[]).map(it => `<tr><td>${esc(it.name)} ${pill(it.enabled ? "enabled" : "off", it.enabled ? "ok" : "muted")}</td>
+        <td class="mono wrap">${esc(Object.entries(it.params||{}).filter(([k]) => k !== "enabled").map(([k,v]) => k + "=" + v).join("  "))}</td></tr>`).join("") || `<tr><td colspan="2" class="empty">none</td></tr>`;
       const m = s.mapping || {};
       $("#mapping tbody").innerHTML = `<tr><td>markets</td><td class="mono">${esc(m.markets)}</td></tr><tr><td>stations</td><td class="mono">${esc(m.stations)}</td></tr>
         <tr><td>target dates</td><td class="mono">${esc((m.dates||[]).join(", "))}</td></tr><tr><td>refreshed</td><td class="mono">${esc(m.refreshed_at || "–")}</td></tr>

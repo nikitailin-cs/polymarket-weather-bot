@@ -162,8 +162,16 @@ def settings_view(*, paths: dict[str, str], mapping_stats: dict[str, Any], mode:
             "source": "env" if in_env is not None else ("file" if in_file is not None else "default"),
             "secret": bool(SECRET_RE.search(k)),
         })
+    try:
+        from strategies import load_config, load_strategies
+
+        cfg = load_config()
+        strategies = {"path": str(cfg.path) if cfg.path else None, "items": [s.describe() for s in load_strategies(cfg)]}
+    except Exception as e:  # noqa: BLE001
+        strategies = {"path": None, "items": [], "error": str(e)}
     return {
         "mode": mode,
+        "strategies": strategies,
         "env_file": str(env_file) if env_file.is_file() else None,
         "values": rows,
         "paths": paths,

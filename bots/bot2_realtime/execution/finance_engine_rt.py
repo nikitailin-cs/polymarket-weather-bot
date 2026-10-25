@@ -111,6 +111,10 @@ class BinaryTarget:
     outcome_side: str  # "YES" ou "NO"
     p_win: float = 1.0  # probabilité estimée de l'outcome acheté (1.0 pour met/dead)
     kind: str = "binary"  # binary | prob
+    strategy: str = "sniper"
+    min_edge: float = 0.0  # edge minimal p - best ask (0 = pas de contrainte)
+    max_best_ask: Optional[float] = None  # plafond d'ask propre à la stratégie (sinon FINANCE_RT_MAX_BEST_ASK_USDC)
+    max_bet_usdc: Optional[float] = None  # budget propre à la stratégie (sinon FINANCE_RT_MAX_BET_USDC)
 
 
 @dataclass(frozen=True)
@@ -268,6 +272,49 @@ def filter_binary_targets(signals: dict[str, Any]) -> list[BinaryTarget]:
             continue
 
     return out
+
+
+def targets_from_intents(signals: dict[str, Any]) -> tuple[list[BinaryTarget], bool]:
+    """
+    Cibles issues des ``intents`` écrits par les stratégies (``strategies/``) dans
+    ``realtime_signals.json``. Retourne ``(cibles, trouvé)`` ; ``trouvé`` False quand aucune
+    ligne ne porte le champ (ancien fichier de signaux -> filtres historiques).
+    """
+    from strategies import Intent, load_config
+
+    cfg = load_config()
+    per_strategy: dict[str, list[BinaryTarget]] = {}
+    found = False
+    for market_id, row in signals.items():
+        if not isinstance(market_id, str) or market_id.startswith("_") or not isinstance(row, dict):
+            continue
+        if "intents" not in row:
+            continue
+        found = True
+        for raw in row.get("intents") or []:
+            it = Intent.from_dict(raw) if isinstance(raw, dict) else None
+            if it is None:
+                continue
+            per_strategy.setdefault(it.strategy, []).append(BinaryTarget(
+                market_id=market_id.strip(), outcome_side=it.side, p_win=it.p, kind=it.kind, strategy=it.strategy,
+                min_edge=it.min_edge, max_best_ask=it.max_best_ask, max_bet_usdc=it.max_bet_usdc,
+            ))
+    out: list[BinaryTarget] = []
+    for name, targets in per_strategy.items():
+        params = cfg.params(name)
+        if not params.get("enabled", True):
+            continue
+        targets.sort(key=lambda t: (0 if t.outcome_side == "YES" else 1, -t.p_win))
+        try:
+            cap = int(params.get("max_targets") or 0)
+        except (TypeError, ValueError):
+            cap = 0
+        if cap > 0 and len(targets) > cap:
+            LOG.info("stratégie %s: %s cibles, limitées à %s (max_targets)", name, len(targets), cap)
+            targets = targets[:cap]
+        LOG.info("stratégie %s: %s cible(s)", name, len(targets))
+        out.extend(targets)
+    return out, found
 
 
 def _prob_trading_enabled() -> bool:
@@ -494,13 +541,15 @@ def _analyze_one_target(t: BinaryTarget, cap: float) -> Optional[L2BookSnapshot]
     if best >= 1.0 - 1e-12:
         LOG.info("L2: SKIP — best ask=%.4f (≈1.00, aucun profit) market=%s…", best, t.market_id[:20])
         return L2BookSnapshot(target=t, token_id=tid, best_ask=best, best_ask_size=top.best_ask_size, tick_size=top.tick_size, passes_profit_cap=False)
-    ok = best <= cap + 1e-9
-    if ok and t.kind == "prob":
+    cap_t = t.max_best_ask if t.max_best_ask is not None else cap
+    ok = best <= cap_t + 1e-9
+    min_edge = t.min_edge if t.min_edge > 0 else (_prob_min_edge() if t.kind == "prob" else 0.0)
+    if ok and min_edge > 0:
         edge = t.p_win - best
-        ok = edge >= _prob_min_edge() - 1e-9
+        ok = edge >= min_edge - 1e-9
         LOG.info(
-            "L2: prob target p=%.3f best ask=%.4f edge=%+.3f %s (outcome=%s) market=%s…",
-            t.p_win, best, edge, "OK" if ok else "SKIP (edge < min)", t.outcome_side, t.market_id[:20],
+            "L2: %s p=%.3f best ask=%.4f edge=%+.3f %s (outcome=%s) market=%s…",
+            t.strategy, t.p_win, best, edge, "OK" if ok else f"SKIP (edge < {min_edge:.2f})", t.outcome_side, t.market_id[:20],
         )
     elif not ok:
         LOG.info("L2: SKIP rentabilité — best ask=%.4f > plafond FINANCE_RT_MAX_BEST_ASK_USDC=%.4f market=%s…", best, cap, t.market_id[:20])
@@ -577,10 +626,11 @@ def size_attacks_from_l2(
             )
             continue
 
+        bet_cap = max_bet if snap.target.max_bet_usdc is None else min(max_bet, float(snap.target.max_bet_usdc))
         if remaining is not math.inf:
-            eff_budget = min(max_bet, max(0.0, remaining))
+            eff_budget = min(bet_cap, max(0.0, remaining))
         else:
-            eff_budget = max_bet
+            eff_budget = bet_cap
 
         size_shares = eff_budget / price
         if snap.best_ask_size > 0:
@@ -783,26 +833,29 @@ def main() -> int:
         LOG.error("Chargement signaux: %s", exc)
         return 1
 
-    targets = filter_binary_targets(signals)
-    if _prob_trading_enabled():
-        prob_targets = filter_prob_targets(signals)
-        LOG.info("Cibles probabilistes: %s (FINANCE_RT_PROB_TRADING, edge min %.2f)", len(prob_targets), _prob_min_edge())
-        targets.extend(prob_targets)
+    targets, from_strategies = targets_from_intents(signals)
+    if not from_strategies:
+        # signals written before the strategies package: historical filters
+        targets = filter_binary_targets(signals)
+        if _prob_trading_enabled():
+            prob_targets = filter_prob_targets(signals)
+            LOG.info("Cibles probabilistes: %s (FINANCE_RT_PROB_TRADING, edge min %.2f)", len(prob_targets), _prob_min_edge())
+            targets.extend(prob_targets)
     if not targets:
         LOG.info(
             "Filtre binaire: aucune cible (p_win 1.0/met ou 0.0/dead) — rien à exécuter."
         )
         return 0
-    # Bucket events produce many dead buckets per station: bound the L2 work per cycle,
-    # YES (met) targets first, then NO (dead) targets in mapping order.
-    try:
-        max_targets = int(os.getenv("FINANCE_RT_MAX_TARGETS_PER_CYCLE", "40"))
-    except ValueError:
-        max_targets = 40
-    targets.sort(key=lambda t: (0 if t.kind == "binary" and t.outcome_side == "YES" else 1 if t.kind == "prob" else 2, -t.p_win))
-    if max_targets > 0 and len(targets) > max_targets:
-        LOG.info("Filtre binaire: %s cibles, limitées à %s (FINANCE_RT_MAX_TARGETS_PER_CYCLE)", len(targets), max_targets)
-        targets = targets[:max_targets]
+    if not from_strategies:
+        # historical path: bound the L2 work per cycle, YES (met) first, then prob, then NO
+        try:
+            max_targets = int(os.getenv("FINANCE_RT_MAX_TARGETS_PER_CYCLE", "40"))
+        except ValueError:
+            max_targets = 40
+        targets.sort(key=lambda t: (0 if t.kind == "binary" and t.outcome_side == "YES" else 1 if t.kind == "prob" else 2, -t.p_win))
+        if max_targets > 0 and len(targets) > max_targets:
+            LOG.info("Filtre binaire: %s cibles, limitées à %s (FINANCE_RT_MAX_TARGETS_PER_CYCLE)", len(targets), max_targets)
+            targets = targets[:max_targets]
 
     for t in targets:
         LOG.info(

@@ -41,9 +41,9 @@ from core.rt_range_policy import narrow_range_scalp_day  # noqa: E402
 from core.rt_signal_health import summarize_signals_health  # noqa: E402
 from monitoring.error_guard import run_guarded  # noqa: E402
 from core.metar_source import get_metar_registry  # noqa: E402
-from core.rt_daily_extrema import RESOLUTION_MODEL_DAILY_EXTREMA, Bucket, decide_bucket  # noqa: E402
+from core.rt_daily_extrema import RESOLUTION_MODEL_DAILY_EXTREMA, Bucket  # noqa: E402
+from strategies import MarketContext, load_strategies  # noqa: E402
 from core.station_day_state import resolution_value  # noqa: E402
-from core.forecast_state import bucket_probability  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,38 +131,69 @@ def _day_extreme(state: Any, weather_var: str, unit: str) -> Optional[dict[str, 
     }
 
 
-def _model_probability(registry: Any, icao: str, local_d: Any, weather_var: str, bucket: Any, unit: str, extreme: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """P(bucket) from METAR.ws model forecasts conditioned on the observed routine extreme, or None."""
+STRATEGIES = load_strategies()
+
+
+def _fetch_forecasts(registry: Any, icao: str, local_d: Any) -> dict[str, Any]:
     fetch = getattr(registry, "fetch_forecasts", None)
-    if fetch is None or bucket is None:
-        return None
+    if fetch is None:
+        return {}
     try:
-        forecasts = fetch(icao, local_d)
+        return dict(fetch(icao, local_d) or {})
     except Exception as e:  # noqa: BLE001
         logger.warning("forecasts unavailable for %s: %s", icao, e)
-        return None
-    if not forecasts:
-        return None
-    day_end = None
+        return {}
+
+
+def _day_end_utc(tz_name: str, local_d: Any) -> Optional[datetime]:
     try:
-        tz = pytz.timezone(str((extreme or {}).get("timezone") or "UTC"))
+        tz = pytz.timezone(str(tz_name or "UTC"))
         d = date.fromisoformat(str(local_d))
-        day_end = tz.localize(datetime.combine(d + timedelta(days=1), datetime.min.time())).astimezone(timezone.utc)
+        return tz.localize(datetime.combine(d + timedelta(days=1), datetime.min.time())).astimezone(timezone.utc)
     except Exception:  # noqa: BLE001 - unknown zone/date: no late rule
-        day_end = None
-    bp = bucket_probability(
-        variable=weather_var,
-        low=bucket.low,
-        high=bucket.high,
-        unit=unit,
-        forecasts=forecasts.values(),
-        observed_extreme_c=(extreme or {}).get("value_c"),
-        day_end_utc=day_end,
-        observed_covers_day=bool((extreme or {}).get("coverage_ok", False)),
-    )
-    if bp is None:
         return None
-    return {"p": bp.p, "models": bp.models, "mean_c": bp.mean_c, "spread_c": bp.spread_c, "components": bp.components}
+
+
+def _market_context(
+    market_id: str, icao: str, weather_var: str, unit: str, bucket: Any, local_d: Any, tz_name: str,
+    local_now: datetime, deadline_str: str, dead_gap: float, extreme: dict[str, Any], forecasts: dict[str, Any],
+) -> MarketContext:
+    """Facts for the strategies: bucket, observed routine extreme, coverage, forecasts, time left."""
+    return MarketContext(
+        market_id=market_id,
+        icao=icao,
+        variable=weather_var,
+        unit=unit,
+        bucket=bucket,
+        target_date=str(local_d),
+        timezone=tz_name,
+        local_now=local_now,
+        deadline_hhmm=deadline_str,
+        dead_min_gap=dead_gap,
+        day_end_utc=_day_end_utc(tz_name, local_d),
+        extreme_c=extreme.get("value_c"),
+        resolution_value=extreme.get("resolution_value"),
+        coverage_ok=bool(extreme.get("coverage_ok", False)),
+        obs_count=int(extreme.get("obs_count") or 0),
+        lead_value_c=extreme.get("lead_value_c"),
+        forecasts=forecasts,
+    )
+
+
+def _run_strategies(ctx: MarketContext) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Every strategy's signal fields merged, plus the intents of the enabled ones."""
+    fields: dict[str, Any] = {}
+    intents: list[dict[str, Any]] = []
+    for strat in STRATEGIES:
+        try:
+            a = strat.evaluate(ctx)
+        except Exception as e:  # noqa: BLE001 - one broken strategy must not stop the cycle
+            logger.exception("strategy %s failed on %s: %s", strat.name, ctx.market_id[:16], e)
+            continue
+        fields.update(a.fields)
+        if a.intent is not None:
+            intents.append(a.intent.to_dict())
+    return fields, intents
 
 
 def _day_coverage(state: Any, grace_min: int = 90) -> tuple[bool, str]:
@@ -405,7 +436,15 @@ def run_realtime_signals() -> None:
         # decisions use the whole-degree resolution value; the precise extreme stays in the row
         current_temp = float(extreme["resolution_value"]) if extreme is not None else float(instant_temp)
         bucket = Bucket.from_mapping(config)
-        model_prob = _model_probability(registry, icao, local_d, weather_var, bucket, unit, extreme) if weather_var in ("temp_max", "temp_min") else None
+        strategy_fields: dict[str, Any] = {}
+        intents: list[dict[str, Any]] = []
+        if extreme is not None and bucket is not None and weather_var in ("temp_max", "temp_min"):
+            ctx = _market_context(
+                market_id, icao, weather_var, unit, bucket, local_d, tz_name, current_local_time, deadline_str, dead_gap,
+                extreme, _fetch_forecasts(registry, icao, local_d),
+            )
+            strategy_fields, intents = _run_strategies(ctx)
+        model_prob = strategy_fields.get("forecast")
         resolution_model = (
             RESOLUTION_MODEL_DAILY_EXTREMA if extreme is not None else SIGNAL_RESOLUTION_MODEL_INSTANT_METAR
         )
@@ -442,17 +481,10 @@ def run_realtime_signals() -> None:
 
         else:
             rt_day_guard = "jour_j"
-            if extreme is not None and bucket is not None:
-                decision = decide_bucket(
-                    variable=weather_var,
-                    bucket=bucket,
-                    extreme_value=current_temp,
-                    local_now=current_local_time,
-                    deadline_hhmm=deadline_str,
-                    dead_min_gap=dead_gap,
-                )
-                p_win, binary_state = decision.p_win, decision.binary_state
-                decision_reason = decision.reason
+            if extreme is not None and bucket is not None and "binary_state" in strategy_fields:
+                p_win = float(strategy_fields.get("p_win", 0.5))
+                binary_state = str(strategy_fields.get("binary_state") or "open")
+                decision_reason = str(strategy_fields.get("decision_reason") or "")
             elif is_above and current_temp >= threshold:
                 p_win = 1.0
                 binary_state = "met"
@@ -487,6 +519,8 @@ def run_realtime_signals() -> None:
             "decision_reason": decision_reason,
             "p_model": model_prob["p"] if model_prob else None,
             "forecast": model_prob,
+            "intents": intents if rt_day_guard == "jour_j" else [],
+            "strategy_notes": {k: v for k, v in strategy_fields.items() if k.endswith("_skip")},
             "raw_metar": metar_data.get("rawOb") if metar_data else (extreme or {}).get("raw"),
             "obs_time_local": current_local_time.strftime("%Y-%m-%d %H:%M:%S"),
             "target_date": target_date_raw,

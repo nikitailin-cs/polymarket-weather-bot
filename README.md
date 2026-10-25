@@ -117,6 +117,16 @@ Frequent obs10 observations (MADIS/KNMI, 5-10 min) never count for resolution an
 a cycle: they feed the leading extreme, the "Fast" column and the sparkline. Model error
 assumptions live in `data/forecast_model_errors.json` (per station, per model, per tier).
 
+**Strategies live in `strategies/`**, one file each behind one contract
+(`strategies/base.py`): the producer builds a `MarketContext` per market (bucket, observed
+routine extreme and its coverage of the day, model forecasts, time left) and every strategy
+returns an `Intent` (side, probability of that side, minimum edge, ask cap, budget) plus the
+fields it wants in the signal row. `sniper.py` trades buckets the routine extreme has already
+decided; `forecast_edge.py` trades open buckets where the model probability beats the price.
+Parameters are in `config/strategies.json` (the historical `FINANCE_RT_*` variables still
+override them). The finance engine executes intents and decides nothing itself. A new
+strategy is a subclass registered in `strategies/registry.py`.
+
 **Model forecasts.** The daemon also subscribes to `metar.forecast.basic.<icao>` (GFS, ICON,
 ICON-EU, ECMWF IFS) and `metar.forecast.hires.<icao>` (HRRR, NBM, JMA MSM, ICON-D2, HARMONIE,
 ARPEGE): one record per model run and station local day with the forecast max/min and the time

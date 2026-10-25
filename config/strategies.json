@@ -1,0 +1,20 @@
+{
+  "_note": "Strategy parameters. Each key is a strategy in strategies/ (sniper.py, forecast_edge.py). Environment variables FINANCE_RT_* still override these values.",
+  "strategies": {
+    "sniper": {
+      "enabled": true,
+      "max_best_ask": 0.99,
+      "max_bet_usdc": 50.0,
+      "max_targets": 40
+    },
+    "forecast_edge": {
+      "enabled": false,
+      "min_edge": 0.08,
+      "max_best_ask": 0.99,
+      "max_bet_usdc": 25.0,
+      "max_targets": 15,
+      "require_full_day": true,
+      "min_models": 1
+    }
+  }
+}
