@@ -87,7 +87,8 @@ class TestProbability(unittest.TestCase):
         buckets = [(None, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, None)]
         ps = [bucket_probability(variable="temp_max", low=lo, high=hi, unit="C", forecasts=fcs, observed_extreme_c=None, now_utc=now).p for lo, hi in buckets]
         self.assertAlmostEqual(sum(ps), 1.0, places=2)
-        self.assertEqual(max(range(len(ps)), key=lambda i: ps[i]), 3)  # 16C most likely
+        # the partial icon-eu run bounds the max at >= 15.2, so the models' lower tails pile into 15C
+        self.assertEqual(max(range(len(ps)), key=lambda i: ps[i]), 2)
         # observed routine max 16.2 so far: buckets below 16 are impossible, 16 contains it
         p_below = bucket_probability(variable="temp_max", low=14, high=14, unit="C", forecasts=fcs, observed_extreme_c=16.2, now_utc=now)
         p_16 = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.2, now_utc=now)
@@ -95,7 +96,16 @@ class TestProbability(unittest.TestCase):
         self.assertEqual(p_below.p, 0.0)
         self.assertGreater(p_16.p, 0.5)
         self.assertGreater(p_17.p, 0.0)
-        self.assertEqual(p_16.models, 3)
+        self.assertEqual(p_16.models, 2)  # the partial icon-eu run is a bound, not a component
+
+    def test_partial_runs_only_bound_the_extreme(self):
+        now = datetime(2026, 10, 25, 14, tzinfo=timezone.utc)
+        only_partial = [rec("hrrr", "hires", 16.3, complete=False)]
+        self.assertIsNone(bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=only_partial, observed_extreme_c=12.0, now_utc=now))
+        fcs = [rec("gfs", "basic", 14.0), rec("hrrr", "hires", 16.3, complete=False)]
+        # partial hrrr already saw 16.3: buckets below 16 are impossible even though gfs says 14
+        p_14 = bucket_probability(variable="temp_max", low=14, high=14, unit="C", forecasts=fcs, observed_extreme_c=12.0, now_utc=now)
+        self.assertEqual(p_14.p, 0.0)
 
     def test_after_peak_observation_dominates(self):
         fcs = [rec("gfs", "basic", 19.0)]

@@ -16,9 +16,10 @@ model. :func:`bucket_probability` turns those forecasts plus the observed
 routine extreme so far into ``P(resolution value falls in the bucket)`` with a
 simple, uncalibrated normal mixture:
 
-- each model contributes a normal around its forecast extreme with a sigma per
-  tier (``FORECAST_SIGMA_HIRES_C`` 1.3, ``FORECAST_SIGMA_BASIC_C`` 1.9 by default);
-  runs that do not cover the whole local day get a wider sigma;
+- each model run that covers the whole local day contributes a normal around its
+  forecast extreme with a sigma per tier (``FORECAST_SIGMA_HIRES_C`` 1.3,
+  ``FORECAST_SIGMA_BASIC_C`` 1.9 by default); a run covering only part of the day
+  is used as a bound (the day's max is at least its max), never as a centre;
 - the day's max cannot end below the routine max already observed (and the min
   cannot end above the observed min): the mixture is conditioned on that;
 - once the forecast peak time is well past (``FORECAST_PEAK_PASSED_HOURS`` 2),
@@ -285,22 +286,31 @@ def bucket_probability(
     peak_hours = _env_float("FORECAST_PEAK_PASSED_HOURS", 2.0)
 
     comps: list[tuple[float, float, float, dict[str, Any]]] = []  # (weight, mean, sigma, info)
+    partial_bound: Optional[float] = None  # a run covering part of the day only bounds the extreme
     for rec in forecasts:
         val = rec.temp_max_c if rises else rec.temp_min_c
         if val is None:
             continue
-        sigma = sig_hi if rec.tier == "hires" else sig_basic
         if not rec.complete:
-            sigma *= 1.5
+            # a partial run's max/min is the extreme of the hours it covers, not of the day:
+            # the day's max is at least that (min at most), nothing more
+            partial_bound = val if partial_bound is None else (max(partial_bound, val) if rises else min(partial_bound, val))
+            continue
+        sigma = sig_hi if rec.tier == "hires" else sig_basic
         valid = rec.max_valid_utc if rises else rec.min_valid_utc
         late = valid is not None and now > valid + timedelta(hours=peak_hours) and observed_extreme_c is not None
         mean = val
         if late:
             mean, sigma = float(observed_extreme_c), sig_late
-        weight = 1.0 if rec.complete else 0.6
-        comps.append((weight, mean, sigma, {"model": rec.model, "tier": rec.tier, "value_c": val, "sigma_c": round(sigma, 2), "run_utc": format_utc(rec.run_utc), "late": late}))
+        comps.append((1.0, mean, sigma, {"model": rec.model, "tier": rec.tier, "value_c": val, "sigma_c": round(sigma, 2), "run_utc": format_utc(rec.run_utc), "late": late}))
     if not comps:
         return None
+    if partial_bound is not None:
+        # fold the partial-run bound into the observation bound (same direction, same meaning)
+        if observed_extreme_c is None:
+            observed_extreme_c = partial_bound
+        else:
+            observed_extreme_c = max(observed_extreme_c, partial_bound) if rises else min(observed_extreme_c, partial_bound)
 
     total_w = sum(c[0] for c in comps)
     p = 0.0
