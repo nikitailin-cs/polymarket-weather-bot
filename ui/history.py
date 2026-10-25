@@ -58,6 +58,18 @@ def cycle_log_path() -> Path:
     return _ROOT / "logs" / "update_bot_rt_cycle.log"
 
 
+def cycle_summaries_path() -> Path:
+    return cycle_log_path().parent / "cycle_summaries.jsonl"
+
+
+def load_cycles(limit: int = 100) -> list[dict[str, Any]]:
+    """Cycle summaries: the compact jsonl written by run_cycle.py, else parsed from the big log tail."""
+    rows = parse_cycle_summaries(_tail_lines(cycle_summaries_path(), limit * 3), limit=limit)
+    if rows:
+        return rows
+    return parse_cycle_summaries(_tail_lines(cycle_log_path(), 20000), limit=limit)
+
+
 # -- positions -----------------------------------------------------------------------
 
 def read_positions(path: Path, limit: int = 500) -> list[dict[str, Any]]:

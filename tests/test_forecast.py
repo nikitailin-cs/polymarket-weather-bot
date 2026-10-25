@@ -126,6 +126,11 @@ class TestProbability(unittest.TestCase):
         p2 = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.1, now_utc=noon, day_end_utc=day_end)
         self.assertLess(p2.p, 0.3)
         self.assertFalse(p2.components[0]["late"])
+        # a tracker that only saw the evening must not turn its partial max into the day's answer
+        p3 = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.1, now_utc=late, day_end_utc=day_end, observed_covers_day=False)
+        self.assertLess(p3.p, 0.3)
+        self.assertFalse(p3.components[0]["late"])
+        self.assertIn("do not cover", p3.note)
 
     def test_min_market(self):
         fcs = [rec("gfs", "basic", 15.0, mn=4.2, valid="2026-10-25T11:00:00Z")]
@@ -163,6 +168,7 @@ class TestEngineProbTargets(unittest.TestCase):
             "0xc": {"binary_state": "open", "p_model": 0.55},   # too close to coin flip
             "0xd": {"binary_state": "dead", "p_model": 0.01},   # binary path handles it
             "0xe": {"binary_state": "open"},                    # no model
+            "0xf": {"binary_state": "open", "p_model": 0.95, "day_extreme": {"coverage_ok": False}},  # partial day: skipped
         }
         with mock.patch.dict(os.environ, {"FINANCE_RT_PROB_MIN_EDGE": "0.08", "FINANCE_RT_MAX_PROB_TARGETS": "10"}):
             t = filter_prob_targets(signals)

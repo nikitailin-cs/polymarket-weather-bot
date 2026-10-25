@@ -293,6 +293,9 @@ def filter_prob_targets(signals: dict[str, Any]) -> list[BinaryTarget]:
             continue
         if str(row.get("binary_state", "")).strip().lower() != "open":
             continue
+        ext = row.get("day_extreme") or {}
+        if isinstance(ext, dict) and ext and not ext.get("coverage_ok", True):
+            continue  # the observed extreme does not cover the day: the model cannot be trusted either way
         p = row.get("p_model")
         if not isinstance(p, (int, float)):
             continue

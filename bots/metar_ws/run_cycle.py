@@ -134,6 +134,12 @@ def run_cycle(pipeline: Optional[str] = None) -> int:
     }
     with log.open("a", encoding="utf-8") as f:
         f.write(f"[run_cycle] cycle_summary {json.dumps(summary, ensure_ascii=False)}\n")
+    try:  # compact history for the dashboard (the main log holds thousands of producer lines per cycle)
+        summaries = log.parent / "cycle_summaries.jsonl"
+        with summaries.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(summary, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
     LOG.info("cycle_summary %s", json.dumps(summary, ensure_ascii=False))
     return agg
 

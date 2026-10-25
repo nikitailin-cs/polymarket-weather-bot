@@ -108,11 +108,14 @@ def _day_extreme(state: Any, weather_var: str, unit: str) -> Optional[dict[str, 
         value = round(float(value_c), 1)
     # whole-degree value per the market rule (routine reports, tenths, halves rounded up)
     res_value = resolution_value(float(value_c), unit)
+    coverage_ok, first_obs = _day_coverage(state)
     return {
         "kind": weather_var,
         "value": value,
         "resolution_value": res_value,
         "value_c": float(value_c),
+        "coverage_ok": coverage_ok,
+        "first_obs_utc": first_obs,
         "lead_value_c": lead_c,
         "lead_resolution_value": resolution_value(lead_c, unit) if lead_c is not None else None,
         "lead_is_speci": lead_speci,
@@ -155,10 +158,30 @@ def _model_probability(registry: Any, icao: str, local_d: Any, weather_var: str,
         forecasts=forecasts.values(),
         observed_extreme_c=(extreme or {}).get("value_c"),
         day_end_utc=day_end,
+        observed_covers_day=bool((extreme or {}).get("coverage_ok", False)),
     )
     if bp is None:
         return None
     return {"p": bp.p, "models": bp.models, "mean_c": bp.mean_c, "spread_c": bp.spread_c, "components": bp.components}
+
+
+def _day_coverage(state: Any, grace_min: int = 90) -> tuple[bool, str]:
+    """
+    True when the day state's first routine report falls within ``grace_min`` of the station's
+    local midnight, i.e. the running extreme covers the whole day so far. A daemon started
+    mid-day gives a partial extreme: still a bound for the probability, never "the day's value".
+    """
+    first = str(getattr(state, "first_obs_utc", "") or "")
+    if not first:
+        return False, ""
+    try:
+        tz = pytz.timezone(str(getattr(state, "timezone", "") or "UTC"))
+        d = date.fromisoformat(str(state.local_date))
+        day_start = tz.localize(datetime.combine(d, datetime.min.time())).astimezone(timezone.utc)
+        first_dt = datetime.fromisoformat(first.replace("Z", "+00:00"))
+        return (first_dt - day_start).total_seconds() <= grace_min * 60, first
+    except Exception:  # noqa: BLE001
+        return False, first
 
 
 def _observation_note(weather_var: str, *, use_extrema: bool = False) -> str:
@@ -401,7 +424,7 @@ def run_realtime_signals() -> None:
         elif day_kind == "premature":
             binary_state = "premature"
             rt_day_guard = "premature"
-            logger.info(
+            logger.debug(
                 "Signal %s (%s) | garde jour J: prématuré (local=%s) — pas de scalp RT",
                 market_id[:20] + "…" if len(market_id) > 22 else market_id,
                 icao,
@@ -411,7 +434,7 @@ def run_realtime_signals() -> None:
         elif day_kind == "past_target":
             binary_state = "past_target"
             rt_day_guard = "past_target"
-            logger.info(
+            logger.debug(
                 "Signal %s (%s) | garde jour J: après fenêtre contrat — pas de scalp RT",
                 market_id[:20] + "…" if len(market_id) > 22 else market_id,
                 icao,
@@ -484,7 +507,7 @@ def run_realtime_signals() -> None:
         signals[market_id] = sig_row
         processed += 1
 
-        logger.info(
+        (logger.info if rt_day_guard == "jour_j" else logger.debug)(
             "Signal %s (%s) | Temp: %s | Seuil: %s | P_WIN: %s | État: %s",
             market_id[:20] + "…" if len(market_id) > 22 else market_id,
             icao,

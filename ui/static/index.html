@@ -347,7 +347,7 @@
         <td><b>${esc(r.icao)}</b></td>
         <td class="muted">${esc(r.variable.replace("temp_",""))}</td>
         <td class="num mono">${bucketTxt(r)}</td>
-        <td class="num"><b>${r.resolution_value === null || r.resolution_value === undefined ? fmt(r.day_extreme) : r.resolution_value}</b>${r.day_extreme !== null && r.resolution_value !== null ? ` <span class="muted">${fmt(r.day_extreme)}</span>` : ""}${r.lead_resolution_value !== null && r.lead_resolution_value !== undefined && r.lead_resolution_value !== r.resolution_value ? ` <span class="speci" title="leading incl. SPECI">→${r.lead_resolution_value}</span>` : ""}${r.obs_count ? ` <span class="muted">(${r.obs_count})</span>` : ""}</td>
+        <td class="num"><b>${r.resolution_value === null || r.resolution_value === undefined ? fmt(r.day_extreme) : r.resolution_value}</b>${r.day_extreme !== null && r.resolution_value !== null ? ` <span class="muted">${fmt(r.day_extreme)}</span>` : ""}${r.lead_resolution_value !== null && r.lead_resolution_value !== undefined && r.lead_resolution_value !== r.resolution_value ? ` <span class="speci" title="leading incl. SPECI">→${r.lead_resolution_value}</span>` : ""}${r.obs_count ? ` <span class="muted">(${r.obs_count})</span>` : ""}${r.coverage_ok === false ? ` ${pill("partial", "warn")}` : ""}</td>
         <td class="num ${hit ? "gap-hit" : past ? "edge-neg" : "gap-pos"}">${r.gap === null ? "–" : (hit ? "in" : past ? "past" : fmt(r.gap, 0))}</td>
         <td title="${esc(s.reason||"")}">${s.binary_state ? pill(s.binary_state, stateCls(s.binary_state)) : pill("no signal","warn")}</td>
         <td class="num mono">${fmt(s.p_win, 2)}</td>

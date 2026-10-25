@@ -201,6 +201,9 @@ class TestRunCycle(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["ok"])
             self.assertEqual(rows[0]["finance"], 0)
+            compact = (log.parent / "cycle_summaries.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(compact), 1)
+            self.assertEqual(parse_cycle_summaries(compact)[0]["ts"], rows[0]["ts"])
 
 
 if __name__ == "__main__":

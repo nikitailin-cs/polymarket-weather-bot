@@ -359,6 +359,7 @@ def market_rows(
                 "day_extreme_c": extreme_c,
                 "resolution_value": res_val,
                 "lead_resolution_value": lead_val,
+                "coverage_ok": ((sig.get("day_extreme") or {}).get("coverage_ok") if isinstance(sig.get("day_extreme"), dict) else None),
                 "bucket": {"low": bucket.low, "high": bucket.high} if bucket is not None else None,
                 "gap": gap,
                 "obs_count": st.get("obs_count") if isinstance(st, dict) else None,
@@ -540,7 +541,7 @@ class Dashboard:
         from ui.health import metar_ws_view
 
         now = now or datetime.now(timezone.utc)
-        cycles = h.parse_cycle_summaries(h._tail_lines(h.cycle_log_path(), 400), limit=1)
+        cycles = h.load_cycles(limit=1)
         last = cycles[0] if cycles else None
         last_dt = parse_utc(last["ts"]) if last else None
         probes = self.health.view()
@@ -589,7 +590,7 @@ class Dashboard:
         from ui.history import ALERTS_FILE, EVENTS_FILE, cycle_log_path, portfolio_path
 
         sig, meta = signals_paths()
-        return [self.snapshot_file, sig, meta, mapping_path(), portfolio_path(), cycle_log_path(), ALERTS_FILE, EVENTS_FILE]
+        return [self.snapshot_file, sig, meta, mapping_path(), portfolio_path(), cycle_log_path().parent / "cycle_summaries.jsonl", ALERTS_FILE, EVENTS_FILE]
 
     def history(self, now: Optional[datetime] = None) -> dict[str, Any]:
         from ui import history as h
@@ -600,7 +601,7 @@ class Dashboard:
         return h.history_view(
             positions=h.read_positions(h.portfolio_path()),
             names=names,
-            cycles=h.parse_cycle_summaries(h._tail_lines(h.cycle_log_path(), 4000)),
+            cycles=h.load_cycles(),
             alerts=h.read_jsonl(h.ALERTS_FILE),
             events=h.read_jsonl(h.EVENTS_FILE),
             now=now,

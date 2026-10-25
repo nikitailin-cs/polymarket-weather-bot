@@ -310,6 +310,7 @@ def bucket_probability(
     observed_extreme_c: Optional[float],
     now_utc: Optional[datetime] = None,
     day_end_utc: Optional[datetime] = None,
+    observed_covers_day: bool = True,
 ) -> Optional[BucketProbability]:
     """
     P(resolution value in bucket): the day's extreme is X = max(observed, Y) (min for
@@ -329,7 +330,9 @@ def bucket_probability(
     sig_late = _env_float("FORECAST_SIGMA_LATE_C", 0.6)
     late_hours = _env_float("FORECAST_LATE_HOURS", 2.0)
     remaining_h = (day_end_utc - now).total_seconds() / 3600.0 if day_end_utc is not None else None
-    late = remaining_h is not None and remaining_h < late_hours and observed_extreme_c is not None
+    # the end-of-day collapse onto the observed value needs the whole day observed: a tracker that
+    # started mid-day holds only a partial extreme (still a valid bound, never the day's answer)
+    late = remaining_h is not None and remaining_h < late_hours and observed_extreme_c is not None and observed_covers_day
 
     comps: list[tuple[float, float, float, dict[str, Any]]] = []  # (weight, mean, sigma, info)
     for rec in forecasts:
@@ -378,7 +381,8 @@ def bucket_probability(
     mean_c = sum(c[0] * c[1] for c in comps) / total_w
     spread = (max(vals) - min(vals)) if len(vals) > 1 else 0.0
     note = (f"{len(comps)} run(s), sigma per tier, conditioned on observed {'max' if rises else 'min'}"
-            + (f", {remaining_h:.1f} h of the local day left" if remaining_h is not None else ""))
+            + (f", {remaining_h:.1f} h of the local day left" if remaining_h is not None else "")
+            + ("" if observed_covers_day else ", observations do not cover the whole day"))
     return BucketProbability(p=round(p, 4), models=len(comps), mean_c=round(mean_c, 2), spread_c=round(spread, 2), note=note, components=[c[3] for c in comps])
 
 
