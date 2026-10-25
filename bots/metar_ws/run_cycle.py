@@ -43,13 +43,27 @@ def _cycle_log() -> Path:
     return _ROOT / "logs" / "update_bot_rt_cycle.log"
 
 
+def _step_timeout() -> Optional[float]:
+    raw = (os.getenv("RUN_CYCLE_STEP_TIMEOUT_SEC") or "150").strip()
+    try:
+        v = float(raw)
+    except ValueError:
+        v = 150.0
+    return v if v > 0 else None
+
+
 def _run(script: str, log: Path) -> int:
+    """Run one step with this interpreter; a step over RUN_CYCLE_STEP_TIMEOUT_SEC is killed (rc 124)."""
     cmd = [sys.executable, str(_ROOT / script)]
     started = time.monotonic()
     with log.open("a", encoding="utf-8") as f:
         f.write(f"--- {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {script}\n")
         f.flush()
-        rc = subprocess.call(cmd, cwd=str(_ROOT), stdout=f, stderr=subprocess.STDOUT)
+        try:
+            rc = subprocess.call(cmd, cwd=str(_ROOT), stdout=f, stderr=subprocess.STDOUT, timeout=_step_timeout())
+        except subprocess.TimeoutExpired:
+            rc = 124
+            f.write(f"[run_cycle] {script} killed after {_step_timeout()}s (RUN_CYCLE_STEP_TIMEOUT_SEC)\n")
     LOG.info("%s rc=%s (%.1fs)", script, rc, time.monotonic() - started)
     return rc
 

@@ -456,99 +456,60 @@ def fetch_l2_orderbook(token_id: str) -> Optional[dict[str, Any]]:
     return fe.fetch_clob_book(token_id)
 
 
+def _analyze_one_target(t: BinaryTarget, cap: float) -> Optional[L2BookSnapshot]:
+    """Best ask for one target (token resolution + L2 book); None when nothing usable."""
+    tid = _token_id_for_outcome(t.market_id, t.outcome_side)
+    if not tid:
+        LOG.warning("L2: token_ids introuvables market_id=%s…", t.market_id[:24])
+        return None
+    book = fetch_l2_orderbook(tid)
+    if not book:
+        LOG.warning("L2: carnet vide ou indisponible outcome=%s token=%s…", t.outcome_side, tid[:16])
+        return None
+    top = fe._extract_best_ask_from_book(book)
+    if top is None:
+        LOG.warning("L2: pas d’asks pour outcome=%s market=%s…", t.outcome_side, t.market_id[:20])
+        return None
+    best = fe._normalize_price_to_tick(top.best_ask, top.tick_size)
+    if best >= 1.0 - 1e-12:
+        LOG.info("L2: SKIP — best ask=%.4f (≈1.00, aucun profit) market=%s…", best, t.market_id[:20])
+        return L2BookSnapshot(target=t, token_id=tid, best_ask=best, best_ask_size=top.best_ask_size, tick_size=top.tick_size, passes_profit_cap=False)
+    ok = best <= cap + 1e-9
+    if ok and t.kind == "prob":
+        edge = t.p_win - best
+        ok = edge >= _prob_min_edge() - 1e-9
+        LOG.info(
+            "L2: prob target p=%.3f best ask=%.4f edge=%+.3f %s (outcome=%s) market=%s…",
+            t.p_win, best, edge, "OK" if ok else "SKIP (edge < min)", t.outcome_side, t.market_id[:20],
+        )
+    elif not ok:
+        LOG.info("L2: SKIP rentabilité — best ask=%.4f > plafond FINANCE_RT_MAX_BEST_ASK_USDC=%.4f market=%s…", best, cap, t.market_id[:20])
+    else:
+        LOG.info("L2: OK — best ask=%.4f <= %.4f (outcome=%s, size=%.4f) market=%s…", best, cap, t.outcome_side, top.best_ask_size, t.market_id[:20])
+    return L2BookSnapshot(target=t, token_id=tid, best_ask=best, best_ask_size=top.best_ask_size, tick_size=top.tick_size, passes_profit_cap=ok)
+
+
 def analyze_l2_for_targets(targets: list[BinaryTarget]) -> list[L2BookSnapshot]:
     """
-    Pour chaque cible : meilleur ask (prix vendeur le plus bas) sur le token YES/NO.
+    Pour chaque cible : meilleur ask (prix vendeur le plus bas) sur le token YES/NO, lu en
+    parallèle (``FINANCE_RT_L2_WORKERS``, défaut 8) — les lectures REST ``/book`` sont
+    indépendantes et prenaient ~2 s chacune en série.
     Filtre ``FINANCE_RT_MAX_BEST_ASK_USDC`` : best ask > plafond ou >= 1.00 → ``passes_profit_cap=False``.
+    Cibles probabilistes : edge ``p - best ask`` >= ``FINANCE_RT_PROB_MIN_EDGE``.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     cap = _finance_rt_max_best_ask_usdc()
+    try:
+        workers = max(1, int(os.getenv("FINANCE_RT_L2_WORKERS", "8")))
+    except ValueError:
+        workers = 8
     out: list[L2BookSnapshot] = []
-
-    for t in targets:
-        tid = _token_id_for_outcome(t.market_id, t.outcome_side)
-        if not tid:
-            LOG.warning(
-                "L2: token_ids introuvables market_id=%s…",
-                t.market_id[:24] + "…" if len(t.market_id) > 28 else t.market_id,
-            )
-            continue
-
-        book = fetch_l2_orderbook(tid)
-        if not book:
-            LOG.warning(
-                "L2: carnet vide ou indisponible outcome=%s token=%s…",
-                t.outcome_side,
-                tid[:16],
-            )
-            continue
-
-        top = fe._extract_best_ask_from_book(book)
-        if top is None:
-            LOG.warning(
-                "L2: pas d’asks pour outcome=%s market=%s…",
-                t.outcome_side,
-                t.market_id[:20],
-            )
-            continue
-
-        best = fe._normalize_price_to_tick(top.best_ask, top.tick_size)
-        if best >= 1.0 - 1e-12:
-            LOG.info(
-                "L2: SKIP — best ask=%.4f (≈1.00, aucun profit) market=%s…",
-                best,
-                t.market_id[:20],
-            )
-            out.append(
-                L2BookSnapshot(
-                    target=t,
-                    token_id=tid,
-                    best_ask=best,
-                    best_ask_size=top.best_ask_size,
-                    tick_size=top.tick_size,
-                    passes_profit_cap=False,
-                )
-            )
-            continue
-
-        ok = best <= cap + 1e-9
-        if ok and t.kind == "prob":
-            edge = t.p_win - best
-            ok = edge >= _prob_min_edge() - 1e-9
-            LOG.info(
-                "L2: prob target p=%.3f best ask=%.4f edge=%+.3f %s (outcome=%s) market=%s…",
-                t.p_win, best, edge, "OK" if ok else "SKIP (edge < min)", t.outcome_side, t.market_id[:20],
-            )
-        if not ok:
-            LOG.info(
-                "L2: SKIP rentabilité — best ask=%.4f > plafond FINANCE_RT_MAX_BEST_ASK_USDC=%.4f "
-                "market=%s…",
-                best,
-                cap,
-                t.market_id[:20],
-            )
-        else:
-            LOG.info(
-                "L2: OK — best ask=%.4f <= %.4f (outcome=%s, size=%.4f) market=%s…",
-                best,
-                cap,
-                t.outcome_side,
-                top.best_ask_size,
-                t.market_id[:20],
-            )
-
-        out.append(
-            L2BookSnapshot(
-                target=t,
-                token_id=tid,
-                best_ask=best,
-                best_ask_size=top.best_ask_size,
-                tick_size=top.tick_size,
-                passes_profit_cap=ok,
-            )
-        )
-
+    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(targets)))) as pool:
+        for snap in pool.map(lambda t: _analyze_one_target(t, cap), targets):
+            if snap is not None:
+                out.append(snap)
     return out
-
 
 def size_attacks_from_l2(
     snapshots: list[L2BookSnapshot],
