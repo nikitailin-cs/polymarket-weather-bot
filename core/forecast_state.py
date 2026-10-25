@@ -16,14 +16,14 @@ model. :func:`bucket_probability` turns those forecasts plus the observed
 routine extreme so far into ``P(resolution value falls in the bucket)`` with a
 simple, uncalibrated normal mixture:
 
-- each model run that covers the whole local day contributes a normal around its
-  forecast extreme with a sigma per tier (``FORECAST_SIGMA_HIRES_C`` 1.3,
-  ``FORECAST_SIGMA_BASIC_C`` 1.9 by default); a run covering only part of the day
-  is used as a bound (the day's max is at least its max), never as a centre;
+- each model run contributes a normal around its forecast extreme with a sigma per
+  tier (``FORECAST_SIGMA_HIRES_C`` 1.3, ``FORECAST_SIGMA_BASIC_C`` 1.9 by default);
+  runs covering the whole local day (or the rest of it) weigh 1.0, other partial
+  runs 0.5, runs whose coverage already ended are ignored;
 - the day's max cannot end below the routine max already observed (and the min
   cannot end above the observed min): the mixture is conditioned on that;
-- once the forecast peak time is well past (``FORECAST_PEAK_PASSED_HOURS`` 2),
-  the observed extreme dominates (sigma ``FORECAST_SIGMA_LATE_C`` 0.6).
+- when less than ``FORECAST_LATE_HOURS`` (2) of the local day remain, the observed
+  extreme dominates (sigma ``FORECAST_SIGMA_LATE_C`` 0.6).
 
 The bucket is expressed in the market unit on whole degrees with halves up, so
 it is mapped back to the Celsius interval that rounds into it before integrating.
@@ -275,42 +275,54 @@ def bucket_probability(
     forecasts: Iterable[ForecastRecord],
     observed_extreme_c: Optional[float],
     now_utc: Optional[datetime] = None,
+    day_end_utc: Optional[datetime] = None,
 ) -> Optional[BucketProbability]:
-    """P(resolution value in bucket) from a normal mixture over model forecasts, conditioned on observations."""
+    """
+    P(resolution value in bucket): the day's extreme is X = max(observed, Y) (min for
+    falling extremes) where Y, the extreme of the hours still to come, follows a normal
+    mixture over the model runs:
+
+    - a run covering the whole local day weighs 1.0; a run covering only part of the day
+      but reaching into the future weighs 0.5 (its extreme may miss the late hours); a
+      run whose coverage ended in the past is ignored; coverage unknown counts as 0.5;
+    - sigma per tier: ``FORECAST_SIGMA_HIRES_C`` (1.3) / ``FORECAST_SIGMA_BASIC_C`` (1.9);
+    - when less than ``FORECAST_LATE_HOURS`` (2) of the local day remain, the extreme is
+      nearly fixed: Y collapses onto the observed value with ``FORECAST_SIGMA_LATE_C`` (0.6).
+    """
     now = now_utc or datetime.now(timezone.utc)
     rises = (variable or "temp_max").strip().lower() != "temp_min"
     a, b = celsius_interval_for_bucket(low, high, unit)
     sig_hi = _env_float("FORECAST_SIGMA_HIRES_C", 1.3)
     sig_basic = _env_float("FORECAST_SIGMA_BASIC_C", 1.9)
     sig_late = _env_float("FORECAST_SIGMA_LATE_C", 0.6)
-    peak_hours = _env_float("FORECAST_PEAK_PASSED_HOURS", 2.0)
+    late_hours = _env_float("FORECAST_LATE_HOURS", 2.0)
+    remaining_h = (day_end_utc - now).total_seconds() / 3600.0 if day_end_utc is not None else None
+    late = remaining_h is not None and remaining_h < late_hours and observed_extreme_c is not None
 
     comps: list[tuple[float, float, float, dict[str, Any]]] = []  # (weight, mean, sigma, info)
-    partial_bound: Optional[float] = None  # a run covering part of the day only bounds the extreme
     for rec in forecasts:
         val = rec.temp_max_c if rises else rec.temp_min_c
         if val is None:
             continue
-        if not rec.complete:
-            # a partial run's max/min is the extreme of the hours it covers, not of the day:
-            # the day's max is at least that (min at most), nothing more
-            partial_bound = val if partial_bound is None else (max(partial_bound, val) if rises else min(partial_bound, val))
-            continue
+        coverage_end = rec.run_utc + timedelta(hours=rec.hours_available) if rec.hours_available else None
+        if coverage_end is not None and coverage_end <= now and not rec.complete:
+            continue  # says nothing about the hours still to come
+        if rec.complete:
+            weight = 1.0
+        elif coverage_end is not None and day_end_utc is not None and coverage_end >= day_end_utc:
+            weight = 1.0  # covers the rest of the local day even if not the whole day
+        else:
+            weight = 0.5
         sigma = sig_hi if rec.tier == "hires" else sig_basic
-        valid = rec.max_valid_utc if rises else rec.min_valid_utc
-        late = valid is not None and now > valid + timedelta(hours=peak_hours) and observed_extreme_c is not None
-        mean = val
+        mean = float(val)
         if late:
             mean, sigma = float(observed_extreme_c), sig_late
-        comps.append((1.0, mean, sigma, {"model": rec.model, "tier": rec.tier, "value_c": val, "sigma_c": round(sigma, 2), "run_utc": format_utc(rec.run_utc), "late": late}))
+        comps.append((weight, mean, sigma, {
+            "model": rec.model, "tier": rec.tier, "value_c": val, "sigma_c": round(sigma, 2), "weight": weight,
+            "run_utc": format_utc(rec.run_utc), "complete": rec.complete, "late": late,
+        }))
     if not comps:
         return None
-    if partial_bound is not None:
-        # fold the partial-run bound into the observation bound (same direction, same meaning)
-        if observed_extreme_c is None:
-            observed_extreme_c = partial_bound
-        else:
-            observed_extreme_c = max(observed_extreme_c, partial_bound) if rises else min(observed_extreme_c, partial_bound)
 
     total_w = sum(c[0] for c in comps)
     p = 0.0
@@ -318,23 +330,13 @@ def bucket_probability(
         lo, hi = a, b
         if observed_extreme_c is not None:
             if rises:
-                if hi <= observed_extreme_c:  # bucket entirely below what was already observed
-                    continue
-                lo = max(lo, observed_extreme_c)
-                # X = max(observed, Y): P(X in [lo,hi)) = P(Y < hi) - P(Y < lo) for lo > observed,
-                # and P(Y < hi) when the bucket contains the observed value
-                if a <= observed_extreme_c:
-                    part = _cdf(hi, mean, sigma)
-                else:
-                    part = _cdf(hi, mean, sigma) - _cdf(lo, mean, sigma)
+                if hi <= observed_extreme_c:
+                    continue  # bucket entirely below what was already observed
+                part = _cdf(hi, mean, sigma) if a <= observed_extreme_c else _cdf(hi, mean, sigma) - _cdf(max(lo, observed_extreme_c), mean, sigma)
             else:
-                if lo >= observed_extreme_c:  # bucket entirely above the observed min
-                    continue
-                hi = min(hi, observed_extreme_c)
-                if b > observed_extreme_c:
-                    part = 1.0 - _cdf(lo, mean, sigma)
-                else:
-                    part = _cdf(hi, mean, sigma) - _cdf(lo, mean, sigma)
+                if lo >= observed_extreme_c:
+                    continue  # bucket entirely above the observed minimum
+                part = 1.0 - _cdf(lo, mean, sigma) if b > observed_extreme_c else _cdf(min(hi, observed_extreme_c), mean, sigma) - _cdf(lo, mean, sigma)
         else:
             part = _cdf(hi, mean, sigma) - _cdf(lo, mean, sigma)
         p += w * max(0.0, min(1.0, part))
@@ -343,7 +345,8 @@ def bucket_probability(
     vals = [c[1] for c in comps]
     mean_c = sum(c[0] * c[1] for c in comps) / total_w
     spread = (max(vals) - min(vals)) if len(vals) > 1 else 0.0
-    note = f"{len(comps)} model(s), mixture sigma per tier, conditioned on observed {'max' if rises else 'min'}"
+    note = (f"{len(comps)} run(s), sigma per tier, conditioned on observed {'max' if rises else 'min'}"
+            + (f", {remaining_h:.1f} h of the local day left" if remaining_h is not None else ""))
     return BucketProbability(p=round(p, 4), models=len(comps), mean_c=round(mean_c, 2), spread_c=round(spread, 2), note=note, components=[c[3] for c in comps])
 
 

@@ -87,8 +87,7 @@ class TestProbability(unittest.TestCase):
         buckets = [(None, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, None)]
         ps = [bucket_probability(variable="temp_max", low=lo, high=hi, unit="C", forecasts=fcs, observed_extreme_c=None, now_utc=now).p for lo, hi in buckets]
         self.assertAlmostEqual(sum(ps), 1.0, places=2)
-        # the partial icon-eu run bounds the max at >= 15.2, so the models' lower tails pile into 15C
-        self.assertEqual(max(range(len(ps)), key=lambda i: ps[i]), 2)
+        self.assertEqual(max(range(len(ps)), key=lambda i: ps[i]), 3)  # 16C most likely (gfs 15.9, hrrr 16.3, icon-eu 15.2 at half weight)
         # observed routine max 16.2 so far: buckets below 16 are impossible, 16 contains it
         p_below = bucket_probability(variable="temp_max", low=14, high=14, unit="C", forecasts=fcs, observed_extreme_c=16.2, now_utc=now)
         p_16 = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.2, now_utc=now)
@@ -96,23 +95,37 @@ class TestProbability(unittest.TestCase):
         self.assertEqual(p_below.p, 0.0)
         self.assertGreater(p_16.p, 0.5)
         self.assertGreater(p_17.p, 0.0)
-        self.assertEqual(p_16.models, 2)  # the partial icon-eu run is a bound, not a component
+        self.assertEqual(p_16.models, 3)  # the partial icon-eu run counts with half weight
 
-    def test_partial_runs_only_bound_the_extreme(self):
+    def test_partial_runs_are_forecasts_not_bounds(self):
         now = datetime(2026, 10, 25, 14, tzinfo=timezone.utc)
         only_partial = [rec("hrrr", "hires", 16.3, complete=False)]
-        self.assertIsNone(bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=only_partial, observed_extreme_c=12.0, now_utc=now))
+        p = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=only_partial, observed_extreme_c=12.0, now_utc=now)
+        self.assertEqual((p.models, p.components[0]["weight"]), (1, 0.5))
         fcs = [rec("gfs", "basic", 14.0), rec("hrrr", "hires", 16.3, complete=False)]
-        # partial hrrr already saw 16.3: buckets below 16 are impossible even though gfs says 14
+        # the partial hrrr run is one opinion among two, not a certainty: 14C keeps real mass
         p_14 = bucket_probability(variable="temp_max", low=14, high=14, unit="C", forecasts=fcs, observed_extreme_c=12.0, now_utc=now)
-        self.assertEqual(p_14.p, 0.0)
+        self.assertGreater(p_14.p, 0.1)
+        self.assertLess(p_14.p, 0.5)
 
-    def test_after_peak_observation_dominates(self):
+    def test_run_whose_coverage_ended_is_ignored(self):
+        now = datetime(2026, 10, 25, 20, tzinfo=timezone.utc)
+        stale = ForecastRecord("KLGA", "hrrr", "hires", "x", datetime(2026, 10, 25, 6, tzinfo=timezone.utc), "2026-10-25", 13.0, 5.0,
+                               None, None, False, "detected", None, hours_available=6)
+        self.assertIsNone(bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=[stale], observed_extreme_c=15.0, now_utc=now))
+
+    def test_end_of_day_observation_dominates(self):
         fcs = [rec("gfs", "basic", 19.0)]
-        late = datetime(2026, 10, 26, 1, tzinfo=timezone.utc)  # 5 h after the forecast peak
-        p = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.1, now_utc=late)
+        late = datetime(2026, 10, 26, 3, tzinfo=timezone.utc)  # one hour before local midnight (New York, UTC-4)
+        day_end = datetime(2026, 10, 26, 4, tzinfo=timezone.utc)
+        p = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.1, now_utc=late, day_end_utc=day_end)
         self.assertGreater(p.p, 0.7)
         self.assertTrue(p.components[0]["late"])
+        # earlier in the day the same forecast still carries its own weight
+        noon = datetime(2026, 10, 25, 16, tzinfo=timezone.utc)
+        p2 = bucket_probability(variable="temp_max", low=16, high=16, unit="C", forecasts=fcs, observed_extreme_c=16.1, now_utc=noon, day_end_utc=day_end)
+        self.assertLess(p2.p, 0.3)
+        self.assertFalse(p2.components[0]["late"])
 
     def test_min_market(self):
         fcs = [rec("gfs", "basic", 15.0, mn=4.2, valid="2026-10-25T11:00:00Z")]

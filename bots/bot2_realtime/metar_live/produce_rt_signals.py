@@ -19,7 +19,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -140,6 +140,13 @@ def _model_probability(registry: Any, icao: str, local_d: Any, weather_var: str,
         return None
     if not forecasts:
         return None
+    day_end = None
+    try:
+        tz = pytz.timezone(str((extreme or {}).get("timezone") or "UTC"))
+        d = date.fromisoformat(str(local_d))
+        day_end = tz.localize(datetime.combine(d + timedelta(days=1), datetime.min.time())).astimezone(timezone.utc)
+    except Exception:  # noqa: BLE001 - unknown zone/date: no late rule
+        day_end = None
     bp = bucket_probability(
         variable=weather_var,
         low=bucket.low,
@@ -147,6 +154,7 @@ def _model_probability(registry: Any, icao: str, local_d: Any, weather_var: str,
         unit=unit,
         forecasts=forecasts.values(),
         observed_extreme_c=(extreme or {}).get("value_c"),
+        day_end_utc=day_end,
     )
     if bp is None:
         return None
