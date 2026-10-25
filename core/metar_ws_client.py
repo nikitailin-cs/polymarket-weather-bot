@@ -28,6 +28,7 @@ Environment:
 - ``METAR_WS_CHANNEL_MAP_FILE``   same, from a JSON file
 - ``METAR_WS_RECONNECT_MIN_SEC`` / ``METAR_WS_RECONNECT_MAX_SEC``  backoff bounds (1 / 60)
 - ``METAR_WS_PING_INTERVAL_SEC``  WebSocket keep-alive ping (20)
+- ``METAR_WS_CA_BUNDLE``          PEM bundle for TLS verification (default: certifi, else system)
 - ``METAR_WS_SSL_VERIFY``         set to ``0`` to skip TLS verification (debug only)
 """
 from __future__ import annotations
@@ -100,10 +101,12 @@ class MetarWsConfig:
     reconnect_max_sec: float = 60.0
     ping_interval_sec: float = 20.0
     ssl_verify: bool = True
+    ca_bundle: str = ""
 
     @classmethod
     def from_env(cls) -> "MetarWsConfig":
         return cls(
+            ca_bundle=(os.getenv("METAR_WS_CA_BUNDLE") or "").strip(),
             api_key=(os.getenv("METAR_WS_API_KEY") or "").strip(),
             url=(os.getenv("METAR_WS_URL") or DEFAULT_URL).strip() or DEFAULT_URL,
             channel_format=(os.getenv("METAR_WS_CHANNEL_FORMAT") or DEFAULT_CHANNEL_FORMAT).strip()
@@ -124,6 +127,36 @@ class MetarWsConfig:
     def connect_url(self) -> str:
         sep = "&" if "?" in self.url else "?"
         return f"{self.url}{sep}{urlencode({'key': self.api_key})}"
+
+
+def build_ssl_context(config: "MetarWsConfig") -> Any:
+    """
+    TLS context for ``wss://``. Verification stays on by default. The CA bundle is,
+    in order: ``METAR_WS_CA_BUNDLE`` (``config.ca_bundle``), the ``certifi`` bundle
+    when installed, else the interpreter's default store. The Let's Encrypt chain
+    used by stream.metar.ws (Root YE / ISRG Root X2) is rejected as "expired" by
+    some Windows system stores while certifi validates it, hence the preference.
+    ``METAR_WS_SSL_VERIFY=0`` disables verification (debugging only, logged loudly).
+    """
+    import ssl
+
+    if not config.ssl_verify:
+        LOG.warning("TLS verification DISABLED (METAR_WS_SSL_VERIFY=0) - debugging only")
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    cafile = config.ca_bundle or None
+    if not cafile:
+        try:
+            import certifi
+
+            cafile = certifi.where()
+        except ImportError:
+            cafile = None
+    if cafile:
+        LOG.debug("TLS CA bundle: %s", cafile)
+    return ssl.create_default_context(cafile=cafile)
 
 
 def icao_from_channel(channel: str) -> str:
@@ -153,13 +186,15 @@ def normalize_publication(
 
     raw = str(data.get("raw") or data.get("rawOb") or "").strip()
 
+    # station identity: payload field, then ICAO channel, then the raw report text
+    # (authoritative for city channels), and only then the configured channel map
     icao = str(data.get("icao") or data.get("icaoId") or "").strip().upper()
     if not icao:
         icao = icao_from_channel(channel)
-    if not icao and channel_to_icao:
-        icao = channel_to_icao.get(channel, "")
     if not icao:
         icao = icao_from_raw(raw)
+    if not icao and channel_to_icao:
+        icao = channel_to_icao.get(channel, "")
     if not icao:
         LOG.debug("publication without station identity on %s ignored", channel)
         return None
@@ -290,13 +325,8 @@ class MetarWsClient:
                     "close_timeout": 5,
                     "max_size": 2**20,
                 }
-                if not self.config.ssl_verify and self.config.url.startswith("wss://"):
-                    import ssl
-
-                    ctx = ssl.create_default_context()
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                    kwargs["ssl"] = ctx
+                if self.config.url.startswith("wss://"):
+                    kwargs["ssl"] = build_ssl_context(self.config)
                 LOG.info("connecting to %s", self.config.url)
                 async with websockets.connect(self.config.connect_url(), **kwargs) as ws:
                     await self._on_connected()

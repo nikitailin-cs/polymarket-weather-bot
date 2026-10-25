@@ -377,5 +377,43 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIn("key=test-key", server_log[0][2])
 
 
+class TestTlsContext(unittest.TestCase):
+    def test_verify_on_uses_certifi_or_system_and_requires_certs(self):
+        import ssl
+
+        from core.metar_ws_client import build_ssl_context
+
+        ctx = build_ssl_context(MetarWsConfig(api_key="k"))
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(ctx.check_hostname)
+
+    def test_custom_bundle_is_used(self):
+        import ssl
+
+        from core.metar_ws_client import build_ssl_context
+
+        import certifi
+
+        with tempfile.TemporaryDirectory() as d:
+            bundle = Path(d) / "ca.pem"
+            bundle.write_bytes(Path(certifi.where()).read_bytes())
+            ctx = build_ssl_context(MetarWsConfig(api_key="k", ca_bundle=str(bundle)))
+            self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+            self.assertGreater(len(ctx.get_ca_certs()), 50)
+
+    def test_verify_off_only_when_asked(self):
+        import ssl
+
+        from core.metar_ws_client import build_ssl_context
+
+        ctx = build_ssl_context(MetarWsConfig(api_key="k", ssl_verify=False))
+        self.assertEqual(ctx.verify_mode, ssl.CERT_NONE)
+        self.assertFalse(ctx.check_hostname)
+
+    def test_city_channel_prefers_raw_icao_over_channel_map(self):
+        obs = normalize_publication(CITY_FRAME, {"metar.obs.london": "XXXX"})
+        self.assertEqual(obs.icao_id, "EGLL")
+
+
 if __name__ == "__main__":
     unittest.main()

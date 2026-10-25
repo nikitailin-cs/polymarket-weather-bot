@@ -285,6 +285,11 @@ Modes :
   des observations déjà présentes au lieu d’attendre l’API AWC.
 - **Retour arrière** : `METAR_SOURCE=awc` (défaut) — comportement historique inchangé.
 
+TLS : la chaîne Let's Encrypt de `stream.metar.ws` (Root YE / ISRG Root X2) est refusée
+(« certificate has expired ») par certains magasins système, notamment Python sous Windows.
+Le client utilise donc le bundle `certifi` quand il est installé ; `METAR_WS_CA_BUNDLE=/chemin/ca.pem`
+force un bundle précis. Ne pas utiliser `METAR_WS_SSL_VERIFY=0` en production.
+
 Smoke test sans systemd :
 
 ```bash
