@@ -82,3 +82,9 @@ logs/*.jsonl
 
 # market mapping is runtime data (refresh_mapping.py); data/icao_mapping.example.json is the tracked sample
 data/icao_mapping.json
+
+# runtime outputs of the RT pipelines and local logs
+data/bots/bot_2_realtime/realtime_signals*.json
+data/bots/realtime/
+data/bots/bot_2_realtime/*.sqlite
+logs/
