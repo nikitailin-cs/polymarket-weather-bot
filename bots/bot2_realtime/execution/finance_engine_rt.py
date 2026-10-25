@@ -418,13 +418,30 @@ def fetch_buying_power_usdc_for_proxy() -> tuple[float, Optional[str]]:
         return math.inf, addr
 
 
+_MAPPING_TOKENS: dict[str, dict[str, Any]] = {}
+
+
+def _mapping_tokens() -> dict[str, dict[str, Any]]:
+    """market_id -> {yes_token_id, no_token_id} from icao_mapping.json (filled by refresh_mapping.py)."""
+    if not _MAPPING_TOKENS:
+        try:
+            for mid, cfg in _mapping_by_market_id(get_rt_paths()).items():
+                if cfg.get("yes_token_id") and cfg.get("no_token_id"):
+                    _MAPPING_TOKENS[mid] = {"YES": str(cfg["yes_token_id"]), "NO": str(cfg["no_token_id"])}
+        except Exception as exc:  # noqa: BLE001
+            LOG.debug("mapping tokens unavailable: %s", exc)
+    return _MAPPING_TOKENS
+
+
 def _token_id_for_outcome(market_id: str, outcome_side: str) -> Optional[str]:
+    side = outcome_side.upper()
+    tokens = _mapping_tokens().get(market_id)
+    if tokens and tokens.get(side):
+        return tokens[side]
     pair = fe._resolve_tokens_for_market(market_id)
     if pair is None:
         return None
-    if outcome_side.upper() == "YES":
-        return pair.yes_token_id
-    return pair.no_token_id
+    return pair.yes_token_id if side == "YES" else pair.no_token_id
 
 
 def fetch_l2_orderbook(token_id: str) -> Optional[dict[str, Any]]:

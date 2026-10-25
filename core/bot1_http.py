@@ -39,6 +39,21 @@ def bot1_http_get_json(url: str, *, timeout: Optional[float] = None, user_agent:
     t = float(timeout if timeout is not None else DEFAULT_TIMEOUT_SEC)
     ua = (user_agent or DEFAULT_USER_AGENT).strip() or DEFAULT_USER_AGENT
     proxy_url = build_socks5_proxy_url()
+    # httpx first: on some networks the requests/urllib3 path to Polymarket hosts is answered by an
+    # ISP block page (certificate mismatch) while httpx gets through; requests stays as the fallback.
+    try:
+        import httpx
+
+        kwargs: dict = {"timeout": t, "headers": {"User-Agent": ua}}
+        if proxy_url:
+            kwargs["proxy"] = proxy_url
+        resp_x = httpx.get(url, **kwargs)
+        resp_x.raise_for_status()
+        return resp_x.json()
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - fall back to requests below
+        pass
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     resp = requests.get(url, timeout=t, headers={"User-Agent": ua}, proxies=proxies)
     resp.raise_for_status()

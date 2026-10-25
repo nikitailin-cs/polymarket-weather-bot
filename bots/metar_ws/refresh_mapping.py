@@ -180,8 +180,15 @@ def build_entries(events: list[dict[str, Any]], served: dict[str, dict[str, Any]
             if not bucket:
                 stats["unparsed"] += 1
                 continue
+            tokens = m.get("clobTokenIds")
+            try:
+                token_list = json.loads(tokens) if isinstance(tokens, str) else (tokens or [])
+            except ValueError:
+                token_list = []
             entries[cid] = {
                 "name": f"{info['city']} {'high' if info['variable'] == 'temp_max' else 'low'} {m.get('groupItemTitle')} {info['target_date']}",
+                "yes_token_id": str(token_list[0]) if len(token_list) >= 2 else None,
+                "no_token_id": str(token_list[1]) if len(token_list) >= 2 else None,
                 "question": m.get("question"),
                 "event_slug": ev.get("slug"),
                 "market_slug": m.get("slug"),
