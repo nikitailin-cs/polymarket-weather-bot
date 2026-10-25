@@ -44,7 +44,8 @@ class TestMetarView(unittest.TestCase):
         self.assertEqual((ok["status"], ok["channels_subscribed"], ok["channels_wanted"], ok["plan"]), ("ok", 2, 3, "trader"))
         self.assertEqual(ok["last_message_age_sec"], 15.0)
         self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=10), connected=False), NOW)["status"], "disconnected")
-        self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=600)), NOW)["status"], "stale")
+        self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=600)), NOW)["status"], "ok")  # connected: green even when quiet
+        self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=2000)), NOW)["status"], "stale")  # > 30 min silent: yellow
         self.assertEqual(metar_ws_view(None, NOW)["status"], "no_snapshot")
 
 

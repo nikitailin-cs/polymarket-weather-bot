@@ -239,8 +239,9 @@
   let connDetails = null;
   function renderConnections(c) {
     const m = c.metar_ws || {};
-    const mcls = m.status === "ok" ? "ok" : m.status === "stale" || m.status === "no_snapshot" ? "bad" : "warn";
-    conn("#c-metar", mcls, m.status === "ok" ? `${m.channels_subscribed}/${m.channels_wanted} ch · ${m.plan || ""} · msg ${age(m.last_message_age_sec)}` : m.status === "stale" ? `daemon silent ${age(m.snapshot_age_sec)}` : m.status === "no_snapshot" ? "no snapshot" : `reconnecting (${m.reconnects ?? 0})`,
+    // green = connected, yellow = daemon silent for over 30 min, red = disconnected / no snapshot
+    const mcls = m.status === "ok" ? "ok" : m.status === "stale" ? "warn" : "bad";
+    conn("#c-metar", mcls, m.status === "ok" ? `${m.channels_subscribed}/${m.channels_wanted} ch · ${m.plan || ""} · msg ${age(m.last_message_age_sec)}` : m.status === "stale" ? `silent ${age(m.snapshot_age_sec)}` : m.status === "no_snapshot" ? "no snapshot" : `disconnected (${m.reconnects ?? 0} reconnects)`,
          `METAR.ws · plan ${m.plan || "–"} · limits ${JSON.stringify(m.limits || {})} · stations ${m.stations ?? 0} · reconnects ${m.reconnects ?? 0} · forecasts ${m.forecast_records ?? 0}${m.last_error ? " · " + m.last_error : ""}`);
     const g = c.gamma || {};
     conn("#c-gamma", g.status === "ok" ? "ok" : g.status === "down" ? "bad" : "unknown", g.status === "ok" ? `${g.latency_ms} ms · ${g.prices_cached ?? 0} prices` : g.status === "down" ? "down" : "probing…",
