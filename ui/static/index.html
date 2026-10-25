@@ -210,7 +210,9 @@
   const fmt = (v, d=1) => (v === null || v === undefined || Number.isNaN(v)) ? "–" : Number(v).toFixed(d);
   const hhmm = (iso) => iso ? iso.slice(11, 16) + "Z" : "–";
   const age = (s) => s === null || s === undefined ? "–" : s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s/60)}m` : `${(s/3600).toFixed(1)}h`;
-  const dur = (s) => s === null || s === undefined ? "–" : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m ${String(Math.round(s%60)).padStart(2,"0")}s`;
+  // signed duration: a report can reach the source before its nominal time stamp (e.g. :55 reports issued at :50)
+  const dur = (s) => { if (s === null || s === undefined) return "–"; const a = Math.abs(s), sign = s < 0 ? "−" : "";
+    return a < 60 ? `${sign}${Math.round(a)}s` : `${sign}${Math.floor(a/60)}m ${String(Math.round(a%60)).padStart(2,"0")}s`; };
   const pill = (txt, cls) => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const stateCls = (s) => ({met:"ok", attack:"ok", dead:"bad", flee:"bad", open:"info", standby:"info", metar_unavailable:"warn", premature:"muted", past_target:"muted"}[s] || "muted");
   const srcPill = (src) => src === "body" ? pill("body", "warn") : "";
