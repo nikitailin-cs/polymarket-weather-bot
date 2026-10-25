@@ -69,6 +69,12 @@
   .gap-pos { color: var(--warn); } .gap-hit { color: var(--ok); font-weight: 600; }
   .filters { margin-left: auto; display: flex; gap: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
   .filters label { cursor: pointer; }
+  .tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .tabs button { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-weight: 500; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 6px; }
+  .tabs button:hover { color: var(--fg); background: var(--panel-2); }
+  .tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  .tabs button .count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; background: var(--panel-2); padding: 0 6px; border-radius: 999px; }
+  .tabs button.active .count { color: var(--fg); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
   .tile { background: var(--panel-2); padding: 10px 14px; }
   .tile .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
@@ -160,15 +166,14 @@
     <!-- LOGS -->
     <div class="page" id="page-logs">
       <section>
-        <h2>Logs <span class="sub muted" id="hi-sub"></span>
-          <span class="filters tabs">
-            <label><input type="radio" name="htab" value="positions" checked> positions</label>
-            <label><input type="radio" name="htab" value="cycles"> cycles</label>
-            <label><input type="radio" name="htab" value="alerts"> alerts</label>
-            <label><input type="radio" name="htab" value="events"> stream events</label>
-          </span>
-        </h2>
-        <div class="scroll" style="max-height:78vh"><table id="history"><thead></thead><tbody></tbody></table></div>
+        <h2>Logs <span class="sub muted" id="hi-sub"></span></h2>
+        <div class="tabs" id="log-tabs" role="tablist">
+          <button type="button" role="tab" data-tab="positions" class="active">Positions<span class="count" id="t-positions"></span></button>
+          <button type="button" role="tab" data-tab="cycles">Cycles<span class="count" id="t-cycles"></span></button>
+          <button type="button" role="tab" data-tab="alerts">Alerts<span class="count" id="t-alerts"></span></button>
+          <button type="button" role="tab" data-tab="events">Stream events<span class="count" id="t-events"></span></button>
+        </div>
+        <div class="scroll" style="max-height:74vh"><table id="history"><thead></thead><tbody></tbody></table></div>
       </section>
     </div>
 
@@ -384,7 +389,11 @@
       tile("win / loss", `${s.wins || 0} / ${s.losses || 0}`) +
       tile("last ok cycle", hist.minutes_since_ok_cycle === null || hist.minutes_since_ok_cycle === undefined ? "never" : `${Math.max(0, Math.round(hist.minutes_since_ok_cycle))}m ago`, hist.minutes_since_ok_cycle > 20 ? "neg" : "") +
       tile("markets today", `${marketRows.filter(r => r.signal.rt_day_guard === "jour_j").length} <span class="muted" style="font-size:13px">of ${marketRows.length}</span>`);
-    const tab = document.querySelector('input[name="htab"]:checked').value;
+    const tab = logTab;
+    $("#t-positions").textContent = (hist.positions || []).length || "";
+    $("#t-cycles").textContent = (hist.cycles || []).length || "";
+    $("#t-alerts").textContent = (hist.alerts || []).length || "";
+    $("#t-events").textContent = (hist.events || []).length || "";
     const thead = $("#history thead"), tbody = $("#history tbody");
     let head = "", body = "", n = 0;
     if (tab === "positions") {
@@ -425,10 +434,15 @@
     }
     thead.innerHTML = head;
     tbody.innerHTML = body || `<tr><td colspan="10" class="empty">nothing yet</td></tr>`;
-    $("#hi-sub").textContent = `${n} ${tab}`;
+    $("#hi-sub").textContent = `${n} ${tab === "events" ? "stream events" : tab}`;
     $("#n-logs").textContent = (hist.cycles||[]).length || "";
   }
-  document.querySelectorAll('input[name="htab"]').forEach(r => r.addEventListener("change", renderHistory));
+  let logTab = "positions";
+  document.querySelectorAll("#log-tabs button").forEach(b => b.addEventListener("click", () => {
+    logTab = b.dataset.tab;
+    document.querySelectorAll("#log-tabs button").forEach(x => x.classList.toggle("active", x === b));
+    renderHistory();
+  }));
 
   // ---- settings ----
   let settingsLoaded = false;
