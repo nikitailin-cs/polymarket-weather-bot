@@ -1,5 +1,5 @@
 {
-  "_note": "Resolution stations served by stream.metar.ws (channel = metar.obs.<icao lower-case>). report_minutes = minutes past the hour when the routine METAR is issued. Source: METAR.ws station list, 2026-10-25. timezone = IANA zone of the station, used for the local-day boundary when the market mapping has none.",
+  "_note": "Resolution stations served by stream.metar.ws (channel = metar.obs.<icao lower-case>). report_minutes = minutes past the hour when the routine METAR is issued. Source: METAR.ws station list, 2026-10-25. timezone = IANA zone of the station, used for the local-day boundary when the market mapping has none. obs10 = true when the station also has a metar.obs10.<icao> channel (5-10 min MADIS/KNMI observations, not used for resolution).",
   "stations": {
     "CYYZ": {
       "name": "Toronto Pearson International Airport",
@@ -7,7 +7,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "America/Toronto"
+      "timezone": "America/Toronto",
+      "obs10": false
     },
     "DNMM": {
       "name": "Murtala Muhammed International Airport",
@@ -15,7 +16,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Africa/Lagos"
+      "timezone": "Africa/Lagos",
+      "obs10": false
     },
     "EDDM": {
       "name": "Munich Airport",
@@ -24,7 +26,8 @@
         20,
         50
       ],
-      "timezone": "Europe/Berlin"
+      "timezone": "Europe/Berlin",
+      "obs10": false
     },
     "EFHK": {
       "name": "Helsinki-Vantaa Airport",
@@ -33,7 +36,8 @@
         20,
         50
       ],
-      "timezone": "Europe/Helsinki"
+      "timezone": "Europe/Helsinki",
+      "obs10": false
     },
     "EGLC": {
       "name": "London City Airport",
@@ -42,7 +46,8 @@
         20,
         50
       ],
-      "timezone": "Europe/London"
+      "timezone": "Europe/London",
+      "obs10": false
     },
     "EHAM": {
       "name": "Amsterdam Airport Schiphol",
@@ -51,7 +56,8 @@
         25,
         55
       ],
-      "timezone": "Europe/Amsterdam"
+      "timezone": "Europe/Amsterdam",
+      "obs10": true
     },
     "EPWA": {
       "name": "Warsaw Chopin Airport",
@@ -60,7 +66,8 @@
         0,
         30
       ],
-      "timezone": "Europe/Warsaw"
+      "timezone": "Europe/Warsaw",
+      "obs10": false
     },
     "FACT": {
       "name": "Cape Town International Airport",
@@ -68,7 +75,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Africa/Johannesburg"
+      "timezone": "Africa/Johannesburg",
+      "obs10": false
     },
     "KATL": {
       "name": "Hartsfield-Jackson Atlanta International",
@@ -76,7 +84,8 @@
       "report_minutes": [
         52
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KAUS": {
       "name": "Austin-Bergstrom International Airport",
@@ -84,7 +93,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KBKF": {
       "name": "Buckley Space Force Base",
@@ -92,7 +102,8 @@
       "report_minutes": [
         58
       ],
-      "timezone": "America/Denver"
+      "timezone": "America/Denver",
+      "obs10": true
     },
     "KBNA": {
       "name": "Nashville International Airport",
@@ -100,7 +111,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KBOS": {
       "name": "Boston Logan International Airport",
@@ -108,7 +120,8 @@
       "report_minutes": [
         54
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KCLT": {
       "name": "Charlotte Douglas International Airport",
@@ -116,7 +129,8 @@
       "report_minutes": [
         52
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KDAL": {
       "name": "Dallas Love Field",
@@ -124,7 +138,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KDCA": {
       "name": "Ronald Reagan Washington National Airport",
@@ -132,7 +147,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KDEN": {
       "name": "Denver International Airport",
@@ -140,7 +156,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/Denver"
+      "timezone": "America/Denver",
+      "obs10": true
     },
     "KDFW": {
       "name": "Dallas/Fort Worth International Airport",
@@ -148,7 +165,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KDTW": {
       "name": "Detroit Metropolitan Wayne County Airport",
@@ -156,7 +174,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Detroit"
+      "timezone": "America/Detroit",
+      "obs10": true
     },
     "KHOU": {
       "name": "William P. Hobby Airport",
@@ -164,7 +183,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KLAS": {
       "name": "Harry Reid International Airport",
@@ -172,7 +192,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/Los_Angeles"
+      "timezone": "America/Los_Angeles",
+      "obs10": true
     },
     "KLAX": {
       "name": "Los Angeles International Airport",
@@ -180,7 +201,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Los_Angeles"
+      "timezone": "America/Los_Angeles",
+      "obs10": true
     },
     "KLGA": {
       "name": "LaGuardia Airport",
@@ -188,7 +210,8 @@
       "report_minutes": [
         51
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KMDW": {
       "name": "Chicago Midway International Airport",
@@ -196,7 +219,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KMIA": {
       "name": "Miami International Airport",
@@ -204,7 +228,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KMSP": {
       "name": "Minneapolis-Saint Paul International Airport",
@@ -212,7 +237,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KOKC": {
       "name": "Will Rogers World Airport",
@@ -220,7 +246,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KORD": {
       "name": "O'Hare International Airport",
@@ -228,7 +255,8 @@
       "report_minutes": [
         51
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KPHL": {
       "name": "Philadelphia International Airport",
@@ -236,7 +264,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/New_York"
+      "timezone": "America/New_York",
+      "obs10": true
     },
     "KPHX": {
       "name": "Phoenix Sky Harbor International Airport",
@@ -244,7 +273,8 @@
       "report_minutes": [
         51
       ],
-      "timezone": "America/Phoenix"
+      "timezone": "America/Phoenix",
+      "obs10": true
     },
     "KSAT": {
       "name": "San Antonio International Airport",
@@ -252,7 +282,8 @@
       "report_minutes": [
         50
       ],
-      "timezone": "America/Chicago"
+      "timezone": "America/Chicago",
+      "obs10": true
     },
     "KSEA": {
       "name": "Seattle-Tacoma International Airport",
@@ -260,7 +291,8 @@
       "report_minutes": [
         53
       ],
-      "timezone": "America/Los_Angeles"
+      "timezone": "America/Los_Angeles",
+      "obs10": true
     },
     "KSFO": {
       "name": "San Francisco International Airport",
@@ -268,7 +300,8 @@
       "report_minutes": [
         56
       ],
-      "timezone": "America/Los_Angeles"
+      "timezone": "America/Los_Angeles",
+      "obs10": true
     },
     "LEMD": {
       "name": "Adolfo Suarez Madrid-Barajas Airport",
@@ -277,7 +310,8 @@
         0,
         30
       ],
-      "timezone": "Europe/Madrid"
+      "timezone": "Europe/Madrid",
+      "obs10": false
     },
     "LFPB": {
       "name": "Paris Le Bourget",
@@ -286,7 +320,8 @@
         0,
         30
       ],
-      "timezone": "Europe/Paris"
+      "timezone": "Europe/Paris",
+      "obs10": false
     },
     "LIMC": {
       "name": "Milan Malpensa Airport",
@@ -295,7 +330,8 @@
         20,
         50
       ],
-      "timezone": "Europe/Rome"
+      "timezone": "Europe/Rome",
+      "obs10": false
     },
     "LLBG": {
       "name": "Ben Gurion International Airport",
@@ -304,7 +340,8 @@
         20,
         50
       ],
-      "timezone": "Asia/Jerusalem"
+      "timezone": "Asia/Jerusalem",
+      "obs10": false
     },
     "LTAC": {
       "name": "Esenboga International Airport",
@@ -313,7 +350,8 @@
         20,
         50
       ],
-      "timezone": "Europe/Istanbul"
+      "timezone": "Europe/Istanbul",
+      "obs10": false
     },
     "LTFM": {
       "name": "Istanbul Airport",
@@ -322,7 +360,8 @@
         20,
         50
       ],
-      "timezone": "Europe/Istanbul"
+      "timezone": "Europe/Istanbul",
+      "obs10": false
     },
     "MMMX": {
       "name": "Benito Juarez International Airport",
@@ -330,7 +369,8 @@
       "report_minutes": [
         47
       ],
-      "timezone": "America/Mexico_City"
+      "timezone": "America/Mexico_City",
+      "obs10": false
     },
     "MPMG": {
       "name": "Marcos A. Gelabert International Airport",
@@ -338,7 +378,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "America/Panama"
+      "timezone": "America/Panama",
+      "obs10": false
     },
     "NZWN": {
       "name": "Wellington International Airport",
@@ -347,7 +388,8 @@
         0,
         30
       ],
-      "timezone": "Pacific/Auckland"
+      "timezone": "Pacific/Auckland",
+      "obs10": false
     },
     "OEJN": {
       "name": "King Abdulaziz International Airport",
@@ -355,7 +397,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Riyadh"
+      "timezone": "Asia/Riyadh",
+      "obs10": false
     },
     "OMDB": {
       "name": "Dubai International Airport",
@@ -364,7 +407,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Dubai"
+      "timezone": "Asia/Dubai",
+      "obs10": false
     },
     "OPMA": {
       "name": "Jinnah International Airport",
@@ -373,7 +417,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Karachi"
+      "timezone": "Asia/Karachi",
+      "obs10": false
     },
     "RCSS": {
       "name": "Taipei Songshan Airport",
@@ -382,7 +427,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Taipei"
+      "timezone": "Asia/Taipei",
+      "obs10": false
     },
     "RJTT": {
       "name": "Tokyo Haneda Airport",
@@ -391,7 +437,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Tokyo"
+      "timezone": "Asia/Tokyo",
+      "obs10": false
     },
     "RKPK": {
       "name": "Gimhae International Airport",
@@ -399,7 +446,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Seoul"
+      "timezone": "Asia/Seoul",
+      "obs10": false
     },
     "RKSI": {
       "name": "Incheon International Airport",
@@ -408,7 +456,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Seoul"
+      "timezone": "Asia/Seoul",
+      "obs10": false
     },
     "RPLL": {
       "name": "Ninoy Aquino International Airport",
@@ -416,7 +465,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Manila"
+      "timezone": "Asia/Manila",
+      "obs10": false
     },
     "SAEZ": {
       "name": "Ministro Pistarini International Airport",
@@ -425,7 +475,8 @@
         0,
         30
       ],
-      "timezone": "America/Argentina/Buenos_Aires"
+      "timezone": "America/Argentina/Buenos_Aires",
+      "obs10": false
     },
     "SBGR": {
       "name": "Guarulhos International Airport",
@@ -433,7 +484,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "America/Sao_Paulo"
+      "timezone": "America/Sao_Paulo",
+      "obs10": false
     },
     "UUWW": {
       "name": "Vnukovo International Airport",
@@ -442,7 +494,8 @@
         0,
         30
       ],
-      "timezone": "Europe/Moscow"
+      "timezone": "Europe/Moscow",
+      "obs10": false
     },
     "VILK": {
       "name": "Chaudhary Charan Singh International Airport",
@@ -451,7 +504,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Kolkata"
+      "timezone": "Asia/Kolkata",
+      "obs10": false
     },
     "WIHH": {
       "name": "Halim Perdanakusuma International Airport",
@@ -460,7 +514,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Jakarta"
+      "timezone": "Asia/Jakarta",
+      "obs10": false
     },
     "WMKK": {
       "name": "Kuala Lumpur International Airport",
@@ -469,7 +524,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Kuala_Lumpur"
+      "timezone": "Asia/Kuala_Lumpur",
+      "obs10": false
     },
     "WSSS": {
       "name": "Singapore Changi Airport",
@@ -478,7 +534,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Singapore"
+      "timezone": "Asia/Singapore",
+      "obs10": false
     },
     "ZBAA": {
       "name": "Beijing Capital International Airport",
@@ -487,7 +544,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     },
     "ZGGG": {
       "name": "Guangzhou Baiyun International Airport",
@@ -496,7 +554,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     },
     "ZGSZ": {
       "name": "Shenzhen Bao'an International Airport",
@@ -504,7 +563,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     },
     "ZHHH": {
       "name": "Wuhan Tianhe International Airport",
@@ -512,7 +572,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     },
     "ZSPD": {
       "name": "Shanghai Pudong International Airport",
@@ -521,7 +582,8 @@
         0,
         30
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     },
     "ZSQD": {
       "name": "Qingdao Jiaodong International Airport",
@@ -529,7 +591,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     },
     "ZUCK": {
       "name": "Chongqing Jiangbei International Airport",
@@ -537,7 +600,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Chongqing"
+      "timezone": "Asia/Chongqing",
+      "obs10": false
     },
     "ZUUU": {
       "name": "Chengdu Shuangliu International Airport",
@@ -545,7 +609,8 @@
       "report_minutes": [
         0
       ],
-      "timezone": "Asia/Shanghai"
+      "timezone": "Asia/Shanghai",
+      "obs10": false
     }
   }
 }

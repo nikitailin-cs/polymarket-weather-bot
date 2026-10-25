@@ -21,6 +21,7 @@ if str(_ROOT) not in sys.path:
 
 from bots.metar_ws.metar_ws_daemon import Daemon, stations_from_mapping  # noqa: E402
 from core.metar_ws_client import MetarWsConfig  # noqa: E402
+from core.sources.metar_ws import MetarWsSource  # noqa: E402
 from core.metar_ws_snapshot import MetarWsSnapshotRegistry, read_snapshot  # noqa: E402
 
 HAVE_WEBSOCKETS = importlib.util.find_spec("websockets") is not None
@@ -94,9 +95,9 @@ class TestDaemon(unittest.TestCase):
 
             async def go():
                 async with websockets.serve(handler, "127.0.0.1", port):
-                    cfg = MetarWsConfig(api_key="k", url=f"ws://127.0.0.1:{port}/v1/ws", reconnect_min_sec=0.1, forecasts=False)
+                    cfg = MetarWsConfig(api_key="k", url=f"ws://127.0.0.1:{port}/v1/ws", reconnect_min_sec=0.1, forecasts=False, fast_obs=False)
                     daemon = Daemon(
-                        config=cfg,
+                        sources=[MetarWsSource(config=cfg)],
                         fixed_stations={"KORD"},
                         snapshot_file=snap,
                         trigger_cmd=trigger,

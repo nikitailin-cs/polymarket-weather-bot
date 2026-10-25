@@ -64,6 +64,7 @@ SOURCE_NAME = "metar_ws"
 ObservationCallback = Callable[[MetarObservation, bool], Optional[Awaitable[None]]]
 ForecastCallback = Callable[[ForecastRecord, bool], Optional[Awaitable[None]]]
 FORECAST_CHANNEL_FORMATS = ("metar.forecast.basic.{icao}", "metar.forecast.hires.{icao}")
+FAST_CHANNEL_FORMAT = "metar.obs10.{icao}"  # frequent (5-10 min) non-METAR observations, selected stations
 StateCallback = Callable[[], Optional[Awaitable[None]]]
 
 
@@ -109,12 +110,14 @@ class MetarWsConfig:
     ssl_verify: bool = True
     ca_bundle: str = ""
     forecasts: bool = True  # also subscribe to metar.forecast.basic/hires.<icao>
+    fast_obs: bool = True  # also subscribe to metar.obs10.<icao> for stations that have it
 
     @classmethod
     def from_env(cls) -> "MetarWsConfig":
         return cls(
             ca_bundle=(os.getenv("METAR_WS_CA_BUNDLE") or "").strip(),
             forecasts=(os.getenv("METAR_WS_FORECASTS", "1").strip() != "0"),
+            fast_obs=(os.getenv("METAR_WS_OBS10", "1").strip() != "0"),
             api_key=(os.getenv("METAR_WS_API_KEY") or "").strip(),
             url=(os.getenv("METAR_WS_URL") or DEFAULT_URL).strip() or DEFAULT_URL,
             channel_format=(os.getenv("METAR_WS_CHANNEL_FORMAT") or DEFAULT_CHANNEL_FORMAT).strip()
@@ -174,13 +177,18 @@ def build_ssl_context(config: "MetarWsConfig") -> Any:
 _ICAO_RE = re.compile(r"^[A-Z0-9]{4}$")
 
 
+def is_fast_channel(channel: str) -> bool:
+    parts = (channel or "").strip().split(".")
+    return len(parts) == 3 and parts[0] == "metar" and parts[1] == "obs10"
+
+
 def icao_from_channel(channel: str) -> str:
     """
-    ``metar.obs.klga`` -> ``KLGA`` (deployed format), ``metar.obs.icao.lzib`` -> ``LZIB``
+    ``metar.obs.klga`` / ``metar.obs10.klga`` -> ``KLGA``, ``metar.obs.icao.lzib`` -> ``LZIB``
     (spec draft); anything else (city channels such as ``metar.obs.london``) yields ``""``.
     """
     parts = (channel or "").strip().split(".")
-    if len(parts) < 3 or parts[0] != "metar" or parts[1] != "obs":
+    if len(parts) < 3 or parts[0] != "metar" or parts[1] not in ("obs", "obs10"):
         return ""
     if len(parts) >= 4 and parts[2] == "icao":
         code = parts[3].strip().upper()
@@ -251,18 +259,21 @@ def normalize_publication(
     if received is None:
         received = sent_at
 
+    fast = is_fast_channel(channel)
+    speci = is_speci_raw(raw) or (not fast and str(data.get("report_type") or "").upper() == "SPECI")
     return MetarObservation(
         icao_id=icao,
         temp_celsius=temp_c,
         report_time_utc=str(data.get("observation_time") or data.get("report_time") or ""),
         raw_text=raw,
         observation_utc=obs_utc,
-        is_speci=is_speci_raw(raw),
+        is_speci=speci,
         dewpoint_celsius=dew_c,
         received_at_utc=received,
-        source=SOURCE_NAME,
+        source=SOURCE_NAME if not fast else f"{SOURCE_NAME}:{data.get('source') or 'obs10'}",
         sent_at_utc=sent_at,
-        report_type=str(data.get("report_type") or ("SPECI" if is_speci_raw(raw) else "METAR")),
+        report_type="OBS10" if fast else str(data.get("report_type") or ("SPECI" if speci else "METAR")),
+        kind="obs10" if fast else ("speci" if speci else "metar"),
     )
 
 
@@ -324,9 +335,12 @@ class MetarWsClient:
         self.on_forecast = on_forecast
         self.forecasts_received = 0
         self.on_state_change = on_state_change
-        self.latest: dict[str, MetarObservation] = {}
+        self.latest: dict[str, MetarObservation] = {}  # newest routine METAR/SPECI per station
+        self.latest_fast: dict[str, MetarObservation] = {}  # newest obs10 per station
+        self.fast_received = 0
         self.state = ClientState()
         self._stations: set[str] = set()
+        self._fast_stations: set[str] = set()  # stations with an obs10 channel (data/metar_ws_stations.json)
         self._channel_to_icao: dict[str, str] = {}
         self._forecast_channels: list[str] = []
         self._seen: set[tuple[str, str, str]] = set()
@@ -348,8 +362,20 @@ class MetarWsClient:
         self._forecast_channels = sorted(c for i in wanted for c in self.config.forecast_channels_for(i))
         self._resubscribe.set()
 
+    def set_fast_stations(self, icaos: Iterable[str]) -> None:
+        wanted = {str(x).strip().upper() for x in icaos if str(x).strip()}
+        if wanted == self._fast_stations:
+            return
+        self._fast_stations = wanted
+        self._resubscribe.set()
+
+    def fast_channels(self) -> list[str]:
+        if not self.config.fast_obs:
+            return []
+        return sorted(FAST_CHANNEL_FORMAT.format(icao=i.lower()) for i in (self._stations & self._fast_stations))
+
     def wanted_channels(self) -> list[str]:
-        return sorted(self._channel_to_icao.keys()) + list(self._forecast_channels)
+        return sorted(self._channel_to_icao.keys()) + list(self._forecast_channels) + self.fast_channels()
 
     def stop(self) -> None:
         self._stop.set()
@@ -493,12 +519,18 @@ class MetarWsClient:
             self._seen.add(key)
             if len(self._seen) > 50_000:
                 self._seen = set(list(self._seen)[-20_000:])
-            if is_newer(obs, self.latest.get(obs.icao_id)):
+            if obs.report_kind == "obs10":
+                self.fast_received += 1
+                cur = self.latest_fast.get(obs.icao_id)
+                if cur is None or obs.observation_utc >= cur.observation_utc:
+                    self.latest_fast[obs.icao_id] = obs
+            elif is_newer(obs, self.latest.get(obs.icao_id)):
                 self.latest[obs.icao_id] = obs
             if not cached:
                 now = datetime.now(timezone.utc)
                 self.state.recent_latencies.append({
                     "icao": obs.icao_id,
+                    "kind": obs.report_kind,
                     "obs_time": obs.report_time_utc,
                     "receipt_time": obs.received_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if obs.received_at_utc else None,
                     "sent_at": obs.sent_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if obs.sent_at_utc else None,
@@ -512,7 +544,7 @@ class MetarWsClient:
                 obs.icao_id,
                 obs.temp_celsius,
                 obs.report_time_utc,
-                " SPECI" if obs.is_speci else "",
+                " SPECI" if obs.is_speci else (" obs10" if obs.report_kind == "obs10" else ""),
             )
             if self.on_observation is not None:
                 res = self.on_observation(obs, cached)

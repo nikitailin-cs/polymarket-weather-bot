@@ -107,6 +107,16 @@ have sent as an OPEN position in `portfolio_paper.sqlite` (one per market and si
 sized as live); `run_cycle.py` settles them against Gamma once the market resolves, PnL =
 payout − cost. Only stations served by METAR.ws are mapped; the rest are listed at refresh time.
 
+**Data sources are pluggable** (`core/sources/`). The daemon hosts the sources named in
+`SOURCES` (default `metar_ws`): `metar_ws` is the push stream (routine METAR/SPECI, the frequent
+`metar.obs10.<icao>` observations for the 26 stations flagged in `data/metar_ws_stations.json`,
+model forecasts); `awc_poll` polls aviationweather.gov every `AWC_POLL_SEC` and works without a
+METAR.ws key. A new provider is one subclass of `core.sources.base.Source` plus a line in the
+registry; the trackers, the snapshot and the dashboard do not care where a record came from.
+Frequent obs10 observations (MADIS/KNMI, 5-10 min) never count for resolution and never trigger
+a cycle: they feed the leading extreme, the "Fast" column and the sparkline. Model error
+assumptions live in `data/forecast_model_errors.json` (per station, per model, per tier).
+
 **Model forecasts.** The daemon also subscribes to `metar.forecast.basic.<icao>` (GFS, ICON,
 ICON-EU, ECMWF IFS) and `metar.forecast.hires.<icao>` (HRRR, NBM, JMA MSM, ICON-D2, HARMONIE,
 ARPEGE): one record per model run and station local day with the forecast max/min and the time

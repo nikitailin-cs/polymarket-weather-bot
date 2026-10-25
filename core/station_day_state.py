@@ -4,7 +4,8 @@ following the Polymarket daily temperature resolution rules (events resolve on
 the aviationweather.gov METAR feed):
 
 - only **routine** reports count: a report whose line begins with ``SPECI`` is
-  excluded; everything else is routine, even off-hour or unlabeled;
+  excluded, and so are the frequent non-METAR ``obs10`` observations (MADIS/KNMI);
+  everything else is routine, even off-hour or unlabeled;
 - the qualifying value is the ``RMK T`` group in tenths of a degree Celsius; if
   a routine report has no T group, the whole-degree body temperature governs;
 - the value is rounded to the nearest whole degree in the market unit, halves
@@ -144,6 +145,7 @@ class StationDayState:
     lead_min_is_speci: bool = False
     obs_count: int = 0  # routine reports
     speci_count: int = 0
+    fast_count: int = 0  # obs10 frequent observations (leading only)
     first_obs_utc: str = ""
     last_obs_utc: str = ""
     last_temp_c: Optional[float] = None
@@ -158,7 +160,8 @@ class StationDayState:
 
     def ingest(self, obs: MetarObservation, remarks: Optional[MetarRemarks] = None) -> bool:
         """Apply one observation; returns True when it changed the resolution max or min."""
-        key = (format_utc(obs.observation_utc), "speci" if obs.is_speci else "metar")
+        kind = obs.report_kind
+        key = (format_utc(obs.observation_utc), kind)
         if key in self._seen:
             return False
         self._seen.add(key)
@@ -172,8 +175,10 @@ class StationDayState:
         if self.lead_min_c is None or value < self.lead_min_c:
             self.lead_min_c, self.lead_min_time_utc, self.lead_min_is_speci = value, t, obs.is_speci
 
-        if obs.is_speci:
+        if kind == "speci":
             self.speci_count += 1
+        elif kind == "obs10":
+            self.fast_count += 1
         else:
             if self.max_c is None or value > self.max_c:
                 self.max_c, self.max_time_utc, self.max_raw, self.max_source = value, t, obs.raw_text, src
@@ -188,7 +193,7 @@ class StationDayState:
         if t >= self.last_obs_utc:
             self.last_obs_utc = t
             self.last_temp_c = value
-        self.samples.append([t, value, bool(obs.is_speci)])
+        self.samples.append([t, value, kind != "metar", kind])
         if len(self.samples) > MAX_SAMPLES:
             self.samples = self.samples[-MAX_SAMPLES:]
         self.samples.sort(key=lambda s: s[0])
@@ -226,6 +231,7 @@ class StationDayState:
             "lead_min_is_speci": self.lead_min_is_speci,
             "obs_count": self.obs_count,
             "speci_count": self.speci_count,
+            "fast_count": self.fast_count,
             "first_obs_utc": self.first_obs_utc,
             "last_obs_utc": self.last_obs_utc,
             "last_temp_c": self.last_temp_c,
@@ -259,6 +265,7 @@ class StationDayState:
                 lead_min_is_speci=bool(d.get("lead_min_is_speci", False)),
                 obs_count=int(d.get("obs_count") or 0),
                 speci_count=int(d.get("speci_count") or 0),
+                fast_count=int(d.get("fast_count") or 0),
                 first_obs_utc=str(d.get("first_obs_utc") or ""),
                 last_obs_utc=str(d.get("last_obs_utc") or ""),
                 last_temp_c=_opt_float(d.get("last_temp_c")),
@@ -271,7 +278,8 @@ class StationDayState:
         except (KeyError, TypeError, ValueError):
             return None
         for s in st.samples:
-            st._seen.add((str(s[0]), "speci" if len(s) > 2 and s[2] else "metar"))
+            kind = str(s[3]) if len(s) > 3 else ("speci" if len(s) > 2 and s[2] else "metar")
+            st._seen.add((str(s[0]), kind))
         return st
 
     @property

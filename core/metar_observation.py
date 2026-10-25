@@ -90,6 +90,18 @@ class MetarObservation:
     source: str = ""
     sent_at_utc: Optional[datetime] = None  # when METAR.ws put the publication on the stream
     report_type: str = ""
+    kind: str = ""  # metar | speci | obs10 (frequent non-METAR observation); "" = derive from is_speci
+
+    @property
+    def report_kind(self) -> str:
+        if self.kind:
+            return self.kind
+        return "speci" if self.is_speci else "metar"
+
+    @property
+    def is_routine(self) -> bool:
+        """Routine METAR: the only kind the Polymarket resolution rule counts."""
+        return self.report_kind == "metar"
 
     @property
     def platform_latency_ms(self) -> Optional[int]:
@@ -104,7 +116,7 @@ class MetarObservation:
 
     def dedupe_key(self) -> tuple[str, str, str]:
         """Idempotency key: station + observation time + raw text."""
-        return (self.icao_id, format_utc(self.observation_utc), (self.raw_text or "").strip())
+        return (self.icao_id, format_utc(self.observation_utc), (self.raw_text or "").strip() or self.report_kind)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,6 +132,7 @@ class MetarObservation:
             "sent_at_ms": self.sent_at_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z") if self.sent_at_utc else "",
             "platform_latency_ms": self.platform_latency_ms,
             "report_type": self.report_type,
+            "kind": self.report_kind,
             "source": self.source,
         }
 
@@ -146,6 +159,7 @@ class MetarObservation:
                 source=str(d.get("source") or ""),
                 sent_at_utc=parse_utc(d.get("sent_at_ms")),
                 report_type=str(d.get("report_type") or ""),
+                kind=str(d.get("kind") or ""),
             )
         except (TypeError, ValueError):
             return None

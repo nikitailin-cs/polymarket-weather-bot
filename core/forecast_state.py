@@ -30,16 +30,50 @@ it is mapped back to the Celsius interval that rounds into it before integrating
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from core.metar_observation import format_utc, parse_utc
 
 LOG = logging.getLogger("forecast_state")
+
+
+_ERROR_TABLE: Optional[dict[str, Any]] = None
+
+
+def model_error_table(path: Optional[Path] = None) -> dict[str, Any]:
+    """``data/forecast_model_errors.json`` (tiers / models / stations), cached."""
+    global _ERROR_TABLE
+    if _ERROR_TABLE is None or path is not None:
+        p = path or (Path(__file__).resolve().parent.parent / "data" / "forecast_model_errors.json")
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        table = data if isinstance(data, dict) else {}
+        if path is None:
+            _ERROR_TABLE = table
+        return table
+    return _ERROR_TABLE
+
+
+def sigma_for(model: str, tier: str, station: str = "", table: Optional[dict[str, Any]] = None) -> float:
+    """Assumed error (C): stations.<ICAO>.<model>, then models.<model>, then tiers.<tier>, then env defaults."""
+    t = table if table is not None else model_error_table()
+    st = (t.get("stations") or {}).get((station or "").upper()) or {}
+    for v in (st.get(model), (t.get("models") or {}).get(model), (t.get("tiers") or {}).get(tier)):
+        try:
+            if v is not None:
+                return float(v)
+        except (TypeError, ValueError):
+            pass
+    return _env_float("FORECAST_SIGMA_HIRES_C", 1.3) if tier == "hires" else _env_float("FORECAST_SIGMA_BASIC_C", 1.9)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -292,8 +326,6 @@ def bucket_probability(
     now = now_utc or datetime.now(timezone.utc)
     rises = (variable or "temp_max").strip().lower() != "temp_min"
     a, b = celsius_interval_for_bucket(low, high, unit)
-    sig_hi = _env_float("FORECAST_SIGMA_HIRES_C", 1.3)
-    sig_basic = _env_float("FORECAST_SIGMA_BASIC_C", 1.9)
     sig_late = _env_float("FORECAST_SIGMA_LATE_C", 0.6)
     late_hours = _env_float("FORECAST_LATE_HOURS", 2.0)
     remaining_h = (day_end_utc - now).total_seconds() / 3600.0 if day_end_utc is not None else None
@@ -313,7 +345,7 @@ def bucket_probability(
             weight = 1.0  # covers the rest of the local day even if not the whole day
         else:
             weight = 0.5
-        sigma = sig_hi if rec.tier == "hires" else sig_basic
+        sigma = sigma_for(rec.model, rec.tier, rec.station)
         mean = float(val)
         if late:
             mean, sigma = float(observed_extreme_c), sig_late

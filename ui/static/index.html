@@ -151,7 +151,7 @@
       <section>
         <h2>Daily extremes <span class="sub muted" id="st-sub"></span></h2>
         <div class="scroll"><table id="stations"><thead><tr>
-          <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num">Obs</th><th>Trend</th><th class="num" title="model forecast of today's max / min (mean, range)">Forecast</th><th class="num">Last</th><th>Last report</th>
+          <th>Station</th><th>Local</th><th class="num">Max</th><th>Max at</th><th class="num">Min</th><th>Min at</th><th class="num" title="routine reports (+S SPECI, +F frequent obs10)">Obs</th><th>Trend</th><th class="num" title="model forecast of today's max / min (mean, range)">Forecast</th><th class="num" title="latest frequent observation (obs10, 5-10 min; not used for resolution)">Fast</th><th class="num">Last</th><th>Last report</th>
         </tr></thead><tbody></tbody></table></div>
       </section>
       <section>
@@ -281,7 +281,7 @@
     const W = 140, H = 28, n = samples.length;
     const pts = samples.map((s, i) => [ (i / (n - 1)) * (W - 4) + 2, H - 3 - ((s[1] - lo) / span) * (H - 6) ]);
     const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-    const dots = samples.map((s, i) => s[2] ? `<circle cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="2.2"/>` : "").join("");
+    const dots = samples.map((s, i) => s[2] ? `<circle cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="${s[3] === "obs10" ? 1.3 : 2.2}" ${s[3] === "obs10" ? 'style="fill:var(--muted)"' : ""}/>` : "").join("");
     return `<svg class="spark" viewBox="0 0 ${W} ${H}"><path d="${d}"/>${dots}</svg>`;
   }
   function renderStream(st) {
@@ -324,12 +324,13 @@
         <td class="mono">${d ? hhmm(d.max_time_utc) + " " + srcPill(d.max_source) : "–"}</td>
         <td class="num">${d ? `${fmt(d.min_c)}°C <span class="muted">${fmt(d.min_f)}°F</span>` : "–"}</td>
         <td class="mono">${d ? hhmm(d.min_time_utc) + " " + srcPill(d.min_source) : "–"}</td>
-        <td class="num">${d ? `${d.obs_count}${d.speci_count ? ` <span class="speci">+${d.speci_count}S</span>` : ""}` : "0"}</td>
+        <td class="num">${d ? `${d.obs_count}${d.speci_count ? ` <span class="speci">+${d.speci_count}S</span>` : ""}${d.fast_count ? ` <span class="muted">+${d.fast_count}F</span>` : ""}` : "0"}</td>
         <td>${d ? spark(d.samples) : ""}</td>
         <td class="num mono" title="${esc(r.forecast ? r.forecast.models.join(", ") : "")}">${r.forecast ? `<span title="max">${fmt(r.forecast.max_mean_c)}</span><span class="muted"> [${fmt(r.forecast.max_lo_c)}–${fmt(r.forecast.max_hi_c)}]</span> / <span title="min">${fmt(r.forecast.min_mean_c)}</span> <span class="muted">${r.forecast.models.length}m</span>` : "–"}</td>
+        <td class="num" title="${esc(r.fast ? `${r.fast.obs_time_utc} · ${r.fast.source || ""}` : "")}">${r.fast ? `${fmt(r.fast.temp_c)}°C <span class="muted">${age((r.fast.age_min||0)*60)}</span>` : "–"}</td>
         <td class="num">${fmt(r.last_temp_c)}°C ${r.last_is_speci ? pill("SPECI","speci") : ""}</td>
         <td class="mono raw muted" title="${esc(r.last_raw||"")}">${esc(r.last_raw||"")}</td></tr>`;
-    }).join("") || `<tr><td colspan="11" class="empty">no day state yet — the daemon fills this as reports arrive</td></tr>`;
+    }).join("") || `<tr><td colspan="12" class="empty">no day state yet — the daemon fills this as reports arrive</td></tr>`;
   }
 
   // ---- markets ----

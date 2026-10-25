@@ -46,14 +46,34 @@ def selected_source() -> str:
     return src
 
 
-def _awc_registry(pipeline: str) -> Any:
-    if pipeline == "bot1":
+class AwcRegistry:
+    """
+    One AWC polling registry for both pipelines: ``fetch_latest_for_stations`` (bot1 shape)
+    from the bot1 implementation, plus the bot2 ``fetch_latest_metar`` dict shape on top.
+    """
+
+    def __init__(self) -> None:
         from bots.bot1_realtime.metar_live.realtime_metar_registry import RealTimeMetarRegistry
 
-        return RealTimeMetarRegistry()
-    from bots.bot2_realtime.metar_live.realtime_metar_registry import RealTimeMetarRegistry
+        self._inner = RealTimeMetarRegistry()
 
-    return RealTimeMetarRegistry()
+    def fetch_latest_for_stations(self, icao_list: Any) -> dict[str, Any]:
+        return self._inner.fetch_latest_for_stations(icao_list)
+
+    def fetch_latest_metar(self, icao_code: str) -> Any:
+        code = (icao_code or "").strip().upper()
+        if not code:
+            return None
+        try:
+            obs = self._inner.fetch_latest_for_stations([code]).get(code)
+        except Exception as e:  # noqa: BLE001
+            LOG.error("AWC fetch failed for %s: %s", code, e)
+            return None
+        return obs.to_bot2_dict() if obs is not None else None
+
+
+def _awc_registry(pipeline: str) -> Any:
+    return AwcRegistry()
 
 
 def get_metar_registry(pipeline: str = "bot2") -> Any:

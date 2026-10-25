@@ -68,6 +68,8 @@ def build_snapshot(
     now: Optional[datetime] = None,
     days: Optional[dict[str, dict[str, Any]]] = None,
     forecasts: Optional[dict[str, Any]] = None,
+    fast: Optional[dict[str, MetarObservation]] = None,
+    sources: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     stations = {icao: obs.to_dict() for icao, obs in sorted(latest.items())}
@@ -78,6 +80,8 @@ def build_snapshot(
         "stations": stations,
         "days": days or {},
         "forecasts": forecasts or {},
+        "fast": {icao: obs.to_dict() for icao, obs in sorted((fast or {}).items())},
+        "sources": sources or {},
     }
     if state:
         payload["client"] = state

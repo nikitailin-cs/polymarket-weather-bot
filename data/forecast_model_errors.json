@@ -1,0 +1,18 @@
+{
+  "_note": "Assumed standard error (degrees C) of a model's forecast of the local-day max/min. Lookup order: stations.<ICAO>.<model>, models.<model>, tiers.<tier>. Uncalibrated starting values; replace with measured errors (forecast minus resolved value) per station.",
+  "tiers": {"hires": 1.3, "basic": 1.9},
+  "models": {
+    "hrrr": 1.2,
+    "nbm": 1.1,
+    "icon-d2": 1.3,
+    "harmonie-dini": 1.3,
+    "jma-msm": 1.3,
+    "arpege-eu": 1.5,
+    "icon-eu": 1.6,
+    "icon": 1.9,
+    "gfs": 2.0,
+    "ifs": 1.7,
+    "ecmwf": 1.7
+  },
+  "stations": {}
+}

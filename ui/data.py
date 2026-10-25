@@ -142,7 +142,7 @@ def stream_view(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str, 
         return {"available": False, "connected": False, "stations": [], "client": {}, "generated_at_utc": None}
     client = snapshot.get("client") or {}
     gen = parse_utc(snapshot.get("generated_at_utc"))
-    wanted = client.get("wanted_channels") or []
+    wanted = [c for c in (client.get("wanted_channels") or []) if isinstance(c, str) and c.startswith("metar.obs.")]
     icaos = sorted({c.split(".")[-1].upper() for c in wanted if isinstance(c, str)} | set(snapshot.get("stations", {}).keys()))
     stations = [station_freshness(i, snapshot.get("stations", {}).get(i), served, now) for i in icaos]
     counts = {"ok": 0, "late": 0, "no_data": 0}
@@ -156,6 +156,7 @@ def stream_view(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str, 
         "client": client,
         "counts": counts,
         "stations": stations,
+        "sources": snapshot.get("sources") or {},
         "latency": {
             "platform_ms": client.get("platform_latency_ms"),
             "delivery_ms": client.get("delivery_latency_ms"),
@@ -179,9 +180,12 @@ def station_board(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str
         return []
     days = snapshot.get("days") or {}
     forecasts = snapshot.get("forecasts") or {}
+    fast_all = snapshot.get("fast") or {}
     rows: list[dict[str, Any]] = []
     for icao in sorted(set(days) | set(snapshot.get("stations", {}).keys())):
         by_day = days.get(icao) or {}
+        fast = fast_all.get(icao) or {}
+        fast_t = parse_utc(fast.get("observation_time_utc")) if fast else None
         latest_obs = snapshot.get("stations", {}).get(icao) or {}
         tz = next(
             (d.get("timezone") for d in by_day.values() if isinstance(d, dict) and d.get("timezone")),
@@ -203,6 +207,12 @@ def station_board(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str
             "last_raw": latest_obs.get("raw"),
             "last_is_speci": bool(latest_obs.get("is_speci")),
             "day": None,
+            "fast": {
+                "temp_c": fast.get("temp_c"),
+                "obs_time_utc": fast.get("observation_time_utc"),
+                "age_min": round((now - fast_t).total_seconds() / 60, 1) if fast_t else None,
+                "source": fast.get("source"),
+            } if fast else None,
             "forecast": _forecast_summary((forecasts.get(icao) or {}).get(today) or {}),
             "other_days": sorted(d for d in by_day if d != today),
         }
@@ -219,13 +229,14 @@ def station_board(snapshot: Optional[dict[str, Any]], served: dict[str, dict[str
                 "min_source": st.get("min_source"),
                 "obs_count": st.get("obs_count"),
                 "speci_count": st.get("speci_count"),
+                "fast_count": st.get("fast_count"),
                 "lead_max_c": st.get("lead_max_c"),
                 "lead_max_time_utc": st.get("lead_max_time_utc"),
                 "lead_max_is_speci": bool(st.get("lead_max_is_speci")),
                 "lead_min_c": st.get("lead_min_c"),
                 "lead_min_time_utc": st.get("lead_min_time_utc"),
                 "lead_min_is_speci": bool(st.get("lead_min_is_speci")),
-                "samples": [[s[0], s[1], bool(s[2]) if len(s) > 2 else False] for s in st.get("samples") or []],
+                "samples": [[s[0], s[1], bool(s[2]) if len(s) > 2 else False, (s[3] if len(s) > 3 else ("speci" if len(s) > 2 and s[2] else "metar"))] for s in st.get("samples") or []],
                 "reported_24h_max_c": st.get("reported_24h_max_c"),
                 "reported_24h_min_c": st.get("reported_24h_min_c"),
             }

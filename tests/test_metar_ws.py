@@ -283,9 +283,10 @@ class TestSourceFactory(unittest.TestCase):
             self.assertEqual(selected_source(), "awc")
             reg = get_metar_registry("bot2")
             self.assertTrue(hasattr(reg, "fetch_latest_metar"))
-            self.assertEqual(type(reg).__module__, "bots.bot2_realtime.metar_live.realtime_metar_registry")
+            self.assertEqual(type(reg).__name__, "AwcRegistry")  # one shared AWC implementation for both pipelines
             reg1 = get_metar_registry("bot1")
-            self.assertEqual(type(reg1).__module__, "bots.bot1_realtime.metar_live.realtime_metar_registry")
+            self.assertTrue(hasattr(reg1, "fetch_latest_for_stations"))
+            self.assertEqual(type(reg1).__name__, "AwcRegistry")
 
     def test_metar_ws_with_and_without_fallback(self):
         from core.metar_source import get_metar_registry
