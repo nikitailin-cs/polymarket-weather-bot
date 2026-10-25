@@ -101,10 +101,11 @@ def metar_ws_view(snapshot: Optional[dict[str, Any]], now: datetime) -> dict[str
     age = (now - gen).total_seconds() if gen else None
     connected = bool(snapshot.get("connected"))
     quiet_after = float(os.getenv("UI_METAR_QUIET_SEC") or 1800)  # 30 min without a snapshot write -> yellow
+    had_session = bool(client.get("messages")) and not (client.get("last_error") or "")
     if age is not None and age > quiet_after:
         status = "stale"  # daemon has not written for a long time
-    elif connected:
-        status = "ok"  # connection established: green, whatever the recent traffic
+    elif connected or had_session:
+        status = "ok"  # connection established (or cleanly stopped after a working session): green
     else:
         status = "disconnected"
     wanted = client.get("wanted_channels") or []

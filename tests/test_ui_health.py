@@ -36,14 +36,17 @@ class TestMetarView(unittest.TestCase):
     def _snap(self, gen, connected=True):
         return {"generated_at_utc": gen.strftime("%Y-%m-%dT%H:%M:%SZ"), "connected": connected,
                 "client": {"plan": "trader", "limits": {"max_channels": 1000}, "subscribed": ["a", "b"], "wanted_channels": ["a", "b", "c"],
-                           "last_message_at_utc": (gen - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ"), "reconnects": 2, "forecast_records": 84},
+                           "last_message_at_utc": (gen - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ"), "reconnects": 2, "forecast_records": 84, "messages": 50},
                 "stations": {"KORD": {}}}
 
     def test_statuses(self):
         ok = metar_ws_view(self._snap(NOW - timedelta(seconds=10)), NOW)
         self.assertEqual((ok["status"], ok["channels_subscribed"], ok["channels_wanted"], ok["plan"]), ("ok", 2, 3, "trader"))
         self.assertEqual(ok["last_message_age_sec"], 15.0)
-        self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=10), connected=False), NOW)["status"], "disconnected")
+        # cleanly stopped daemon (messages flowed, no error) within 30 min: still green
+        self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=10), connected=False), NOW)["status"], "ok")
+        broken = self._snap(NOW - timedelta(seconds=10), connected=False); broken["client"]["last_error"] = "TimeoutError"
+        self.assertEqual(metar_ws_view(broken, NOW)["status"], "disconnected")
         self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=600)), NOW)["status"], "ok")  # connected: green even when quiet
         self.assertEqual(metar_ws_view(self._snap(NOW - timedelta(seconds=2000)), NOW)["status"], "stale")  # > 30 min silent: yellow
         self.assertEqual(metar_ws_view(None, NOW)["status"], "no_snapshot")
