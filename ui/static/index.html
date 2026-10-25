@@ -302,7 +302,8 @@
     const lat = st.latency || {};
     $("#fr-latency").innerHTML = lat.platform_ms === null || lat.platform_ms === undefined
       ? `<span class="muted">METAR.ws platform latency: – <span class="muted">(no live report yet)</span></span>`
-      : `METAR.ws platform latency: <b>${esc(lat.platform_ms)} ms</b> <span class="muted">· delivery ${esc(lat.delivery_ms ?? "–")} ms · last ${esc(lat.samples)} report${lat.samples === 1 ? "" : "s"}</span>`;
+      : `METAR.ws platform latency: <b>${esc(lat.platform_ms)} ms</b> <span class="muted">${lat.delivery_ms !== null && lat.delivery_ms !== undefined && lat.delivery_ms >= 0 ? `· delivery ${esc(lat.delivery_ms)} ms ` : ""}· last ${esc(lat.samples)} report${lat.samples === 1 ? "" : "s"}</span>`;
+    $("#fr-latency").title = `platform = stream sent_at − source receipt_time (median of the last live reports)` + (lat.delivery_ms !== null && lat.delivery_ms !== undefined ? ` · delivery to this machine ${lat.delivery_ms} ms${lat.delivery_ms < 0 ? " (negative: local clock behind the server, hidden)" : ""}` : "");
     const problem = rows.filter(s => s.status !== "ok");
     const shown = problem.length ? problem : rows.slice(0, 12);
     $("#dash-stream tbody").innerHTML = shown.map(s => `<tr><td><b>${esc(s.icao)}</b> <span class="muted">${esc(s.city||"")}</span></td>
